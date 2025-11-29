@@ -1,33 +1,26 @@
-import requests
 import pandas as pd
+import requests
+from bs4 import BeautifulSoup
 import logging
 
-BASE_URL = "https://www.balldontlie.io/api/v1/games"
+logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+def fetch_nba_games(season=2025):
+    url = f"https://www.basketball-reference.com/leagues/NBA_{season}_games.html"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    logging.info(f"Fetching NBA games from {url}")
 
-def fetch_nba_games(season):
-    logging.info(f"🚀 Fetching NBA games for {season} season")
-    games = []
-    page = 1
-    while True:
-        resp = requests.get(BASE_URL, params={"seasons[]": season, "per_page": 100, "page": page})
-        resp.raise_for_status()
-        data = resp.json()
-        if not data["data"]:
-            break
-        games.extend(data["data"])
-        if page >= data["meta"]["total_pages"]:
-            break
-        page += 1
-    df = pd.DataFrame(games)
-    if df.empty:
-        logging.warning("❌ No games fetched")
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        logging.error(f"Failed to fetch games: {resp.status_code}")
         return pd.DataFrame()
-    # Flatten team info
-    df["HOME_TEAM"] = df["home_team"].apply(lambda x: x["full_name"])
-    df["VISITOR_TEAM"] = df["visitor_team"].apply(lambda x: x["full_name"])
-    df["HOME_SCORE"] = df["home_team_score"]
-    df["VISITOR_SCORE"] = df["visitor_team_score"]
-    df = df[["id", "date", "HOME_TEAM", "VISITOR_TEAM", "HOME_SCORE", "VISITOR_SCORE"]]
+
+    soup = BeautifulSoup(resp.content, "html.parser")
+    table = soup.find("table", {"id": "schedule"})
+    if table is None:
+        logging.error("No table found")
+        return pd.DataFrame()
+
+    df = pd.read_html(str(table))[0]
+    df = df.dropna(subset=["Date", "Visitor/Neutral", "PTS"])
     return df

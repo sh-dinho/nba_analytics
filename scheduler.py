@@ -2,7 +2,6 @@ import schedule
 import time
 import subprocess
 import logging
-import pandas as pd
 import sqlite3
 from utils.notify import send_daily_picks
 import yaml
@@ -16,11 +15,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 def job_fetch_and_train():
     logging.info("🚀 Running daily fetch & train job")
     try:
-        # 1️⃣ Fetch latest games
         subprocess.run(["python", "fetch_games.py"], check=True)
-        # 2️⃣ Train model
         subprocess.run(["python", "train_model_xgb.py"], check=True)
-        # 3️⃣ Send daily picks
         con = sqlite3.connect(DB_PATH)
         df = pd.read_sql("SELECT * FROM nba_games ORDER BY date DESC LIMIT 10", con)
         con.close()
