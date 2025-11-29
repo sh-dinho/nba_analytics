@@ -1,40 +1,33 @@
 import requests
-import yaml
 import logging
 import sqlite3
 import pandas as pd
+from configparser import ConfigParser
 
-CONFIG = yaml.safe_load(open("config.yaml"))
-DB_PATH = CONFIG["database"]["path"]
+CONFIG_PATH = "config.yaml"
+import yaml
+CONFIG = yaml.safe_load(open(CONFIG_PATH))
 TELEGRAM_TOKEN = CONFIG["notifications"]["telegram_token"]
-TELEGRAM_CHAT_ID = int(CONFIG["notifications"]["telegram_chat_id"])
+TELEGRAM_CHAT_ID = CONFIG["notifications"]["telegram_chat_id"]
+DB_PATH = CONFIG["database"]["path"]
+
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
-def send_message(text: str):
-    url = f"{BASE_URL}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
+def send_telegram_message(text: str):
     try:
-        requests.post(url, json=payload, timeout=10)
-        logging.info("✅ Telegram notification sent")
+        url = f"{BASE_URL}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
+        resp = requests.post(url, json=payload)
+        resp.raise_for_status()
+        logging.info("✅ Telegram message sent")
     except Exception as e:
         logging.error(f"❌ Failed to send Telegram message: {e}")
 
 def send_daily_picks(df: pd.DataFrame):
     if df.empty:
-        send_message("❌ No positive EV picks found today.")
+        send_telegram_message("❌ No picks available today.")
         return
-
-    con = sqlite3.connect(DB_PATH)
-    tracker = pd.read_sql("SELECT * FROM bankroll_tracker ORDER BY Timestamp DESC LIMIT 1", con)
-    con.close()
-
-    bankroll_msg = ""
-    if not tracker.empty:
-        row = tracker.iloc[-1]
-        bankroll_msg = f"\n💰 Bankroll: ${row['CurrentBankroll']:.2f} | ROI: {row['ROI']:.2%}"
-
-    msg = "💰 --- TODAY'S VALUE BETS --- 💰\n"
+    msg = "🏀 Today's Picks:\n"
     for _, row in df.iterrows():
-        msg += f"\n{row['Team']} vs {row['Opponent']} | Odds {row['Odds']} | Prob {row['Probability']:.2f} | EV {row['EV']:.3f} | Stake {row['SuggestedStake']:.2f}"
-    msg += bankroll_msg
-    send_message(msg)
+        msg += f"{row['HOME_TEAM']} vs {row['VISITOR_TEAM']} | Score: {row['HOME_SCORE']}-{row['VISITOR_SCORE']}\n"
+    send_telegram_message(msg)

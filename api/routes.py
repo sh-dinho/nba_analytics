@@ -11,7 +11,7 @@ DB_PATH = CONFIG["database"]["path"]
 @bp.route("/train/run", methods=["POST"])
 def retrain_model():
     try:
-        subprocess.run(["python", "train/train_model_xgb.py"], check=True)
+        subprocess.run(["python", "train_model_xgb.py"], check=True)
         con = sqlite3.connect(DB_PATH)
         cur = con.cursor()
         cur.execute("""
@@ -33,7 +33,3 @@ def retrain_metrics():
     con.close()
     history = [{"Timestamp": r[0], "ModelType": r[1], "Status": r[2]} for r in rows]
     return jsonify({"history": history})
-
-@bp.route("/health", methods=["GET"])
-def health():
-    return {"status": "ok", "time": datetime.now().strftime("%Y-%m-%d %H:%M")}

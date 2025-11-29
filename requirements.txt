@@ -1,13 +1,6 @@
 pandas
-numpy
-scikit-learn
 xgboost
-lightgbm
+scikit-learn
 requests
-PyYAML
-joblib
-flask
 schedule
-streamlit
-nba_api
-matplotlib
+pyyaml
