@@ -1,76 +1,191 @@
+import os
 import sqlite3
 import pandas as pd
-import joblib
-import os
-import yaml
 import numpy as np
+import yaml
+import joblib
+import logging
 from datetime import datetime
+from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, roc_auc_score
-import xgboost as xgb
+from sklearn.metrics import roc_auc_score, accuracy_score
 
-CONFIG = yaml.safe_load(open("config.yaml"))
+# ---------------------------
+# Logging
+# ---------------------------
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# ---------------------------
+# Config
+# ---------------------------
+# Root directory (one level above train/)
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+CONFIG_PATH = os.path.join(ROOT_DIR, "config.yaml")
+
+CONFIG = yaml.safe_load(open(CONFIG_PATH))
+if not os.path.exists(CONFIG_PATH):
+    raise FileNotFoundError(f"Config file not found at {CONFIG_PATH}")
+
+CONFIG = yaml.safe_load(open(CONFIG_PATH))
 DB_PATH = CONFIG["database"]["path"]
 MODEL_DIR = CONFIG["model"]["models_dir"]
-CURRENT_MODEL = CONFIG["model"]["filename"]
+MODEL_FILE = os.path.join(MODEL_DIR, "xgb_model.pkl")
 
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-def fetch_features_labels():
+# ---------------------------
+# Database Setup
+# ---------------------------
+def setup_db():
     con = sqlite3.connect(DB_PATH)
-    df = pd.read_sql("SELECT * FROM nba_games", con)
-    con.close()
-    if df.empty:
-        return None, None
+    cur = con.cursor()
 
-    # Example features
-    df['GAME_DATE'] = pd.to_datetime(df['GAME_DATE'])
-    df = df.sort_values(['TEAM_ABBREVIATION', 'GAME_DATE'])
-    df['PTS_avg'] = df.groupby('TEAM_ABBREVIATION')['PTS'].transform(lambda x: x.rolling(5, min_periods=1).mean())
-    df['REB_avg'] = df.groupby('TEAM_ABBREVIATION')['REB'].transform(lambda x: x.rolling(5, min_periods=1).mean())
-    df['AST_avg'] = df.groupby('TEAM_ABBREVIATION')['AST'].transform(lambda x: x.rolling(5, min_periods=1).mean())
-    df = df.dropna(subset=['PTS_avg', 'REB_avg', 'AST_avg'])
+    # NBA games table
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS nba_games (
+            GAME_ID TEXT PRIMARY KEY,
+            GAME_DATE TEXT,
+            TEAM_ABBREVIATION TEXT,
+            PTS REAL,
+            REB REAL,
+            AST REAL,
+            WL TEXT,
+            MATCHUP TEXT
+        )
+    """)
 
-    X = df[['PTS_avg','REB_avg','AST_avg']]
-    y = (df['WL'] == 'W').astype(int)
-    return X, y
+    # Daily picks table
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS daily_picks (
+            Timestamp TEXT,
+            Team TEXT,
+            Opponent TEXT,
+            Probability REAL,
+            Odds REAL,
+            EV REAL,
+            SuggestedStake REAL
+        )
+    """)
 
-def train_model():
-    X, y = fetch_features_labels()
-    if X is None or X.empty:
-        print("❌ No data to train")
-        return
+    # Bankroll tracker
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bankroll_tracker (
+            Timestamp TEXT,
+            StartingBankroll REAL,
+            CurrentBankroll REAL,
+            ROI REAL,
+            Notes TEXT
+        )
+    """)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = xgb.XGBClassifier(n_estimators=100, use_label_encoder=False, eval_metric='logloss')
-    model.fit(X_train, y_train)
+    # Model metrics
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS model_metrics (
+            Timestamp TEXT,
+            AUC REAL,
+            Accuracy REAL
+        )
+    """)
 
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)[:,1]
-    acc = accuracy_score(y_test, y_pred)
-    auc = roc_auc_score(y_test, y_prob)
+    # Retrain history
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS retrain_history (
+            Timestamp TEXT,
+            ModelType TEXT,
+            Status TEXT
+        )
+    """)
 
-    # Save versioned model
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    version_file = os.path.join(MODEL_DIR, f"xgb_model_{timestamp}.joblib")
-    joblib.dump(model, version_file)
-
-    # Update current model symlink
-    current_path = os.path.join("models", CURRENT_MODEL)
-    if os.path.exists(current_path):
-        os.remove(current_path)
-    os.symlink(version_file, current_path)
-
-    # Log metrics
-    con = sqlite3.connect(DB_PATH)
-    con.execute("INSERT INTO model_metrics (Timestamp, Accuracy, AUC) VALUES (?, ?, ?)",
-                (datetime.now().strftime("%Y-%m-%d %H:%M"), float(acc), float(auc)))
-    con.execute("INSERT INTO retrain_history (Timestamp, ModelVersion, Status) VALUES (?, ?, ?)",
-                (datetime.now().strftime("%Y-%m-%d %H:%M"), version_file, "success"))
     con.commit()
     con.close()
-    print(f"✔ Model trained: Acc={acc:.3f}, AUC={auc:.3f}")
+    logging.info("✅ Database tables ensured.")
 
+# ---------------------------
+# Feature Engineering
+# ---------------------------
+def build_features(df):
+    df = df.copy()
+    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
+    df = df.sort_values(["TEAM_ABBREVIATION", "GAME_DATE"])
+    # rolling averages
+    for stat in ["PTS", "REB", "AST"]:
+        df[f"{stat}_avg"] = df.groupby("TEAM_ABBREVIATION")[stat].transform(
+            lambda x: x.rolling(CONFIG["features"]["rolling_games"], min_periods=1).mean()
+        )
+    # B2B / home
+    df["last_game"] = df.groupby("TEAM_ABBREVIATION")["GAME_DATE"].shift(1)
+    df["rest_days"] = (df["GAME_DATE"] - df["last_game"]).dt.days.fillna(2)
+    df["b2b"] = (df["rest_days"] == 1).astype(int)
+    df["home"] = df["MATCHUP"].str.contains("vs").astype(int)
+    return df
+
+def prepare_model_data(df):
+    features = ["PTS_avg", "REB_avg", "AST_avg", "rest_days", "b2b", "home"]
+    df = df.dropna(subset=features + ["WL"])
+    X = df[features].values
+    y = (df["WL"] == "W").astype(int).values
+    return X, y
+
+# ---------------------------
+# Train XGBoost
+# ---------------------------
+def train_xgb(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    model = XGBClassifier(
+        n_estimators=200,
+        max_depth=5,
+        learning_rate=0.1,
+        use_label_encoder=False,
+        eval_metric="logloss"
+    )
+    model.fit(X_train, y_train)
+    y_pred_prob = model.predict_proba(X_test)[:,1]
+    y_pred = model.predict(X_test)
+    auc = roc_auc_score(y_test, y_pred_prob)
+    acc = accuracy_score(y_test, y_pred)
+    return model, auc, acc
+
+# ---------------------------
+# Save Model & Metrics
+# ---------------------------
+def save_model(model):
+    joblib.dump(model, MODEL_FILE)
+    logging.info(f"✔ Model saved to {MODEL_FILE}")
+
+def save_metrics(auc, acc):
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("""
+        INSERT INTO model_metrics (Timestamp, AUC, Accuracy)
+        VALUES (?, ?, ?)
+    """, (
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        float(auc),
+        float(acc)
+    ))
+    con.commit()
+    con.close()
+    logging.info(f"✔ Metrics logged: AUC={auc:.3f}, Accuracy={acc:.3f}")
+
+# ---------------------------
+# Main
+# ---------------------------
 if __name__ == "__main__":
-    train_model()
+    setup_db()
 
+    # Load NBA games data
+    con = sqlite3.connect(DB_PATH)
+    df_games = pd.read_sql("SELECT * FROM nba_games", con)
+    con.close()
+
+    if df_games.empty:
+        logging.error("❌ No NBA game data found. Please fetch and store games first.")
+        exit(1)
+
+    df_feat = build_features(df_games)
+    X, y = prepare_model_data(df_feat)
+
+    model, auc, acc = train_xgb(X, y)
+    save_model(model)
+    save_metrics(auc, acc)
+    logging.info("🚀 Training completed successfully!")
