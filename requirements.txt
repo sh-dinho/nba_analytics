@@ -1,6 +1,0 @@
-Flask
-requests
-pandas
-joblib
-xgboost
-apscheduler
