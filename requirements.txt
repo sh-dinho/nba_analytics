@@ -1,6 +1,9 @@
 pandas
+numpy
 xgboost
 scikit-learn
 requests
+PyYAML
+flask
 schedule
-pyyaml
+python-telegram-bot
