@@ -4,6 +4,8 @@ xgboost
 scikit-learn
 requests
 PyYAML
-flask
 schedule
+flask
 python-telegram-bot
+beautifulsoup4
+lxml

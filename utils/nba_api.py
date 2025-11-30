@@ -1,21 +1,24 @@
-import pandas as pd
 import requests
+import pandas as pd
+from datetime import datetime
 
 def fetch_nba_games(season: int):
-    """Fetch NBA game results from free API (example: balldontlie.io)"""
-    games = []
+    """Fetch NBA games from the free API."""
+    url = f"https://www.balldontlie.io/api/v1/games?seasons[]={season}&per_page=100"
+    all_games = []
     page = 1
+
     while True:
-        url = f"https://www.balldontlie.io/api/v1/games?seasons[]={season}&per_page=100&page={page}"
-        resp = requests.get(url)
-        if resp.status_code != 200:
-            break
+        resp = requests.get(url + f"&page={page}")
+        resp.raise_for_status()
         data = resp.json()
-        if not data["data"]:
+        all_games.extend(data["data"])
+        if data["meta"]["next_page"] is None:
             break
-        games.extend(data["data"])
         page += 1
-    if not games:
-        raise ValueError("No NBA game data fetched.")
-    df = pd.DataFrame(games)
+
+    if not all_games:
+        raise ValueError(f"No games found for season {season}")
+
+    df = pd.DataFrame(all_games)
     return df
