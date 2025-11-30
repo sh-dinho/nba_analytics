@@ -1,11 +1,6 @@
-pandas
-numpy
-xgboost
-scikit-learn
+Flask
 requests
-PyYAML
-schedule
-flask
-python-telegram-bot
-beautifulsoup4
-lxml
+pandas
+joblib
+xgboost
+apscheduler
