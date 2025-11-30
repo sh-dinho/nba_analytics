@@ -1,26 +1,41 @@
 import sqlite3
 import logging
 from utils.nba_api import fetch_nba_games
-from datetime import datetime
 import yaml
+import os
+
+logging.basicConfig(level=logging.INFO)
 
 CONFIG = yaml.safe_load(open("config.yaml"))
 DB_PATH = CONFIG["database"]["path"]
 
-def store_games(df):
-    conn = sqlite3.connect(DB_PATH)
-    df["Timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    df.to_sql("nba_games", conn, if_exists="replace", index=False)
-    conn.close()
-    logging.info(f"Stored {len(df)} games in DB")
+def create_tables():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    con = sqlite3.connect(DB_PATH)
+    cur = con.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS nba_games (
+            id INTEGER PRIMARY KEY,
+            date TEXT,
+            home_team TEXT,
+            home_score INTEGER,
+            visitor_team TEXT,
+            visitor_score INTEGER
+        )
+    """)
+    con.commit()
+    con.close()
 
-def main():
-    logging.info("🚀 Fetching NBA games...")
-    df = fetch_nba_games()
-    if df.empty:
-        logging.error("❌ No NBA game data found. Cannot proceed.")
-        return
-    store_games(df)
+def store_games(df):
+    con = sqlite3.connect(DB_PATH)
+    df_db = df[['id', 'date', 'home_team', 'home_score', 'visitor_team', 'visitor_score']]
+    df_db.to_sql("nba_games", con, if_exists="replace", index=False)
+    con.close()
+    logging.info(f"✅ Stored {len(df_db)} NBA games")
 
 if __name__ == "__main__":
-    main()
+    create_tables()
+    season = 2025
+    logging.info(f"🚀 Fetching NBA games for {season} season")
+    df_games = fetch_nba_games(season)
+    store_games(df_games)

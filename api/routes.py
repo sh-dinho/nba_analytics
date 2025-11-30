@@ -11,13 +11,18 @@ DB_PATH = CONFIG["database"]["path"]
 @bp.route("/train/run", methods=["POST"])
 def retrain_model():
     try:
-        subprocess.run(["python", "train_model_xgb.py"], check=True)
+        subprocess.run(["python", "train/train_model_xgb.py"], check=True)
         con = sqlite3.connect(DB_PATH)
         cur = con.cursor()
         cur.execute("""
-            INSERT INTO retrain_history (Timestamp, ModelType, Status)
-            VALUES (?, ?, ?)
-        """, (datetime.now().strftime("%Y-%m-%d %H:%M"), "xgboost", "triggered_via_api"))
+            CREATE TABLE IF NOT EXISTS retrain_history (
+                Timestamp TEXT,
+                ModelType TEXT,
+                Status TEXT
+            )
+        """)
+        cur.execute("INSERT INTO retrain_history (Timestamp, ModelType, Status) VALUES (?, ?, ?)",
+                    (datetime.now().strftime("%Y-%m-%d %H:%M"), "xgboost", "triggered_via_api"))
         con.commit()
         con.close()
         return jsonify({"status": "ok", "message": "Model retraining started"})

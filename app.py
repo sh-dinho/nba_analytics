@@ -1,12 +1,12 @@
 from flask import Flask
 from api.routes import bp as train_bp
+from datetime import datetime
 
 app = Flask(__name__)
 app.register_blueprint(train_bp)
 
 @app.route("/health")
 def health():
-    from datetime import datetime
     return {"status": "ok", "time": datetime.now().strftime("%Y-%m-%d %H:%M")}
 
 if __name__ == "__main__":
