@@ -1,6 +1,6 @@
 import pandas as pd
 import logging
-from db_module import connect, init_db
+from core.db_module import connect, init_db
 
 logging.basicConfig(level=logging.INFO)
 

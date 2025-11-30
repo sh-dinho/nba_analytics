@@ -2,17 +2,17 @@ import streamlit as st
 import numpy as np
 import logging
 
-from train_models import train_models_cached
-from evaluation_plots import (
+from models.train_models import train_models_cached
+from app.visualizations.evaluation_plots import (
     plot_confusion_matrix_with_metrics,
     plot_regression_evaluation,
     plot_simulation_results
 )
 from simulate_bankroll import simulate_bankroll
-from fetch_games import get_todays_games
-from db_module import get_bet_history, init_db
-from visualizations import plot_bet_history
-from team_visualizations import plot_team_performance
+from core.fetch_games import get_todays_games
+from core.db_module import get_bet_history, init_db
+from app.visualizations.visualizations import plot_bet_history
+from app.visualizations.team_visualizations import plot_team_performance
 
 logging.basicConfig(level=logging.INFO)
 st.set_page_config(page_title="NBA Analytics Dashboard", layout="wide")
