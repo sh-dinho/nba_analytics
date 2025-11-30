@@ -1,36 +1,44 @@
-import logging
-from pathlib import Path
+import requests
 import sqlite3
 import pandas as pd
-import requests
-from utils.nba_api import fetch_nba_games
+import logging
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(level=logging.INFO)
 
-# Paths
-BASE_DIR = Path(__file__).parent.parent.resolve()  # project root
-CONFIG_PATH = BASE_DIR / "config.yaml"
-DB_PATH = BASE_DIR / "nba_analytics.db"
+DB_PATH = "nba_analytics.db"
+SEASON = 2023
+PER_PAGE = 100
 
-# Load config
-import yaml
-if not CONFIG_PATH.exists():
-    raise FileNotFoundError(f"Config file not found at {CONFIG_PATH}")
-CONFIG = yaml.safe_load(open(CONFIG_PATH))
+def fetch_games(season):
+    logging.info(f"🚀 Fetching NBA games for season {season}")
+    games = []
+    page = 1
+    while True:
+        url = f"https://www.balldontlie.io/api/v1/games?seasons[]={season}&per_page={PER_PAGE}&page={page}"
+        resp = requests.get(url)
+        if resp.status_code != 200:
+            logging.warning(f"HTTP error on page {page}: {resp.status_code}")
+            break
+        data = resp.json()
+        games.extend(data["data"])
+        if page >= data["meta"]["total_pages"]:
+            break
+        page += 1
+    if not games:
+        logging.error("⚠ No games fetched")
+        return pd.DataFrame()
+    return pd.DataFrame(games)
 
-def store_games(df: pd.DataFrame):
+def store_games(df):
     if df.empty:
         logging.error("❌ No NBA game data found. Cannot proceed.")
         return
+    df_games = df[["id", "home_team_id", "visitor_team_id", "home_team_score", "visitor_team_score", "season", "date"]]
+    df_games.columns = ["game_id", "home_team", "away_team", "home_team_score", "away_team_score", "season", "date"]
     with sqlite3.connect(DB_PATH) as con:
-        df.to_sql("nba_games", con, if_exists="replace", index=False)
-    logging.info("✔ NBA games stored successfully.")
+        df_games.to_sql("nba_games", con, if_exists="replace", index=False)
+    logging.info(f"✔ Stored {len(df_games)} games in database.")
 
 if __name__ == "__main__":
-    season = 2025
-    logging.info(f"🚀 Fetching NBA games for {season} season")
-    try:
-        df_games = fetch_nba_games(season)
-        store_games(df_games)
-    except Exception as e:
-        logging.error(f"Failed to fetch/store games: {e}")
+    df_games = fetch_games(SEASON)
+    store_games(df_games)
