@@ -16,17 +16,17 @@ def compare_snapshots():
 
     merged = current.merge(previous, on="PLAYER_NAME", suffixes=("_curr", "_prev"))
 
-    merged["PTS_change"] = merged["PTS_curr"] - merged["PTS_prev"]
-    merged["REB_change"] = merged["REB_curr"] - merged["REB_prev"]
-    merged["AST_change"] = merged["AST_curr"] - merged["AST_prev"]
+    # Calculate changes across multiple metrics
+    for metric in ["PTS", "REB", "AST", "TS_PCT"]:
+        merged[f"{metric}_change"] = merged[f"{metric}_curr"] - merged[f"{metric}_prev"]
 
-    # Rank changes
+    # Trend classification based on points change
     merged["trend"] = merged["PTS_change"].apply(
         lambda x: "Rising" if x > 1 else ("Falling" if x < -1 else "Stable")
     )
 
     merged.to_csv(TRENDS_FILE, index=False)
-    print(f"📊 Trends saved to {TRENDS_FILE}")
+    print(f"📊 Multi-metric trends saved to {TRENDS_FILE}")
 
 if __name__ == "__main__":
     compare_snapshots()
