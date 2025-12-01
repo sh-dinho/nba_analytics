@@ -1,3 +1,4 @@
+# pyproject.toml
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
@@ -35,4 +36,11 @@ dev = ["black", "flake8", "mypy", "pytest-cov"]
 viz = ["plotly", "altair"]
 
 [project.scripts]
-nba-pipeline = "scripts.run_daily_pipeline:main"
+nba-pipeline = "scripts/run_daily_pipeline:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["nba_analytics_core*"]
