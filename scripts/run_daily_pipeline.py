@@ -4,7 +4,7 @@ import logging
 import pandas as pd
 from app.predict_pipeline import generate_predictions, build_bets_from_predictions
 from scripts.simulate_bankroll import simulate_bankroll
-from nba_core.utils import send_telegram_message
+from nba_analytics_core.utils import send_telegram_message
 
 def main(threshold: float = 0.6, strategy: str = "kelly", max_fraction: float = 0.05):
     logging.basicConfig(level=logging.INFO)

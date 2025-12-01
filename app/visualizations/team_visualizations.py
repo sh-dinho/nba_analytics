@@ -2,7 +2,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
 import pandas as pd
-from nba_core.team_performance import get_team_performance
+from nba_analytics_core.team_performance import get_team_performance
 
 def plot_team_performance(season: int = None):
     """

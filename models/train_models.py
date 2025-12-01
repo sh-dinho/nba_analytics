@@ -8,7 +8,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.metrics import log_loss, mean_squared_error, r2_score, roc_auc_score
 
-from nba_core.data import fetch_historical_games, engineer_features
+from nba_analytics_core.data import fetch_historical_games, engineer_features
 
 def evaluate_models(clf, reg, X_test, y_class_test, y_reg_test) -> dict:
     """Evaluates models and returns a dictionary of metrics."""

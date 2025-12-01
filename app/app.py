@@ -3,11 +3,11 @@ import streamlit as st
 import pandas as pd
 
 # Core modules
-from nba_core.data import fetch_historical_games, engineer_features
-from nba_core.db_module import connect
-from nba_core.fetch_games import get_todays_games
-# from nba_core.team_performance import team_stats
-# from nba_core.utils import send_telegram_message
+from nba_analytics_core.data import fetch_historical_games, engineer_features
+from nba_analytics_core.db_module import connect
+from nba_analytics_core.fetch_games import get_todays_games
+# from nba_analytics_core.team_performance import team_stats
+# from nba_analytics_core.utils import send_telegram_message
 
 # Models
 from models.train_models import train_models_cached

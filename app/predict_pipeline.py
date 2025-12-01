@@ -1,11 +1,11 @@
 # app/predict_pipeline.py
 import logging
 import pandas as pd
-from nba_core.fetch_games import get_todays_games
-from nba_core.data import engineer_features
-from nba_core.odds import fetch_game_odds
+from nba_analytics_core.fetch_games import get_todays_games
+from nba_analytics_core.data import engineer_features
+from nba_analytics_core.odds import fetch_game_odds
 from app.predictor import load_models # your existing load_models
-from nba_core.utils import send_telegram_message
+from nba_analytics_core.utils import send_telegram_message
 
 def calculate_expected_value(prob: float, odds: float) -> float:
     """

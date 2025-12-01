@@ -1,6 +1,6 @@
 import pandas as pd
 
-from nba_core.db_module import connect
+from nba_analytics_core.db_module import connect
 
 
 def team_stats(team: str):
