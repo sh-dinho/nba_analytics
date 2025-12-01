@@ -1,11 +1,9 @@
+# Path: requirements.txt
+streamlit
+nba_api
+scikit-learn
 pandas
 numpy
-xgboost
-scikit-learn
-requests
-PyYAML
-schedule
-flask
-python-telegram-bot
-beautifulsoup4
-lxml
+joblib
+python-dotenv
+matplotlib
