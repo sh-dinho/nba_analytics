@@ -1,58 +1,53 @@
 # File: scripts/setup_all.py
 import os
-import subprocess
-import datetime
+import pandas as pd
+import joblib
 
-os.makedirs("results", exist_ok=True)
-
-# Create a unique log file per run
-timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-LOG_FILE = f"setup_log_{timestamp}.txt"
-
-def log(message):
-    """Write message to both console and log file."""
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    line = f"[{ts}] {message}"
-    print(line)
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(line + "\n")
-
-def run_step(cmd, desc):
-    log(f"▶️ {desc}...")
-    try:
-        subprocess.run(cmd, check=True)
-        log(f"✅ {desc} completed")
-        return True
-    except subprocess.CalledProcessError as e:
-        log(f"❌ {desc} failed: {e}")
-        return False
-    except FileNotFoundError:
-        log(f"❌ {desc} failed: script not found")
-        return False
+# Import your functions from other scripts
+from scripts.generate_weekly_snapshots import main as generate_snapshots
+from scripts.weekly_summary import main as generate_summary
+from scripts.player_trends import main as generate_trends
+from scripts.build_training_data import main as build_training
+from scripts.train_model import main as train_model
+from app.predict_pipeline import generate_today_predictions
+from scripts.generate_picks import main as generate_picks
 
 def main():
-    steps = [
-        (["python", "scripts/player_trends.py"], "Generate player trends"),
-        (["python", "scripts/build_weekly_summary.py"], "Build weekly summary"),
-        ([
-            "python", "scripts/train_model.py",
-            "--seasons", "2021-22", "2022-23", "2023-24", "2024-25",
-            "--train_ou"
-        ], "Train model"),
-        (["python", "app/predict_pipeline.py"], "Generate predictions"),
-    ]
+    os.makedirs("results", exist_ok=True)
+    os.makedirs("data", exist_ok=True)
+    os.makedirs("models", exist_ok=True)
 
-    results = {}
-    for cmd, desc in steps:
-        success = run_step(cmd, desc)
-        results[desc] = success
+    # Step 1: Generate weekly snapshots
+    print("📸 Generating weekly snapshots...")
+    generate_snapshots()
 
-    log("\n📊 Summary:")
-    for desc, success in results.items():
-        status = "✅ Success" if success else "❌ Failed"
-        log(f"- {desc}: {status}")
+    # Step 2: Build weekly summary
+    print("📊 Building weekly summary...")
+    generate_summary()
 
-    log(f"\nRun complete. Full log saved to {LOG_FILE}")
+    # Step 3: Build player trends
+    print("📈 Building player trends...")
+    generate_trends()
+
+    # Step 4: Build training dataset
+    print("🛠️ Building training dataset...")
+    build_training()
+
+    # Step 5: Train model
+    print("🤖 Training model...")
+    train_model()
+
+    # Step 6: Predict today’s games
+    print("🔮 Generating today's predictions...")
+    df = generate_today_predictions()
+    preds_file = "results/predictions.csv"
+    df.to_csv(preds_file, index=False)
+    print(f"✅ Predictions saved to {preds_file}")
+
+    # Step 7: Generate picks
+    print("🏀 Generating picks...")
+    generate_picks()
+    print("✅ Picks saved to results/picks.csv")
 
 if __name__ == "__main__":
     main()

@@ -1,30 +1,37 @@
 # File: scripts/player_trends.py
-import os
 import pandas as pd
+import os
 
-os.makedirs("results", exist_ok=True)
+def main():
+    os.makedirs("results", exist_ok=True)
 
-def generate_player_trends():
-    # Example: replace with your actual data source
-    data = [
-        {"week": "2025-11-17", "PLAYER_NAME": "LeBron James", "TEAM_ABBREVIATION": "LAL", "points": 25, "rebounds": 8, "assists": 9, "TS_PCT": 0.58},
-        {"week": "2025-11-24", "PLAYER_NAME": "LeBron James", "TEAM_ABBREVIATION": "LAL", "points": 28, "rebounds": 7, "assists": 10, "TS_PCT": 0.61},
-        {"week": "2025-11-17", "PLAYER_NAME": "Jayson Tatum", "TEAM_ABBREVIATION": "BOS", "points": 26, "rebounds": 7, "assists": 4, "TS_PCT": 0.55},
-        {"week": "2025-11-24", "PLAYER_NAME": "Jayson Tatum", "TEAM_ABBREVIATION": "BOS", "points": 27, "rebounds": 8, "assists": 5, "TS_PCT": 0.57},
-    ]
-    df = pd.DataFrame(data)
+    # Example: load raw player stats (adjust path to your actual source)
+    raw_file = "data/player_stats.csv"
+    if not os.path.exists(raw_file):
+        raise FileNotFoundError("Raw player stats file not found. Place your source data in data/player_stats.csv")
 
-    # Sort by player and week to compute changes
-    df = df.sort_values(["PLAYER_NAME", "week"])
+    df = pd.read_csv(raw_file)
 
-    # Compute deltas week-over-week
-    df["PTS_change"] = df.groupby("PLAYER_NAME")["points"].diff()
-    df["REB_change"] = df.groupby("PLAYER_NAME")["rebounds"].diff()
-    df["AST_change"] = df.groupby("PLAYER_NAME")["assists"].diff()
-    df["TS_PCT_change"] = df.groupby("PLAYER_NAME")["TS_PCT"].diff()
+    # Convert date to datetime and add week number
+    df["date"] = pd.to_datetime(df["date"])
+    df["week"] = df["date"].dt.isocalendar().week
 
-    df.to_csv("results/player_trends.csv", index=False)
-    print("✅ Player trends saved to results/player_trends.csv")
+    # Example trend calculation: rolling averages of points, rebounds, assists
+    df = df.sort_values(["player", "date"])
+    df["points_trend"] = df.groupby("player")["points"].transform(lambda x: x.rolling(3, min_periods=1).mean())
+    df["rebounds_trend"] = df.groupby("player")["rebounds"].transform(lambda x: x.rolling(3, min_periods=1).mean())
+    df["assists_trend"] = df.groupby("player")["assists"].transform(lambda x: x.rolling(3, min_periods=1).mean())
+
+    # Aggregate by team and week to get team-level trends
+    trends = df.groupby(["team", "week"]).agg({
+        "points_trend": "mean",
+        "rebounds_trend": "mean",
+        "assists_trend": "mean"
+    }).reset_index()
+
+    out_file = "results/player_trends.csv"
+    trends.to_csv(out_file, index=False)
+    print(f"✅ Player trends saved to {out_file}")
 
 if __name__ == "__main__":
-    generate_player_trends()
+    main()

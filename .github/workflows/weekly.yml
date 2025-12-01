@@ -1,12 +1,12 @@
-name: NBA Analytics Automation
+name: NBA Analytics Weekly Retrain
 
 on:
   schedule:
-    - cron: "0 3 * * *"   # Runs every day at 3 AM UTC
-  workflow_dispatch:       # Allow manual trigger
+    - cron: "0 4 * * MON"   # Runs every Monday at 4 AM UTC
+  workflow_dispatch:         # Allow manual trigger
 
 jobs:
-  build-and-run:
+  retrain-and-run:
     runs-on: ubuntu-latest
 
     steps:
@@ -23,6 +23,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Build training dataset
+        run: |
+          python scripts/build_training_data.py
+
+      - name: Retrain model
+        run: |
+          python scripts/train_model.py
+
       - name: Run full pipeline
         run: |
           python scripts/setup_all.py
@@ -30,7 +38,7 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v3
         with:
-          name: nba-results
+          name: nba-weekly-results
           path: results/
 
       - name: Send Telegram notification
@@ -38,4 +46,4 @@ jobs:
           curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendDocument \
             -F chat_id=${{ secrets.TELEGRAM_CHANNEL }} \
             -F document=@results/picks.csv \
-            -F caption="🏀 Fresh NBA picks generated automatically!"
+            -F caption="📅 Weekly retrain complete — fresh NBA picks are ready!"
