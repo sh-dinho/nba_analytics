@@ -23,8 +23,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Train & Evaluate
-        run: python scripts/train_model.py --seasons 2021-22 2022-23 2023-24 --train_ou
+      - name: Train model
+        run: |
+          export PYTHONPATH=$PWD
+          python scripts/train_model.py --seasons 2021-22 2022-23 2023-24 2024-25 --train_ou
 
       - name: Generate predictions artifact
         run: |
