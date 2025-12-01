@@ -1,13 +1,12 @@
-# File: .github/workflows/player_tracker.yml
-name: Weekly Player Tracker
+name: Monthly Awards Tracker
 
 on:
   schedule:
-    - cron: "0 3 * * MON"   # Every Monday at 3 AM UTC
+    - cron: "0 4 1 * *"   # 4:00 AM UTC on the 1st of every month
   workflow_dispatch:
 
 jobs:
-  weekly:
+  monthly:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -29,17 +28,15 @@ jobs:
           echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> $GITHUB_ENV
           echo "TELEGRAM_CHANNEL=${{ secrets.TELEGRAM_CHANNEL }}" >> $GITHUB_ENV
 
-      - name: Generate weekly snapshots
-        run: python scripts/generate_weekly_snapshots.py
+      - name: Train awards models
+        run: |
+          export PYTHONPATH=$PWD
+          python scripts/train_awards.py --monthly
 
-      - name: Build player trends
-        run: python scripts/player_trends.py
-
-      - name: Build weekly summary
-        run: python scripts/weekly_summary.py
-
-      - name: Awards forecasts
-        run: python scripts/train_awards.py
+      - name: Generate awards summary
+        run: |
+          export PYTHONPATH=$PWD
+          python scripts/awards_summary.py
 
       - name: Run tests
         run: pytest --maxfail=1 --disable-warnings -q
@@ -47,7 +44,7 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: weekly-tracker
+          name: monthly-awards
           path: results/
 
       - name: Notify Telegram
@@ -56,6 +53,6 @@ jobs:
           import os, requests
           token = os.environ["TELEGRAM_BOT_TOKEN"]
           channel = os.environ["TELEGRAM_CHANNEL"]
-          msg = "📊 Weekly Player Tracker completed. Results uploaded."
+          msg = "🏅 Monthly Awards Tracker completed. Forecasts and summary uploaded."
           requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": channel, "text": msg})
           PY

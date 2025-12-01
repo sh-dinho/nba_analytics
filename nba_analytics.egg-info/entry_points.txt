@@ -1,0 +1,2 @@
+[console_scripts]
+nba-cli = scripts.run_cli:main

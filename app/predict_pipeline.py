@@ -1,62 +1,41 @@
-# Path: app/predict_pipeline.py
-import os
+# File: app/predict_pipeline.py
 import joblib
 import pandas as pd
-from datetime import datetime
-from nba_analytics_core.data import fetch_today_games, build_team_stats, build_matchup_features
+import os
 
-MODEL_PATH = "models/classification_model.pkl"
-OU_MODEL_PATH = "models/ou_model.pkl"
+MODEL_PATH = "models/game_predictor.pkl"
 
-def generate_today_predictions():
-    """
-    Predict home win probabilities for today's games.
-    Returns DataFrame: date, home_team, away_team, home_win_prob.
-    """
+def predict_game(game):
     if not os.path.exists(MODEL_PATH):
-        return pd.DataFrame()
+        raise FileNotFoundError("Model not trained yet. Run train_model.py first.")
 
     model = joblib.load(MODEL_PATH)
-    games = fetch_today_games()
-    if not games:
-        return pd.DataFrame()
+    # Encode teams consistently
+    teams = [game["home_team"], game["away_team"]]
+    team_codes = pd.Series(teams).astype("category").cat.codes
+    X = pd.DataFrame([team_codes], columns=["home_team_id","away_team_id"])
+    prob_home = model.predict_proba(X)[0][1]
+    return prob_home
 
-    # Build minimal team stats context (from today's pairs as placeholder)
-    team_stats = build_team_stats(games)
-
+def generate_today_predictions():
+    # Placeholder: generate dummy predictions
+    games = [
+        {"date": "2025-12-01", "home_team": "LAL", "away_team": "BOS"},
+        {"date": "2025-12-01", "home_team": "NYK", "away_team": "MIA"},
+    ]
     rows = []
     for g in games:
-        feats = build_matchup_features(g["home_team"], g["away_team"], team_stats)
-        prob = float(model.predict_proba([feats])[0][1])
+        prob_home = predict_game(g)
         rows.append({
-            "date": datetime.now().strftime("%Y-%m-%d"),
+            "date": g["date"],
             "home_team": g["home_team"],
             "away_team": g["away_team"],
-            "home_win_prob": round(prob, 4),
+            "home_win_prob": prob_home
         })
+    return pd.DataFrame(rows)
 
-    return pd.DataFrame(rows).sort_values(by="home_win_prob", ascending=False)
-
-def generate_today_predictions_with_totals(line=220.0):
-    """
-    Predict Over/Under probabilities for today's games vs a given line.
-    Requires OU model; falls back if not present.
-    """
-    base = generate_today_predictions()
-    if base.empty or not os.path.exists(OU_MODEL_PATH):
-        return base
-
-    ou_model = joblib.load(OU_MODEL_PATH)
-    games = fetch_today_games()
-    team_stats = build_team_stats(games)
-
-    probs_over = []
-    for _, row in base.iterrows():
-        feats = build_matchup_features(row["home_team"], row["away_team"], team_stats)
-        prob_over = float(ou_model.predict_proba([feats])[0][1])
-        probs_over.append(prob_over)
-
-    base["prob_over"] = probs_over
-    base["prob_under"] = 1 - base["prob_over"]
-    base["line"] = line
-    return base
+def generate_today_predictions_with_totals():
+    # Placeholder: add dummy totals
+    df = generate_today_predictions()
+    df["total_points_pred"] = 220  # dummy constant
+    return df

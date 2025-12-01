@@ -1,44 +1,43 @@
+# File: scripts/simulate_bankroll.py
+
 import pandas as pd
 
-def simulate_bankroll(df, strategy="kelly", max_fraction=0.05, initial_bankroll=1000):
+def simulate_bankroll(df: pd.DataFrame, strategy: str = "kelly", initial: float = 1000):
     """
-    Simulate bankroll growth given bets.
-    df requires: ['decimal_odds', 'prob', 'ev'].
-    Returns (bankroll_history, metrics).
+    df columns: decimal_odds, prob, ev_home (ev used for screening/sizing if needed)
+    Returns: (trajectory_list, metrics_dict)
     """
-    bankroll = initial_bankroll
-    bankroll_history = [bankroll]
-    wins, losses = 0, 0
+    bankroll = initial
+    trajectory = []
+    wins = losses = 0
 
-    for _, bet in df.iterrows():
-        prob = bet["prob"]
-        odds = bet["decimal_odds"]
+    for _, row in df.iterrows():
+        p = float(row["prob"])
+        o = float(row["decimal_odds"])
+        # Basic Kelly fraction for decimal odds (assuming net odds b = o-1)
+        b = o - 1.0
+        kelly = ((b * p) - (1 - p)) / b if b > 0 else 0
+        fraction = max(0.0, min(kelly, 0.05))  # cap at 5%
+        stake = bankroll * fraction
 
-        if strategy == "kelly":
-            k = ((prob * (odds - 1)) - (1 - prob)) / (odds - 1)
-            stake = bankroll * max(0, min(k, max_fraction))
-        else:
-            stake = bankroll * 0.02  # flat 2%
-
-        # naive: bet outcome based on probability threshold 0.5
-        outcome_win = prob >= 0.5
-        if outcome_win:
-            bankroll += stake * (odds - 1)
+        # Simulate expected outcome deterministically? If you want stochastic, replace with random:
+        expected_edge = (p * b) - (1 - p)
+        won = expected_edge > 0  # deterministic proxy; replace with random draw for Monte Carlo
+        if won:
+            bankroll += stake * b
             wins += 1
         else:
             bankroll -= stake
             losses += 1
 
-        bankroll_history.append(bankroll)
+        trajectory.append(bankroll)
 
-    roi = (bankroll - initial_bankroll) / initial_bankroll
-    win_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
-
+    roi = (bankroll - initial) / initial if initial else 0.0
     metrics = {
         "final_bankroll": bankroll,
         "roi": roi,
-        "win_rate": win_rate,
         "wins": wins,
-        "losses": losses
+        "losses": losses,
+        "win_rate": wins / (wins + losses) if (wins + losses) else 0.0,
     }
-    return bankroll_history, metrics
+    return trajectory, metrics

@@ -1,0 +1,28 @@
+# File: settings.toml
+
+[general]
+# Default bankroll settings
+initial_bankroll = 1000
+default_strategy = "kelly"
+default_max_fraction = 0.05
+
+# Thresholds
+probability_threshold = 0.65
+monte_carlo_sims = 1000
+
+# Streamlit dashboard pages
+pages = [
+    "Daily Predictions",
+    "Weekly Summary",
+    "Weekly Player Trends",
+    "CLI Results",
+    "Monte Carlo Bankroll Simulation",
+    "Player-Level Monte Carlo"
+]
+
+[notifications]
+telegram_enabled = true
+telegram_channel = "@nba_analytics_alerts"
+
+[odds_api]
+api_url = "https://api.the-odds-api.com/v4/sports"

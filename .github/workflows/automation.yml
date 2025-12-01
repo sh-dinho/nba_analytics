@@ -1,4 +1,4 @@
-# Path: .github/workflows/automation.yml
+# File: .github/workflows/automation.yml
 name: Nightly Predictions
 
 on:
@@ -23,6 +23,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Setup environment
+        run: |
+          echo "ODDS_API_KEY=${{ secrets.ODDS_API_KEY }}" >> $GITHUB_ENV
+          echo "TELEGRAM_BOT_TOKEN=${{ secrets.TELEGRAM_BOT_TOKEN }}" >> $GITHUB_ENV
+          echo "TELEGRAM_CHANNEL=${{ secrets.TELEGRAM_CHANNEL }}" >> $GITHUB_ENV
+
       - name: Train model
         run: |
           export PYTHONPATH=$PWD
@@ -41,8 +47,21 @@ jobs:
           print("✅ Saved results/predictions.csv and results/predictions_ou.csv")
           PY
 
+      - name: Run tests
+        run: pytest --maxfail=1 --disable-warnings -q
+
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: nightly-results
           path: results/
+
+      - name: Notify Telegram
+        run: |
+          python - <<'PY'
+          import os, requests
+          token = os.environ["TELEGRAM_BOT_TOKEN"]
+          channel = os.environ["TELEGRAM_CHANNEL"]
+          msg = "✅ Nightly predictions generated and uploaded."
+          requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": channel, "text": msg})
+          PY
