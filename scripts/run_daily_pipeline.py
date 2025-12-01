@@ -15,13 +15,27 @@ def main(threshold: float = 0.6, strategy: str = "kelly", max_fraction: float = 
 
     bets = build_bets_from_predictions(preds, threshold=threshold)
     if bets.empty:
-        logging.info("No qualifying bets.")
+        logging.info("No qualifying bets (based on probability AND positive EV).")
         return
 
     sim = simulate_bankroll(bets, strategy=strategy, max_fraction=max_fraction)
 
+    # Calculate Max Drawdown for risk assessment
+    # Max Drawdown = max(Peak - Trough) / Peak
+    bankroll_history = sim['bankroll']
+    cumulative_max = bankroll_history.cummax()
+    drawdown = cumulative_max - bankroll_history
+    max_drawdown_amount = drawdown.max()
+    max_drawdown_percentage = (drawdown / cumulative_max).max()
+
     try:
-        send_telegram_message(f"Pipeline complete: {len(bets)} bets generated. Latest bankroll: {sim.iloc[-1]['bankroll']:.2f}")
+        # Include Max Drawdown in the notification
+        send_telegram_message(
+            f"Pipeline complete: {len(bets)} value bets generated. "
+            f"Latest bankroll: ${bankroll_history.iloc[-1]:.2f}. "
+            f"Max Drawdown: {max_drawdown_percentage:.2%}" # NEW: Max Drawdown included
+        )
+        # 
     except Exception:
         pass
 

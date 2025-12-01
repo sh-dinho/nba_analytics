@@ -1,8 +1,10 @@
+# core/db_module.py (Updated)
 import sqlite3
-
+from config import DB_PATH # Read from config.py
 
 def connect():
-    return sqlite3.connect("bets.db")
+    # Use the path defined in config.py
+    return sqlite3.connect(DB_PATH) 
 
 
 def init_db():
