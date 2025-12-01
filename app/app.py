@@ -27,7 +27,7 @@ page = st.sidebar.radio(
         "Weekly Summary",
         "Awards Forecasts"
     ],
-    key="main_nav"   # ✅ unique key for navigation radio
+    key="nav_radio"   # ✅ unique key for navigation
 )
 
 # --- Daily Predictions ---
@@ -47,7 +47,7 @@ if page == "Daily Predictions":
             st.subheader("Top picks")
             threshold = st.sidebar.slider(
                 "Probability threshold", 0.5, 0.9, 0.65, 0.01, key="threshold_slider"
-            )  # ✅ unique key for slider
+            )  # ✅ unique key
             st.dataframe(df[df["home_win_prob"] >= threshold], use_container_width=True)
     except Exception as e:
         st.error(f"Error generating predictions: {e}")
@@ -61,7 +61,7 @@ elif page == "Over/Under Forecasts":
         from app.predict_pipeline import generate_today_predictions_with_totals
         line = st.sidebar.number_input(
             "Points line", min_value=180.0, max_value=260.0, value=220.0, step=0.5, key="ou_line_input"
-        )  # ✅ unique key for number input
+        )  # ✅ unique key
         df = generate_today_predictions_with_totals(line=line)
 
         if df.empty:
