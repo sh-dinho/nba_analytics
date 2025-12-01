@@ -7,7 +7,8 @@ import numpy as np
 
 from nba_analytics_core.data import engineer_features
 from nba_analytics_core.fetch_games import get_todays_games
-from config import THRESHOLD # Using config for threshold
+import config
+THRESHOLD = config.THRESHOLD
 
 def load_models():
     clf = joblib.load("models/classification_model.pkl")

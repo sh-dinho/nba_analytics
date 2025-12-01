@@ -2,6 +2,12 @@
 import streamlit as st
 import pandas as pd
 
+
+# nba_analytics_core/db_module.py
+import os, sys
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))  # add parent folder
+import config
+
 # Core modules
 from nba_analytics_core.data import fetch_historical_games, engineer_features
 from nba_analytics_core.db_module import connect
