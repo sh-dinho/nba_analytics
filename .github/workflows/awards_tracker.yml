@@ -8,6 +8,8 @@ on:
 jobs:
   monthly:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,6 +18,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Install deps
         run: |
@@ -29,23 +39,21 @@ jobs:
           echo "TELEGRAM_CHANNEL=${{ secrets.TELEGRAM_CHANNEL }}" >> $GITHUB_ENV
 
       - name: Train awards models
-        run: |
-          export PYTHONPATH=$PWD
-          python scripts/train_awards.py --monthly
+        run: python scripts/train_awards.py --monthly
 
       - name: Generate awards summary
-        run: |
-          export PYTHONPATH=$PWD
-          python scripts/awards_summary.py
+        run: python scripts/awards_summary.py
 
       - name: Run tests
         run: pytest --maxfail=1 --disable-warnings -q
 
-      - name: Upload results
+      - name: Upload results and logs
         uses: actions/upload-artifact@v4
         with:
           name: monthly-awards
-          path: results/
+          path: |
+            results/
+            setup_log_*.txt
 
       - name: Notify Telegram
         run: |
@@ -53,6 +61,7 @@ jobs:
           import os, requests
           token = os.environ["TELEGRAM_BOT_TOKEN"]
           channel = os.environ["TELEGRAM_CHANNEL"]
-          msg = "🏅 Monthly Awards Tracker completed. Forecasts and summary uploaded."
+          run_url = f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          msg = f"🏅 Monthly Awards Tracker completed.\nForecasts and summary uploaded.\nSee artifacts: {run_url}"
           requests.post(f"https://api.telegram.org/bot{token}/sendMessage", data={"chat_id": channel, "text": msg})
           PY

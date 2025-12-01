@@ -1,4 +1,5 @@
-PLAYER_NAME,TEAM_ABBREVIATION,points,rebounds,assists
-LeBron James,LAL,28,8,9
-Jayson Tatum,BOS,26,7,4
-Nikola Jokic,DEN,25,12,10
+week,PLAYER_NAME,TEAM_ABBREVIATION,points,rebounds,assists,TS_PCT,PTS_change,REB_change,AST_change,TS_PCT_change
+2025-11-17,Jayson Tatum,BOS,26,7,4,0.55,,,,
+2025-11-24,Jayson Tatum,BOS,27,8,5,0.57,1.0,1.0,1.0,0.019999999999999907
+2025-11-17,LeBron James,LAL,25,8,9,0.58,,,,
+2025-11-24,LeBron James,LAL,28,7,10,0.61,3.0,-1.0,1.0,0.030000000000000027
