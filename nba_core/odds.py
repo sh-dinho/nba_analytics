@@ -3,7 +3,7 @@ import os
 import logging
 import requests
 import pandas as pd
-from core.utils import get_standardized_team_name # New standardization utility
+from nba_core.utils import get_standardized_team_name # New standardization utility
 from config import ODDS_API_KEY # New: Use config for key placeholder
 
 def american_to_decimal(american_odds: int) -> float:

@@ -5,8 +5,8 @@ import joblib
 import json
 import numpy as np
 
-from core.data import engineer_features
-from core.fetch_games import get_todays_games
+from nba_core.data import engineer_features
+from nba_core.fetch_games import get_todays_games
 from config import THRESHOLD # Using config for threshold
 
 def load_models():

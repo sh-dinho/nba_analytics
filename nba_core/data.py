@@ -2,7 +2,7 @@ import sqlite3
 import pandas as pd
 import logging
 
-from core.db_module import connect
+from nba_core.db_module import connect
 
 
 def fetch_historical_games():

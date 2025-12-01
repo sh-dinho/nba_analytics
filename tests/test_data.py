@@ -1,5 +1,5 @@
 import pandas as pd
-from core.data import engineer_features
+from nba_core.data import engineer_features
 
 
 def test_engineer_features():

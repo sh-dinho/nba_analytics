@@ -1,7 +1,7 @@
 import pandas as pd
 import logging
 
-from core.db_module import connect, init_db
+from nba_core.db_module import connect, init_db
 
 
 def scrape_season(season: int) -> pd.DataFrame:

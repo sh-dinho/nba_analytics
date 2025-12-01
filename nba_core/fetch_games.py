@@ -2,7 +2,7 @@ import pandas as pd
 import logging
 from datetime import date
 
-from core.db_module import connect
+from nba_core.db_module import connect
 
 
 def get_todays_games():

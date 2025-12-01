@@ -1,7 +1,7 @@
 import pandas as pd
 import logging
 
-from core.db_module import connect, init_db
+from nba_core.db_module import connect, init_db
 
 
 def import_games_from_csv(path: str):
