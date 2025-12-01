@@ -1,59 +1,84 @@
-# scripts/train_model.py
-import logging
-import joblib
+import argparse
+import os
 import pandas as pd
-from datetime import datetime
-from nba_api.stats.endpoints import leaguegamefinder
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
+import joblib
+from sklearn.linear_model import LogisticRegression
+from nba_analytics_core.data import fetch_historical_games, build_team_stats, build_matchup_features
+from nba_analytics_core.odds import fetch_odds
+from scripts.simulate_bankroll import simulate_bankroll
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+MODEL_PATH = "models/classification_model.pkl"
 
-def current_season() -> str:
-    """Return current NBA season string, e.g. '2025-26'."""
-    year = datetime.now().year
-    # NBA season starts in October, so adjust if before July
-    if datetime.now().month < 7:
-        return f"{year-1}-{str(year)[-2:]}"
-    else:
-        return f"{year}-{str(year+1)[-2:]}"
-
-def fetch_historical_games(seasons) -> pd.DataFrame:
-    """Fetch NBA games across multiple seasons."""
-    all_games = []
+def train_model(seasons):
+    X, y = [], []
     for season in seasons:
-        logging.info(f"Fetching NBA games for season {season}...")
-        gamefinder = leaguegamefinder.LeagueGameFinder(season_nullable=season)
-        games = gamefinder.get_data_frames()[0]
-        games["SEASON"] = season
-        all_games.append(games)
-        logging.info(f"✔ Retrieved {len(games)} games for {season}")
-    return pd.concat(all_games, ignore_index=True)
+        games = fetch_historical_games(season)
+        team_stats = build_team_stats(games)
+        for g in games:
+            if not g.get("away_team"):
+                continue
+            feats = build_matchup_features(g["home_team"], g["away_team"], team_stats)
+            X.append(feats)
+            y.append(1 if g["home_win"] else 0)
 
-def build_features(games: pd.DataFrame):
-    """Build features and labels for training."""
-    features = games[["PTS", "REB", "AST", "FG_PCT", "PLUS_MINUS"]].copy()
-    labels = (games["PLUS_MINUS"] > 0).astype(int)  # 1 = win, 0 = loss
-    return features, labels
+    model = LogisticRegression(max_iter=1000)
+    model.fit(X, y)
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    joblib.dump(model, MODEL_PATH)
+    print(f"✅ Model trained and saved to {MODEL_PATH}")
+    return model
 
-def train_and_save(seasons, model_path="models/classification_model.pkl"):
-    games = fetch_historical_games(seasons)
-    X, y = build_features(games)
+def backtest_model(seasons, strategy="kelly", max_fraction=0.05, export_path="results/backtest.csv"):
+    model = joblib.load(MODEL_PATH)
+    results = []
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
-    )
-    model = RandomForestClassifier(n_estimators=300, random_state=42)
-    model.fit(X_train, y_train)
+    for season in seasons:
+        games = fetch_historical_games(season)
+        team_stats = build_team_stats(games)
+        bets = []
 
-    acc = model.score(X_test, y_test)
-    logging.info(f"Model accuracy on test set: {acc:.3f}")
+        for g in games:
+            if not g.get("away_team"):
+                continue
+            feats = build_matchup_features(g["home_team"], g["away_team"], team_stats)
+            prob = float(model.predict_proba([feats])[0][1])
 
-    joblib.dump(model, model_path)
-    logging.info(f"✔ Model saved to {model_path}")
+            odds = fetch_odds(home_team=g["home_team"], away_team=g["away_team"])
+            if not odds:
+                continue
+            home_odds = odds["home_odds"]
+            ev = (prob * (home_odds - 1)) - (1 - prob)
+
+            bets.append({"team": g["home_team"], "decimal_odds": home_odds, "prob": prob, "ev": ev})
+
+        if not bets:
+            continue
+
+        _, metrics = simulate_bankroll(pd.DataFrame(bets), strategy=strategy, max_fraction=max_fraction)
+        results.append({
+            "season": season,
+            "roi": metrics["roi"],
+            "win_rate": metrics["win_rate"],
+            "final_bankroll": metrics["final_bankroll"]
+        })
+
+    df = pd.DataFrame(results)
+    os.makedirs(os.path.dirname(export_path), exist_ok=True)
+    df.to_csv(export_path, index=False)
+    print(f"📂 Backtest results exported to {export_path}")
+
+def main():
+    parser = argparse.ArgumentParser(description="Train and backtest NBA model")
+    parser.add_argument("--seasons", nargs="+", default=["2021-22","2022-23","2023-24"], help="Seasons to train/backtest on")
+    parser.add_argument("--backtest", action="store_true", help="Run backtesting after training")
+    parser.add_argument("--export", type=str, default="results/backtest.csv", help="Path to export backtest results")
+    parser.add_argument("--strategy", choices=["kelly", "flat"], default="kelly")
+    parser.add_argument("--max_fraction", type=float, default=0.05)
+    args = parser.parse_args()
+
+    train_model(args.seasons)
+    if args.backtest:
+        backtest_model(args.seasons, strategy=args.strategy, max_fraction=args.max_fraction, export_path=args.export)
 
 if __name__ == "__main__":
-    # Train on last 5 seasons including current
-    current = current_season()
-    seasons = ["2021-22", "2022-23", "2023-24", "2024-25", current]
-    train_and_save(seasons)
+    main()

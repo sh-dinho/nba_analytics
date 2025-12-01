@@ -1,46 +1,44 @@
-# app/predict_pipeline.py
-import joblib
 import pandas as pd
-from nba_analytics_core.odds import fetch_odds
-from scripts.train_model import build_team_stats, build_matchup_features, fetch_historical_games
 
-# Always load the latest model at startup
-MODEL_PATH = "models/classification_model.pkl"
-model = joblib.load(MODEL_PATH)
+def simulate_bankroll(df, strategy="kelly", max_fraction=0.05, initial_bankroll=1000):
+    """
+    Simulate bankroll growth given bets.
+    df requires: ['decimal_odds', 'prob', 'ev'].
+    Returns (bankroll_history, metrics).
+    """
+    bankroll = initial_bankroll
+    bankroll_history = [bankroll]
+    wins, losses = 0, 0
 
-def generate_predictions(threshold=0.6):
-    odds_data = fetch_odds()
-    games = fetch_historical_games("2024-25")  # or use multiple seasons
-    team_stats = build_team_stats(games)
+    for _, bet in df.iterrows():
+        prob = bet["prob"]
+        odds = bet["decimal_odds"]
 
-    rows = []
-    for game in odds_data:
-        home = game["home_team"]
-        away = game["away_team"]
+        if strategy == "kelly":
+            k = ((prob * (odds - 1)) - (1 - prob)) / (odds - 1)
+            stake = bankroll * max(0, min(k, max_fraction))
+        else:
+            stake = bankroll * 0.02  # flat 2%
 
-        features = build_matchup_features(home, away, team_stats)
-        pred_home_win_prob = model.predict_proba([features])[0][1]
+        # naive: bet outcome based on probability threshold 0.5
+        outcome_win = prob >= 0.5
+        if outcome_win:
+            bankroll += stake * (odds - 1)
+            wins += 1
+        else:
+            bankroll -= stake
+            losses += 1
 
-        home_odds = game["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
-        ev = (pred_home_win_prob * (home_odds - 1)) - (1 - pred_home_win_prob)
+        bankroll_history.append(bankroll)
 
-        rows.append({
-            "home_team": home,
-            "away_team": away,
-            "pred_home_win_prob": pred_home_win_prob,
-            "home_decimal_odds": home_odds,
-            "home_ev": ev,
-            "strong_pick": 1 if pred_home_win_prob >= threshold and ev > 0 else 0,
-        })
-    df = pd.DataFrame(rows)
+    roi = (bankroll - initial_bankroll) / initial_bankroll
+    win_rate = wins / (wins + losses) if (wins + losses) > 0 else 0
 
-    # --- Print best picks in command line ---
-    best_picks = df.loc[df["strong_pick"] == 1].sort_values("home_ev", ascending=False)
-    if not best_picks.empty:
-        print("\n=== BEST PICKS ===")
-        for _, row in best_picks.iterrows():
-            print(f"{row['home_team']} vs {row['away_team']} | Prob={row['pred_home_win_prob']:.2f} | EV={row['home_ev']:.3f}")
-    else:
-        print("\nNo strong picks found today.")
-
-    return df
+    metrics = {
+        "final_bankroll": bankroll,
+        "roi": roi,
+        "win_rate": win_rate,
+        "wins": wins,
+        "losses": losses
+    }
+    return bankroll_history, metrics

@@ -1,22 +1,8 @@
-# nba_analytics_core/utils.py
-import os
-import yaml
-import logging
+# Utility functionsimport logging
 
-def load_yaml_config(path: str = "config.yaml") -> dict:
+def safe_float(x, default=0.0):
     try:
-        with open(path, "r") as f:
-            cfg = yaml.safe_load(f) or {}
-            return cfg
-    except FileNotFoundError:
-        logging.warning(f"config.yaml not found at {path}. Using defaults/env vars.")
-        return {}
-
-def get_cfg_value(cfg: dict, keys: list, default=None):
-    cur = cfg
-    try:
-        for k in keys:
-            cur = cur[k]
-        return cur
+        return float(x)
     except Exception:
+        logging.warning(f"Could not convert to float: {x}")
         return default

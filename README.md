@@ -1,20 +1,14 @@
-# README.md
-# NBA Analytics Core
+# NBA Analytics Project
 
-Core tools for NBA data ingestion, feature engineering, predictions, and bankroll simulation.
+A live, automated NBA analytics pipeline:
+- Live stats via nba_api
+- Live odds via The Odds API
+- Logistic regression model training
+- Backtesting with bankroll simulation
+- Streamlit dashboards for results and history
+- Nightly GitHub Actions automation
 
-## Quickstart
-- Create and initialize DB:
-  - python scripts/init_db.py
-- Update DB with seasons and export feature stats:
-  - python scripts/update_db.py
-- Run daily pipeline:
-  - nba-pipeline
-- Launch dashboard:
-  - streamlit run app/app.py
+## Quick start
 
-## Config
-Edit config.yaml and environment variables (DB_PATH, ODDS_API_KEY, PREDICTION_THRESHOLD).
-
-## Tests
-pytest
+1. Create and activate a virtual environment.
+2. Install dependencies:
