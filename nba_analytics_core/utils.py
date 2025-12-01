@@ -1,21 +1,22 @@
-# core/utils.py (Updated)
-import requests
+# nba_analytics_core/utils.py
+import os
+import yaml
 import logging
-from config import TEAM_MAP # Import the map
 
-def get_standardized_team_name(api_name: str) -> str:
-    """Standardize the team name using the predefined map, defaulting to the original name."""
-    return TEAM_MAP.get(api_name, api_name)
-
-
-def send_telegram_message(msg: str):
-    # use ENV
-    token = ""
-    chat_id = ""
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": msg}
+def load_yaml_config(path: str = "config.yaml") -> dict:
     try:
-        requests.post(url, data=payload)
-        logging.info("✔ Telegram message sent")
-    except Exception as e:
-        logging.error(f"Failed to send Telegram message: {e}")
+        with open(path, "r") as f:
+            cfg = yaml.safe_load(f) or {}
+            return cfg
+    except FileNotFoundError:
+        logging.warning(f"config.yaml not found at {path}. Using defaults/env vars.")
+        return {}
+
+def get_cfg_value(cfg: dict, keys: list, default=None):
+    cur = cfg
+    try:
+        for k in keys:
+            cur = cur[k]
+        return cur
+    except Exception:
+        return default
