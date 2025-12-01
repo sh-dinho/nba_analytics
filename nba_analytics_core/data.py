@@ -1,17 +1,18 @@
+# Path: nba_analytics_core/data.py
 from nba_api.stats.endpoints import leaguegamefinder, scoreboardv2
 import pandas as pd
 
 def fetch_historical_games(season="2023-24"):
     """
-    Fetch historical games for a season.
-    Returns list of dicts: {game_id, home_team, away_team, home_win}
+    Fetch historical games for a season and derive outcomes.
+    Returns: list of dicts {game_id, home_team, away_team, home_win}
     """
     gamefinder = leaguegamefinder.LeagueGameFinder(season_nullable=season)
-    games_df = gamefinder.get_data_frames()[0]
+    df = gamefinder.get_data_frames()[0]
 
-    # leaguegamefinder returns team perspective rows; we simplify assumptions here
     results = []
-    for _, row in games_df.iterrows():
+    # leaguegamefinder is team-centric; this heuristic extracts home/away
+    for _, row in df.iterrows():
         matchup = row.get("MATCHUP", "")
         team = row.get("TEAM_NAME", "")
         if "vs." in matchup:
@@ -30,7 +31,7 @@ def fetch_historical_games(season="2023-24"):
 def fetch_today_games():
     """
     Fetch today's scheduled games using scoreboardv2.
-    Returns list of dicts: {home_team, away_team}
+    Returns: list of dicts {home_team, away_team}
     """
     sb = scoreboardv2.ScoreboardV2()
     games = sb.game_header.get_data_frame()
@@ -51,7 +52,7 @@ def fetch_today_games():
 
 def build_team_stats(games):
     """
-    Build simple team-level stats from games list.
+    Build simple team-level stats from provided games list.
     """
     stats = {}
     for g in games:
@@ -70,12 +71,12 @@ def build_team_stats(games):
 
 def build_matchup_features(home_team, away_team, team_stats):
     """
-    Build a simple feature: win percentage difference.
+    Feature: win percentage difference (home minus away).
     """
     home = team_stats.get(home_team, {"wins": 0, "losses": 0})
     away = team_stats.get(away_team, {"wins": 0, "losses": 0})
-    home_games = home["wins"] + home["losses"]
-    away_games = away["wins"] + away["losses"]
-    home_wpct = home["wins"] / home_games if home_games > 0 else 0.5
-    away_wpct = away["wins"] / away_games if away_games > 0 else 0.5
+    hg = home["wins"] + home["losses"]
+    ag = away["wins"] + away["losses"]
+    home_wpct = home["wins"] / hg if hg > 0 else 0.5
+    away_wpct = away["wins"] / ag if ag > 0 else 0.5
     return [home_wpct - away_wpct]

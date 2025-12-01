@@ -1,63 +1,62 @@
-# Prediction pipeline placeholder
-def generate_predictions():
-    pass
+# Path: app/predict_pipeline.py
 import os
-import pandas as pd
 import joblib
+import pandas as pd
 from datetime import datetime
-import logging
-
 from nba_analytics_core.data import fetch_today_games, build_team_stats, build_matchup_features
-from nba_analytics_core.odds import fetch_odds
 
 MODEL_PATH = "models/classification_model.pkl"
+OU_MODEL_PATH = "models/ou_model.pkl"
 
-def generate_predictions(threshold=0.6, strategy="kelly", max_fraction=0.05, cli=False):
+def generate_today_predictions():
     """
-    Generate predictions for today's games by combining model probabilities with live odds.
-    Returns a DataFrame with columns: home_team, away_team, pred_home_win_prob, ev, decimal_odds.
+    Predict home win probabilities for today's games.
+    Returns DataFrame: date, home_team, away_team, home_win_prob.
     """
     if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError("Model not found. Train the model first: python scripts/train_model.py")
+        return pd.DataFrame()
 
     model = joblib.load(MODEL_PATH)
     games = fetch_today_games()
     if not games:
-        logging.info("No games found for today.")
-        return pd.DataFrame(columns=["home_team", "away_team", "pred_home_win_prob", "ev", "decimal_odds"])
+        return pd.DataFrame()
 
-    # Build simple team stats from recent history (fallback to equal stats if none)
+    # Build minimal team stats context (from today's pairs as placeholder)
     team_stats = build_team_stats(games)
 
     rows = []
     for g in games:
-        home = g["home_team"]
-        away = g["away_team"]
-
-        features = build_matchup_features(home, away, team_stats)
-        prob = float(model.predict_proba([features])[0][1])  # prob of home win
-
-        odds = fetch_odds(home_team=home, away_team=away)
-        if not odds:
-            continue
-
-        home_odds = odds["home_odds"]
-        ev = (prob * (home_odds - 1)) - (1 - prob)
-
+        feats = build_matchup_features(g["home_team"], g["away_team"], team_stats)
+        prob = float(model.predict_proba([feats])[0][1])
         rows.append({
             "date": datetime.now().strftime("%Y-%m-%d"),
-            "home_team": home,
-            "away_team": away,
-            "pred_home_win_prob": round(prob, 4),
-            "decimal_odds": home_odds,
-            "ev": round(ev, 4)
+            "home_team": g["home_team"],
+            "away_team": g["away_team"],
+            "home_win_prob": round(prob, 4),
         })
 
-    df = pd.DataFrame(rows).sort_values(by="ev", ascending=False)
+    return pd.DataFrame(rows).sort_values(by="home_win_prob", ascending=False)
 
-    if cli and not df.empty:
-        print("\n=== BEST PICKS ===")
-        for _, r in df[df["pred_home_win_prob"] >= threshold].iterrows():
-            print(f'{r["home_team"]} vs {r["away_team"]} | Prob={r["pred_home_win_prob"]:.2f} | EV={r["ev"]:.3f}')
+def generate_today_predictions_with_totals(line=220.0):
+    """
+    Predict Over/Under probabilities for today's games vs a given line.
+    Requires OU model; falls back if not present.
+    """
+    base = generate_today_predictions()
+    if base.empty or not os.path.exists(OU_MODEL_PATH):
+        return base
 
-    return df
+    ou_model = joblib.load(OU_MODEL_PATH)
+    games = fetch_today_games()
+    team_stats = build_team_stats(games)
+
+    probs_over = []
+    for _, row in base.iterrows():
+        feats = build_matchup_features(row["home_team"], row["away_team"], team_stats)
+        prob_over = float(ou_model.predict_proba([feats])[0][1])
+        probs_over.append(prob_over)
+
+    base["prob_over"] = probs_over
+    base["prob_under"] = 1 - base["prob_over"]
+    base["line"] = line
+    return base

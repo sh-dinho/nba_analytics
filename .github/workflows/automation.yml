@@ -1,41 +1,46 @@
-name: NBA Analytics Automation
+# Path: .github/workflows/automation.yml
+name: Nightly Predictions
 
 on:
   schedule:
-    - cron: "0 2 * * *"
+    - cron: "0 2 * * *"  # 2:00 AM UTC nightly
   workflow_dispatch:
 
 jobs:
-  automate:
+  nightly:
     runs-on: ubuntu-latest
-    env:
-      ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Cleanup
-        run: python scripts/cleanup.py --yes
+      - name: Train & Evaluate
+        run: python scripts/train_model.py --seasons 2021-22 2022-23 2023-24 --train_ou
 
-      - name: Train and Backtest
-        run: python scripts/train_model.py --seasons 2021-22 2022-23 2023-24 --backtest --export results/backtest.csv
-
-      - name: Generate Predictions
-        run: python scripts/run_cli.py --threshold 0.65 --strategy kelly --export results/picks.csv
+      - name: Generate predictions artifact
+        run: |
+          python - <<'PY'
+          from app.predict_pipeline import generate_today_predictions, generate_today_predictions_with_totals
+          import pandas as pd, os
+          os.makedirs("results", exist_ok=True)
+          df = generate_today_predictions()
+          df_ou = generate_today_predictions_with_totals()
+          df.to_csv("results/predictions.csv", index=False)
+          df_ou.to_csv("results/predictions_ou.csv", index=False)
+          print("✅ Saved results/predictions.csv and results/predictions_ou.csv")
+          PY
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: nba-results
+          name: nightly-results
           path: results/
