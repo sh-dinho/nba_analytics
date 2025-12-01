@@ -1,76 +1,80 @@
-# models/train_models.py (Updated with Evaluation and Feature Stats Saving)
 import logging
 import joblib
 import pandas as pd
-import json
-import numpy as np 
 from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.metrics import log_loss, mean_squared_error, r2_score, roc_auc_score
+from sklearn.ensemble import RandomForestClassifier
 
-from nba_analytics_core.data import fetch_historical_games, engineer_features
+# Assuming Streamlit is used for the front-end, we can use its caching mechanism
+# import streamlit as st 
 
-def evaluate_models(clf, reg, X_test, y_class_test, y_reg_test) -> dict:
-    """Evaluates models and returns a dictionary of metrics."""
-    # Classification Metrics
-    y_pred_proba = clf.predict_proba(X_test)[:, 1]
-    y_pred_class = clf.predict(X_test)
+# Import data preparation functions from the core package
+from nba_analytics_core.data import fetch_historical_games, engineer_features, current_season
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# NOTE: In a real Streamlit app, you would decorate this function:
+# @st.cache_data(ttl=24 * 3600) # Cache for 24 hours
+def train_models_cached(
+    seasons: list[str] = None, 
+    model_path: str = "artifacts/classification_model.pkl"
+) -> dict:
+    """
+    Fetches historical data, trains a Random Forest Classifier, saves it,
+    and returns a summary of the training results.
+    """
+    if seasons is None:
+        # Default to the last 5 seasons including the current one
+        current = current_season()
+        start_year = int(current.split('-')[0])
+        seasons = [f"{y}-{str(y+1)[-2:]}" for y in range(start_year - 4, start_year + 1)]
     
-    metrics = {
-        "clf_accuracy": (y_class_test == y_pred_class).mean(),
-        "clf_log_loss": log_loss(y_class_test, y_pred_proba),
-        "clf_roc_auc": roc_auc_score(y_class_test, y_pred_proba),
-    }
+    logging.info(f"Starting model training for seasons: {seasons}")
+    games = fetch_historical_games(seasons)
+    
+    if games.empty:
+        logging.error("Cannot train model: No historical games were fetched.")
+        return {"status": "failed", "message": "No data for training."}
 
-    # Regression Metrics
-    y_pred_reg = reg.predict(X_test)
-    metrics.update({
-        "reg_mse": mean_squared_error(y_reg_test, y_pred_reg),
-        "reg_r2": r2_score(y_reg_test, y_pred_reg),
-    })
-    return metrics
+    X, y = engineer_features(games)
+    
+    if X.empty or y.empty:
+        logging.error("Cannot train model: Feature engineering returned empty sets.")
+        return {"status": "failed", "message": "Empty features/labels."}
 
-
-def train_models_cached(test_size: float = 0.2, random_state: int = 42):
-    df = fetch_historical_games()
-    df = engineer_features(df)
-
-    # Drop target columns before splitting
-    X = df.drop(["home_win", "total_points"], axis=1)
-    y_class = df["home_win"]
-    y_reg = df["total_points"]
-
-    # Implement Train/Test Split
-    X_train, X_test, y_class_train, y_class_test, y_reg_train, y_reg_test = train_test_split(
-        X, y_class, y_reg, test_size=test_size, random_state=random_state
+    # 1. Split Data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
     )
+    
+    logging.info(f"Training set size: {len(X_train)} | Test set size: {len(X_test)}")
 
-    # Train Models on Training Data
-    clf = LogisticRegression(max_iter=1000).fit(X_train, y_class_train)
-    reg = LinearRegression().fit(X_train, y_reg_train)
+    # 2. Train Model
+    model = RandomForestClassifier(n_estimators=300, random_state=42, n_jobs=-1)
+    model.fit(X_train, y_train)
 
-    # --- IMPROVEMENT: Save Feature Statistics from Training Data ---
-    feature_stats = {
-        'mean': X_train.mean().to_dict(),
-        'std': X_train.std().to_dict(),
+    # 3. Evaluate Model
+    acc = model.score(X_test, y_test)
+    logging.info(f"Model accuracy on test set: {acc:.4f}")
+    
+    # Additional metric (e.g., F1 Score or AUC) would be added here
+    # Example: from sklearn.metrics import f1_score
+    # f1 = f1_score(y_test, model.predict(X_test))
+
+    # 4. Save Model Artifact
+    joblib.dump(model, model_path)
+    logging.info(f"✔ Model saved to {model_path}")
+    
+    return {
+        "status": "success",
+        "accuracy": float(f"{acc:.4f}"),
+        "training_time": datetime.now().isoformat(),
+        "features": list(X.columns)
     }
-    with open("artifacts/feature_stats.json", "w") as f:
-        json.dump(feature_stats, f, indent=4)
-    logging.info("Historical feature statistics saved.")
-    
-    # Evaluate Models and Save Metrics
-    metrics = evaluate_models(clf, reg, X_test, y_class_test, y_reg_test)
-    with open("artifacts/model_metrics.json", "w") as f:
-        json.dump(metrics, f, indent=4)
-        
-    logging.info("Model Metrics saved to artifacts/model_metrics.json")
-    logging.info(f"Classifier AUC: {metrics['clf_roc_auc']:.4f}, Regressor R2: {metrics['reg_r2']:.4f}")
-    
-    # Save Models
-    joblib.dump(clf, "models/classification_model.pkl")
-    joblib.dump(reg, "models/regression_model.pkl")
-
-    logging.info("✔ Models trained and saved")
 
 if __name__ == "__main__":
-    train_models_cached()
+    # Example usage: train model on hardcoded list of seasons
+    current = current_season()
+    seasons_to_train = ["2021-22", "2022-23", "2023-24", "2024-25", current]
+    results = train_models_cached(seasons=seasons_to_train)
+    print("\nTraining Summary:")
+    print(pd.Series(results).to_markdown())

@@ -1,96 +1,54 @@
-# app/predict_pipeline.py
-import logging
-import pandas as pd
-from nba_analytics_core.fetch_games import get_todays_games
-from nba_analytics_core.data import engineer_features
-from nba_analytics_core.odds import fetch_game_odds
-from app.predictor import load_models # your existing load_models
-from nba_analytics_core.utils import send_telegram_message
+from scripts.simulate_bankroll import simulate_bankroll
 
-def calculate_expected_value(prob: float, odds: float) -> float:
-    """
-    Calculates the Expected Value (EV) for a bet.
-    EV = (P_pred * (Odds - 1)) - ((1 - P_pred) * 1)
-    """
-    # Check if odds are valid (must be greater than 1.0)
-    if odds <= 1.0:
-        return -1.0
-        
-    # P_win * Net_Profit - P_loss * Loss
-    return (prob * (odds - 1)) - ((1 - prob) * 1)
+def generate_predictions(threshold=0.6, strategy="kelly", max_fraction=0.05):
+    odds_data = fetch_odds()
+    games = fetch_historical_games("2024-25")
+    team_stats = build_team_stats(games)
 
+    rows = []
+    for game in odds_data:
+        home = game["home_team"]
+        away = game["away_team"]
 
-def generate_predictions(threshold: float = 0.6) -> pd.DataFrame:
-    games = get_todays_games()
-    if games.empty:
-        logging.info("No games found for today.")
-        return pd.DataFrame()
+        features = build_matchup_features(home, away, team_stats)
+        pred_home_win_prob = model.predict_proba([features])[0][1]
 
-    df_features = engineer_features(games)
-    clf, reg = load_models()
-    if clf is None or reg is None:
-        logging.error("Models not available.")
-        return pd.DataFrame()
+        home_odds = game["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
+        ev = (pred_home_win_prob * (home_odds - 1)) - (1 - pred_home_win_prob)
 
-    drop_cols = [c for c in ["home_win", "total_points"] if c in df_features.columns]
-    X = df_features.drop(columns=drop_cols, errors="ignore")
+        rows.append({
+            "home_team": home,
+            "away_team": away,
+            "pred_home_win_prob": pred_home_win_prob,
+            "home_decimal_odds": home_odds,
+            "home_ev": ev,
+            "strong_pick": 1 if pred_home_win_prob >= threshold and ev > 0 else 0,
+        })
 
-    try:
-        df_features["pred_home_win_prob"] = clf.predict_proba(X)[:, 1]
-        df_features["pred_total_points"] = reg.predict(X)
-        # Strong pick now means meeting the probability threshold
-        df_features["strong_pick"] = (df_features["pred_home_win_prob"] >= threshold).astype(int)
-    except Exception as e:
-        logging.error(f"Prediction failed: {e}")
-        return pd.DataFrame()
+    df = pd.DataFrame(rows)
 
-    # Merge back to games
-    preds = games.merge(
-        df_features[["game_id", "pred_home_win_prob", "pred_total_points", "strong_pick"]],
-        on="game_id"
-    )
+    # --- Print best picks ---
+    best_picks = df.loc[df["strong_pick"] == 1].sort_values("home_ev", ascending=False)
+    if not best_picks.empty:
+        print("\n=== BEST PICKS ===")
+        for _, row in best_picks.iterrows():
+            print(f"{row['home_team']} vs {row['away_team']} | Prob={row['pred_home_win_prob']:.2f} | EV={row['home_ev']:.3f}")
+    else:
+        print("\nNo strong picks found today.")
 
-    # Attach odds
-    odds = fetch_game_odds(games)
-    preds = preds.merge(odds, on=["game_id", "home_team", "away_team"], how="left")
-    
-    # --- IMPROVEMENT: Calculate EV ---
-    preds["home_ev"] = preds.apply(
-        lambda r: calculate_expected_value(r["pred_home_win_prob"], r["home_decimal_odds"]),
-        axis=1
-    )
+    # --- Simulate bankroll and print metrics ---
+    bets = best_picks.rename(columns={
+        "home_team": "team",
+        "home_decimal_odds": "decimal_odds",
+        "pred_home_win_prob": "prob",
+        "home_ev": "ev"
+    })[["team", "decimal_odds", "prob", "ev"]]
 
-    # Notify if strong picks found
-    strong = preds[preds["strong_pick"] == 1]
-    if not strong.empty:
-        try:
-            send_telegram_message(f"Strong picks: {len(strong)} found today ✅")
-        except Exception:
-            pass
+    if not bets.empty:
+        _, metrics = simulate_bankroll(bets, strategy=strategy, max_fraction=max_fraction)
+        print("\n=== BANKROLL METRICS ===")
+        print(f"Final Bankroll: ${metrics['final_bankroll']:.2f}")
+        print(f"ROI: {metrics['roi']*100:.2f}%")
+        print(f"Win Rate: {metrics['win_rate']*100:.1f}% ({metrics['wins']}W/{metrics['losses']}L)")
 
-    return preds
-
-def build_bets_from_predictions(preds: pd.DataFrame, threshold: float = 0.6) -> pd.DataFrame:
-    """
-    Identifies qualifying bets based on the probability threshold AND positive Expected Value (EV).
-    """
-    if preds.empty:
-        return pd.DataFrame()
-    
-    tickets = []
-    for _, r in preds.iterrows():
-        # Check 1: Must meet the probability threshold
-        if r["pred_home_win_prob"] >= threshold:
-            
-            # Check 2: Must have a positive Expected Value (EV > 0)
-            # The odds offered must be higher than the implied odds of the model's prediction
-            if r["home_ev"] > 0:
-                tickets.append({
-                    "game_id": r["game_id"],
-                    "team": r["home_team"],
-                    "decimal_odds": r["home_decimal_odds"],
-                    "prob": r["pred_home_win_prob"],
-                    "ev": r["home_ev"], # New column
-                    "result": None if pd.isna(r.get("winner")) else int(r["winner"] == r["home_team"])
-                })
-    return pd.DataFrame(tickets)
+    return df

@@ -1,94 +1,46 @@
-# scripts/simulate_bankroll.py (Updated with KPI Summary)
+# app/predict_pipeline.py
+import joblib
 import pandas as pd
+from nba_analytics_core.odds import fetch_odds
+from scripts.train_model import build_team_stats, build_matchup_features, fetch_historical_games
 
-def kelly_fraction(p: float, decimal_odds: float) -> float:
-    # Convert decimal odds to net odds b (profit per 1 unit)
-    b = decimal_odds - 1.0
-    # Kelly: f* = (bp - (1-p)) / b
-    return max(0.0, (b * p - (1 - p)) / b) if b > 0 else 0.0
+# Always load the latest model at startup
+MODEL_PATH = "models/classification_model.pkl"
+model = joblib.load(MODEL_PATH)
 
-def calculate_kpis(records: pd.DataFrame, initial_bankroll: float) -> dict:
-    """Calculates summary KPIs from the simulation results."""
-    if records.empty:
-        return { "roi": 0.0, "win_rate": 0.0, "max_drawdown": 0.0, "final_bankroll": initial_bankroll, "total_bets": 0 }
+def generate_predictions(threshold=0.6):
+    odds_data = fetch_odds()
+    games = fetch_historical_games("2024-25")  # or use multiple seasons
+    team_stats = build_team_stats(games)
 
-    final_bankroll = records['bankroll'].iloc[-1]
-    total_bets = records['realized'].sum()
+    rows = []
+    for game in odds_data:
+        home = game["home_team"]
+        away = game["away_team"]
 
-    if total_bets == 0:
-        return { "roi": 0.0, "win_rate": 0.0, "max_drawdown": 0.0, "final_bankroll": final_bankroll, "total_bets": 0 }
+        features = build_matchup_features(home, away, team_stats)
+        pred_home_win_prob = model.predict_proba([features])[0][1]
 
-    # ROI
-    roi = (final_bankroll - initial_bankroll) / initial_bankroll
+        home_odds = game["bookmakers"][0]["markets"][0]["outcomes"][0]["price"]
+        ev = (pred_home_win_prob * (home_odds - 1)) - (1 - pred_home_win_prob)
 
-    # Win Rate (Realized bets only)
-    total_pnl = records[records['realized'] == True]['pnl']
-    wins = (total_pnl > 0).sum()
-    win_rate = wins / total_bets
-
-    # Max Drawdown
-    bankroll_history = records['bankroll']
-    cumulative_max = bankroll_history.cummax()
-    drawdown = cumulative_max - bankroll_history
-    max_drawdown = (drawdown / cumulative_max.replace(0, 1)).max()
-
-    return {
-        "roi": roi,
-        "win_rate": win_rate,
-        "max_drawdown": max_drawdown,
-        "final_bankroll": final_bankroll,
-        "total_bets": int(total_bets)
-    }
-
-
-def simulate_bankroll(df_bets: pd.DataFrame, initial_bankroll: float = 1000.0, strategy: str = "kelly", max_fraction: float = 0.05) -> pd.DataFrame:
-    """
-    Simulates the bankroll progression and returns the history DataFrame along 
-    with a dictionary of key performance indicators (KPIs) attached as attributes.
-    """
-    if df_bets.empty:
-        df_history = pd.DataFrame()
-        df_history.kpis = calculate_kpis(df_history, initial_bankroll) 
-        return df_history
-
-    bankroll = initial_bankroll
-    records = []
-    for _, b in df_bets.iterrows():
-        # ... (Staking Logic remains the same) ...
-        if strategy == "kelly":
-            f = kelly_fraction(b["prob"], b["decimal_odds"])
-            stake = min(max_fraction, f) * bankroll
-        elif strategy == "flat":
-            stake = 0.01 * bankroll 
-        else:
-            stake = 0.01 * bankroll
-
-        # ... (P&L and Bankroll Update Logic remains the same) ...
-        if pd.isna(b["result"]):
-            pnl = 0.0
-            realized = False
-        else:
-            realized = True
-            if int(b["result"]) == 1:
-                pnl = stake * (b["decimal_odds"] - 1.0)
-            else:
-                pnl = -stake
-            bankroll += pnl
-
-        records.append({
-            "game_id": b["game_id"],
-            "team": b["team"],
-            "decimal_odds": b["decimal_odds"],
-            "prob": b["prob"],
-            "stake": stake,
-            "pnl": pnl,
-            "realized": realized,
-            "bankroll": bankroll
+        rows.append({
+            "home_team": home,
+            "away_team": away,
+            "pred_home_win_prob": pred_home_win_prob,
+            "home_decimal_odds": home_odds,
+            "home_ev": ev,
+            "strong_pick": 1 if pred_home_win_prob >= threshold and ev > 0 else 0,
         })
+    df = pd.DataFrame(rows)
 
-    df_history = pd.DataFrame(records)
-    
-    # --- Calculate and Attach KPIs ---
-    df_history.kpis = calculate_kpis(df_history, initial_bankroll)
-    
-    return df_history
+    # --- Print best picks in command line ---
+    best_picks = df.loc[df["strong_pick"] == 1].sort_values("home_ev", ascending=False)
+    if not best_picks.empty:
+        print("\n=== BEST PICKS ===")
+        for _, row in best_picks.iterrows():
+            print(f"{row['home_team']} vs {row['away_team']} | Prob={row['pred_home_win_prob']:.2f} | EV={row['home_ev']:.3f}")
+    else:
+        print("\nNo strong picks found today.")
+
+    return df

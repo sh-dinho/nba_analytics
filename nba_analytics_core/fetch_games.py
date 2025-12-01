@@ -1,12 +1,7 @@
+from nba_api.stats.endpoints import leaguegamefinder
 import pandas as pd
-import logging
-from datetime import date
 
-from nba_analytics_core.db_module import connect
-
-
-def get_todays_games():
-    today = date.today().strftime("%b %d, %Y")
-    with connect() as con:
-        df = pd.read_sql("SELECT * FROM nba_games WHERE date = ?", con, params=[today])
-    return df
+def fetch_historical_games(season="2024-25"):
+    gamefinder = leaguegamefinder.LeagueGameFinder(season_nullable=season)
+    games = gamefinder.get_data_frames()[0]
+    return games

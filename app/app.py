@@ -1,4 +1,13 @@
 # app/app.py
+
+import sys, os
+
+# Add project root to sys.path so config.py is visible
+PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+from config import configure_logging, DB_PATH, TEAM_MAP
 import streamlit as st
 import pandas as pd
 import logging
