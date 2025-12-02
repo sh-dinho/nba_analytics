@@ -45,14 +45,20 @@ jobs:
       - name: Install project
         run: pip install -e .
 
-      # 6. Generate training features (FIXED FILE NAME)
+      # 6. Fetch player stats (NEW REQUIRED STEP)
+      - name: Fetch player stats
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          # This script will save data to 'data/player_stats.csv'
+          python scripts/fetch_player_stats.py
+
+      # 7. Generate training features (Renumbered, now loads the file created in Step 6)
       - name: Generate training features
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          # Corrected file name to match existing repository files
           python scripts/build_features.py
 
-      # 7. Run NBA Analytics CLI (ADDED CONDITIONAL LOGIC)
+      # 8. Run NBA Analytics CLI (Renumbered)
       - name: Run NBA Analytics Pipeline
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
@@ -76,8 +82,8 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-      # 8. Upload cached player stats
+          
+      # 9. Upload cached player stats (Renumbered)
       - name: Upload cached player stats
         uses: actions/upload-artifact@v4
         with:
@@ -85,7 +91,7 @@ jobs:
           path: data/player_stats.csv
           if-no-files-found: warn
 
-      # 9. Upload pipeline results
+      # 10. Upload pipeline results (Renumbered)
       - name: Upload pipeline results
         uses: actions/upload-artifact@v4
         with:
@@ -93,7 +99,7 @@ jobs:
           path: results/
           if-no-files-found: warn
 
-      # 10. Upload logs
+      # 11. Upload logs (Renumbered)
       - name: Upload pipeline logs
         uses: actions/upload-artifact@v4
         with:
