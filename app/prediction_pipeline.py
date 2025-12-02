@@ -7,6 +7,7 @@ import argparse
 from scripts.fetch_player_stats import main as fetch_stats
 from scripts.build_features import main as build_features
 from scripts.train_model import main as train_model
+from scripts.fetch_new_games import main as fetch_new_games
 from scripts.generate_today_predictions import generate_today_predictions
 from scripts.generate_picks import main as generate_picks
 from scripts.simulate_bankroll import simulate_bankroll
@@ -40,18 +41,22 @@ class PredictionPipeline:
         train_model()
         logger.info("✅ Model trained")
 
-        # 4️⃣ Generate predictions
+        # 4️⃣ Fetch today's games
+        fetch_new_games(use_synthetic=self.use_synthetic)
+        logger.info("✅ Today's games fetched")
+
+        # 5️⃣ Generate predictions
         preds_df = generate_today_predictions(threshold=self.threshold)
         if preds_df.empty:
             logger.warning("No predictions available today.")
             return None, None
         logger.info("✅ Predictions generated")
 
-        # 5️⃣ Generate picks
+        # 6️⃣ Generate picks
         generate_picks(preds_file=PREDICTIONS_FILE, out_file=PICKS_FILE)
         logger.info("✅ Picks generated")
 
-        # 6️⃣ Simulate bankroll
+        # 7️⃣ Simulate bankroll
         sim_df = preds_df.rename(columns={"pred_home_win_prob": "prob"})
         history, metrics = simulate_bankroll(
             sim_df[["decimal_odds", "prob", "ev"]],
