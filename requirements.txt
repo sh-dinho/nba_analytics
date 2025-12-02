@@ -3,8 +3,8 @@ numpy==1.26.4
 pandas==2.2.2
 scikit-learn==1.5.2
 
-# Deep learning (for nn_runner)
-tensorflow==2.15.0
+# Deep learning (for nn_runner) — Python 3.12 compatible
+tensorflow==2.16.1
 
 # Gradient boosting (for xgb_runner)
 xgboost==2.1.1
@@ -16,6 +16,6 @@ requests==2.32.3
 python-dateutil==2.9.0.post0
 toml==0.10.2
 
-# Optional: visualization if you add plots
+# Optional: visualization
 matplotlib==3.9.2
 seaborn==0.13.2
