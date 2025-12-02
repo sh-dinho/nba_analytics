@@ -8,6 +8,17 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
+REQUIRED_COLS = [
+    "PLAYER_NAME",
+    "TEAM_ABBREVIATION",
+    "AGE",
+    "POSITION",
+    "GAMES_PLAYED",
+    "PTS",
+    "AST",
+    "REB"
+]
+
 def main(n_rounds: int = 1):
     stats_file = "data/player_stats.csv"
     if not os.path.exists(stats_file):
@@ -19,13 +30,13 @@ def main(n_rounds: int = 1):
     df = pd.read_csv(stats_file)
 
     # Ensure required columns exist
-    required_cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB"]
-    missing = [c for c in required_cols if c not in df.columns]
+    missing = [c for c in REQUIRED_COLS if c not in df.columns]
     if missing:
         raise ValueError(f"Missing required columns: {missing}. Available: {df.columns.tolist()}")
 
-    # Example feature engineering
     logger.info("Building features...")
+
+    # Example engineered features
     df["PTS_per_AST"] = df["PTS"] / df["AST"].replace(0, pd.NA)
     df["REB_rate"] = df["REB"] / df["GAMES_PLAYED"].replace(0, pd.NA)
 

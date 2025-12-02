@@ -1,9 +1,23 @@
 # File: scripts/fetch_player_stats.py
+
 import os
 import pandas as pd
 import logging
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+logger.addHandler(logging.StreamHandler())
+
+REQUIRED_COLS = [
+    "PLAYER_NAME",
+    "TEAM_ABBREVIATION",
+    "AGE",
+    "POSITION",
+    "GAMES_PLAYED",
+    "PTS",
+    "AST",
+    "REB"
+]
 
 def fetch_stats_bball_ref(season_year: str) -> pd.DataFrame:
     url = f"https://www.basketball-reference.com/leagues/NBA_{season_year}_per_game.html"
@@ -20,38 +34,22 @@ def fetch_stats_bball_ref(season_year: str) -> pd.DataFrame:
         "Player": "PLAYER_NAME",
         "Pos": "POSITION",
         "Age": "AGE",
-        "Team": "TEAM_ABBREVIATION",
+        "Tm": "TEAM_ABBREVIATION",   # old schema
+        "Team": "TEAM_ABBREVIATION", # new schema
         "G": "GAMES_PLAYED",
-        "GS": "GAMES_STARTED",
-        "MP": "MINUTES",
-        "FG": "FGM",
-        "FGA": "FGA",
-        "FG%": "FG_PCT",
-        "3P": "FG3M",
-        "3PA": "FG3A",
-        "3P%": "FG3_PCT",
-        "FT": "FTM",
-        "FTA": "FTA",
-        "FT%": "FT_PCT",
-        "ORB": "OREB",
-        "DRB": "DREB",
-        "TRB": "REB",
+        "PTS": "PTS",
         "AST": "AST",
-        "STL": "STL",
-        "BLK": "BLK",
-        "TOV": "TO",
-        "PF": "PF",
-        "PTS": "PTS"
+        "TRB": "REB",
+        "REB": "REB"  # sometimes TRB vs REB
     }
     df = df.rename(columns=rename_map)
 
     # Ensure required columns exist
-    required_cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB"]
-    missing = [c for c in required_cols if c not in df.columns]
+    missing = [c for c in REQUIRED_COLS if c not in df.columns]
     if missing:
         raise ValueError(f"Missing expected columns: {missing}. Available: {df.columns.tolist()}")
 
-    return df[required_cols]
+    return df[REQUIRED_COLS]
 
 def main(season="2024-25", force_refresh=False):
     try:
@@ -61,10 +59,13 @@ def main(season="2024-25", force_refresh=False):
         logger.info(f"✅ Player stats saved to data/player_stats.csv ({len(df)} rows)")
     except Exception as e:
         logger.warning(f"⚠️ Failed to fetch live stats: {e}")
-        # Synthetic fallback
+        # Synthetic fallback with consistent schema
         synth = pd.DataFrame({
             "PLAYER_NAME": ["Synthetic Player A", "Synthetic Player B"],
             "TEAM_ABBREVIATION": ["SYN", "SYN"],
+            "AGE": [25, 27],
+            "POSITION": ["G", "F"],
+            "GAMES_PLAYED": [82, 82],
             "PTS": [10, 12],
             "AST": [5, 7],
             "REB": [4, 6]
@@ -72,7 +73,6 @@ def main(season="2024-25", force_refresh=False):
         os.makedirs("data", exist_ok=True)
         synth.to_csv("data/player_stats.csv", index=False)
         logger.info("📦 Synthetic player stats generated for CI reliability")
-        
 
 if __name__ == "__main__":
     import argparse
