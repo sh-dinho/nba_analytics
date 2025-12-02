@@ -1,9 +1,6 @@
-# Path: requirements.txt
-streamlit
-nba_api
-scikit-learn
+# requirements.txt
 pandas
-numpy
-joblib
-python-dotenv
+scikit-learn
 matplotlib
+streamlit
+numpy

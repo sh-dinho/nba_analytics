@@ -1,0 +1,47 @@
+# File: .github/workflows/nba_pipeline.yml
+name: NBA Analytics Pipeline
+
+on:
+  schedule:
+    # Nightly at 2 AM
+    - cron: '0 2 * * *'
+    # Weekly on Sunday at 3 AM
+    - cron: '0 3 * * 0'
+    # Monthly on the 1st at 4 AM
+    - cron: '0 4 1 * *'
+  workflow_dispatch: # Allows manual trigger
+
+jobs:
+  run_pipeline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Create results and data directories
+        run: |
+          mkdir -p results data models
+
+      - name: Run Daily Pipeline
+        run: |
+          python -m scripts.run_daily_pipeline --season "2024-25" --notify
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      - name: Upload results artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: nba_results
+          path: results/
