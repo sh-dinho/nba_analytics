@@ -1,68 +1,120 @@
-# File: scripts/utils.py
+# ============================================================
+# File: scripts/Utils.py
+# Purpose: Shared utility functions and bankroll simulation
+# ============================================================
 
-import os
-import logging
-from datetime import datetime
-import pandas as pd
-from typing import Union, List, Set, Tuple, Dict, Any
+from typing import List, Dict
 
-def setup_logger(name: str, level: int = logging.INFO, log_to_file: str = None) -> logging.Logger:
+
+def Expected_Value(prob_win: float, odds: float, stake: float = 1.0) -> float:
     """
-    Setup a logger with console output and optional file output.
+    Calculate expected value (EV) of a bet.
+    EV = (prob_win * profit) - (prob_loss * stake)
     """
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-
-    if not logger.handlers:
-        # Console handler
-        ch = logging.StreamHandler()
-        ch.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
-        logger.addHandler(ch)
-
-        # Optional file handler
-        if log_to_file:
-            os.makedirs(os.path.dirname(log_to_file), exist_ok=True)
-            fh = logging.FileHandler(log_to_file, encoding="utf-8")
-            fh.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
-            logger.addHandler(fh)
-
-    return logger
+    prob_loss = 1 - prob_win
+    profit = (odds * stake) - stake
+    return (prob_win * profit) - (prob_loss * stake)
 
 
-def get_timestamp(fmt: str = "%Y%m%d_%H%M%S") -> str:
-    """Returns current timestamp string."""
-    return datetime.now().strftime(fmt)
-
-
-def ensure_columns(df: pd.DataFrame, required_cols: Union[List[str], Set[str], Tuple[str]], name: str = "DataFrame") -> bool:
+def Kelly_Fraction(prob_win: float, odds: float) -> float:
     """
-    Check if required columns exist in a DataFrame.
-    Raises ValueError if any required column is missing.
+    Calculate Kelly fraction for bet sizing.
+    f* = (bp - q) / b
     """
-    required = list(required_cols)
-    missing = [c for c in required if c not in df.columns]
-    if missing:
-        raise ValueError(f"{name} is missing required columns: {missing}")
-    return True
+    b = odds - 1
+    p = prob_win
+    q = 1 - p
+    kelly = (b * p - q) / b if b > 0 else 0
+    return max(0, kelly)  # never negative
 
 
-def append_pipeline_summary(summary: Dict[str, Any], summary_file: str = "results/pipeline_summary.csv") -> None:
+def Update_Bankroll(bankroll: float, stake: float, won: bool, odds: float) -> float:
     """
-    Append a pipeline summary dictionary to a rolling CSV file.
-
-    Parameters:
-        summary (dict): Dictionary of metrics and metadata for one pipeline run.
-        summary_file (str): Path to the rolling summary CSV file.
+    Update bankroll after a bet.
     """
-    os.makedirs(os.path.dirname(summary_file), exist_ok=True)
-
-    # Ensure timestamp is present
-    if "timestamp" not in summary:
-        summary["timestamp"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    df = pd.DataFrame([summary])
-
-    if os.path.exists(summary_file):
-        df.to_csv(summary_file, mode="a", header=False, index=False)
+    if won:
+        profit = (odds * stake) - stake
+        return bankroll + profit
     else:
-        df.to_csv(summary_file, index=False)
+        return bankroll - stake
+
+
+def Implied_Probability(odds: float) -> float:
+    """
+    Convert decimal odds to implied probability.
+    """
+    return 1 / odds if odds > 0 else 0
+
+
+class Simulation:
+    """
+    Run bankroll simulations across multiple bets.
+    """
+
+    def __init__(self, initial_bankroll: float = 1000.0):
+        self.bankroll = initial_bankroll
+        self.history: List[Dict] = []
+
+    def place_bet(self, prob_win: float, odds: float,
+                  strategy: str = "kelly", max_fraction: float = 0.05,
+                  outcome: bool = None):
+        """
+        Place a bet using a given strategy.
+        Args:
+            prob_win (float): Probability of winning (0–1).
+            odds (float): Decimal odds.
+            strategy (str): "kelly" or "flat".
+            max_fraction (float): Max fraction of bankroll to wager.
+            outcome (bool): Optional explicit outcome (True=win, False=loss).
+        """
+        if strategy == "kelly":
+            fraction = min(Kelly_Fraction(prob_win, odds), max_fraction)
+        else:  # flat betting
+            fraction = max_fraction
+
+        stake = self.bankroll * fraction
+        ev = Expected_Value(prob_win, odds, stake)
+
+        # If outcome not provided, simulate win if prob_win > 0.5
+        won = outcome if outcome is not None else (prob_win > 0.5)
+        self.bankroll = Update_Bankroll(self.bankroll, stake, won, odds)
+
+        self.history.append({
+            "prob_win": prob_win,
+            "odds": odds,
+            "stake": stake,
+            "won": won,
+            "EV": ev,
+            "bankroll": self.bankroll
+        })
+
+    def run(self, bets: List[Dict], strategy: str = "kelly", max_fraction: float = 0.05):
+        """
+        Run simulation across a list of bets.
+        Args:
+            bets (list): List of dicts with {"prob_win": float, "odds": float}.
+        """
+        for bet in bets:
+            self.place_bet(
+                prob_win=bet["prob_win"],
+                odds=bet["odds"],
+                strategy=strategy,
+                max_fraction=max_fraction,
+                outcome=bet.get("won")  # allow explicit outcomes
+            )
+        return self.history
+
+    def summary(self) -> Dict:
+        """
+        Return final bankroll and stats.
+        """
+        total_bets = len(self.history)
+        wins = sum(1 for h in self.history if h["won"])
+        win_rate = wins / total_bets if total_bets > 0 else 0
+        return {
+            "Final_Bankroll": self.bankroll,
+            "Total_Bets": total_bets,
+            "Win_Rate": win_rate,
+            "Avg_EV": sum(h["EV"] for h in self.history) / total_bets if total_bets > 0 else 0,
+            "Avg_Stake": sum(h["stake"] for h in self.history) / total_bets if total_bets > 0 else 0
+        }

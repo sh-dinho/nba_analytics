@@ -1,78 +1,60 @@
 # ============================================================
 # File: scripts/telegram_report.py
-# Purpose: Read picks_bankroll.csv and send bankroll, win rate, EV, and Kelly metrics to Telegram
+# Purpose: Send bankroll summary to Telegram
 # ============================================================
 
-import pandas as pd
-import requests
 import os
+import logging
+import requests
+import pandas as pd
+from scripts.Utils import Simulation   # <-- NEW
 
-# Telegram bot config
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_message(text: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    requests.post(url, data=payload)
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("⚠️ Telegram credentials not set. Skipping report.")
+        return
 
-def ev_emoji(ev_value):
-    """Return emoji based on EV sign."""
-    if pd.isna(ev_value):
-        return "⚪"
-    if ev_value > 0:
-        return "🟢"
-    elif ev_value < 0:
-        return "🔴"
-    else:
-        return "⚪"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload)
+        logger.info("📲 Telegram report sent successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to send Telegram report: {e}")
 
-def bankroll_emoji(current, previous):
-    """Return emoji based on bankroll trajectory."""
-    if previous is None or pd.isna(previous):
-        return "⚪"
-    if current > previous:
-        return "📈"
-    elif current < previous:
-        return "📉"
-    else:
-        return "⚪"
+def main():
+    # Load picks_bankroll.csv
+    if not os.path.exists("results/picks_bankroll.csv"):
+        logger.warning("⚠️ No picks_bankroll.csv found. Skipping report.")
+        return
 
-def build_report(csv_path="results/picks_bankroll.csv"):
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv("results/picks_bankroll.csv")
 
-    # Last row is the summary
-    summary = df.tail(1).to_dict(orient="records")[0]
+    # Reconstruct simulation from history
+    sim = Simulation(initial_bankroll=df.iloc[0]["bankroll"])
+    for _, row in df.iterrows():
+        sim.history.append(row.to_dict())
+    sim.bankroll = df.iloc[-1]["bankroll"]
 
-    # Build header with emojis + bold
-    report_lines = [
-        "*📊 Daily Betting Report*",
-        f"🏦 *Final Bankroll:* {summary.get('Final_Bankroll', 'N/A')}",
-        f"✅ *Win Rate:* {summary.get('Win_Rate', 'N/A')}",
-        f"💰 *Avg EV:* {summary.get('Avg_EV', 'N/A')}",
-        f"🎯 *Avg Kelly Bet:* {summary.get('Avg_Kelly_Bet', 'N/A')}",
-        "",
-        "*🎮 Game Details:*"
-    ]
+    summary = sim.summary()
 
-    # Add per-game details (exclude summary row)
-    prev_bankroll = None
-    for _, row in df.iloc[:-1].iterrows():
-        ev_val = row.get("EV", None)
-        emoji_ev = ev_emoji(ev_val)
-        emoji_bankroll = bankroll_emoji(row.get("bankroll", None), prev_bankroll)
+    # Format message
+    message = (
+        f"🏀 *NBA Daily Report*\n\n"
+        f"🏦 Final Bankroll: {summary['Final_Bankroll']:.2f}\n"
+        f"✅ Win Rate: {summary['Win_Rate']:.2%}\n"
+        f"💰 Avg EV: {summary['Avg_EV']:.2f}\n"
+        f"🎯 Avg Stake: {summary['Avg_Stake']:.2f}\n"
+        f"📊 Total Bets: {summary['Total_Bets']}"
+    )
 
-        line = (
-            f"{emoji_ev}{emoji_bankroll} {row['home_team']} vs {row['away_team']} → "
-            f"*Winner:* {row['winner']} "
-            f"(Conf: {row['winner_confidence']}%)\n"
-            f"   EV: {ev_val} | Kelly: {row.get('Kelly_Bet', 'N/A')} | Bankroll: {row.get('bankroll', 'N/A')}"
-        )
-        report_lines.append(line)
-        prev_bankroll = row.get("bankroll", None)
-
-    return "\n".join(report_lines)
+    send_message(message)
 
 if __name__ == "__main__":
-    report = build_report()
-    send_message(report)
+    main()
