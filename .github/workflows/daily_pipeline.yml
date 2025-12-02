@@ -45,20 +45,34 @@ jobs:
       - name: Install project
         run: pip install -e .
 
-      # 6. Generate training features (NEW STEP)
+      # 6. Generate training features (FIXED FILE NAME)
       - name: Generate training features
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python scripts/generate_training_features.py
+          # Corrected file name to match existing repository files
+          python scripts/build_features.py
 
-      # 7. Run NBA Analytics CLI
+      # 7. Run NBA Analytics CLI (ADDED CONDITIONAL LOGIC)
       - name: Run NBA Analytics Pipeline
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python scripts/run_daily_pipeline_cli.py \
+          
+          # Define the base command
+          RUN_COMMAND="python scripts/run_daily_pipeline_cli.py \
             --threshold 0.6 \
             --strategy kelly \
-            --max_fraction 0.05
+            --max_fraction 0.05"
+          
+          # Conditionally add --use-synthetic for scheduled runs
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            RUN_COMMAND="$RUN_COMMAND --use-synthetic"
+            echo "Running scheduled job with synthetic data flag for reliability."
+          else
+            echo "Running standard job (manual, push, or dispatch) with live fetch."
+          fi
+          
+          # Execute the command
+          eval $RUN_COMMAND
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
