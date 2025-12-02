@@ -6,6 +6,7 @@ from datetime import datetime
 from nba_analytics_core.odds import fetch_odds
 from scripts.simulate_bankroll import simulate_bankroll
 from app.predict_pipeline import generate_today_predictions
+import json
 
 def highlight_ev(val):
     if pd.isna(val):
@@ -20,10 +21,13 @@ try:
     if df.empty:
         st.info("No games found today or model not trained yet.")
     else:
-        # Fetch odds
         odds_data = []
         for _, row in df.iterrows():
-            odds = fetch_odds(home_team=row["home_team"], away_team=row["away_team"])
+            try:
+                odds = fetch_odds(home_team=row["home_team"], away_team=row["away_team"])
+            except Exception as e:
+                st.warning(f"Odds fetch failed for {row['home_team']} vs {row['away_team']}: {e}")
+                odds = None
             odds_data.append({
                 "date": row["date"],
                 "home_team": row["home_team"],
@@ -41,12 +45,12 @@ try:
             df_odds[col] = pd.to_numeric(df_odds[col], errors="coerce")
         df_odds["ev_home"] = np.where(
             df_odds["home_odds"].notna(),
-            df_odds["home_win_prob"] * df_odds["home_odds"] - (1 - df_odds["home_win_prob"]),
+            df_odds["home_win_prob"] * (df_odds["home_odds"] - 1) - (1 - df_odds["home_win_prob"]),
             np.nan
         )
         df_odds["ev_away"] = np.where(
             df_odds["away_odds"].notna(),
-            (1 - df_odds["home_win_prob"]) * df_odds["away_odds"] - df_odds["home_win_prob"],
+            (1 - df_odds["home_win_prob"]) * (df_odds["away_odds"] - 1) - df_odds["home_win_prob"],
             np.nan
         )
 
@@ -55,7 +59,12 @@ try:
         st.metric("Positive EV Bets Today", num_positive_ev)
 
         # EV distribution chart
-        ev_data = df_odds.melt(id_vars=["home_team","away_team"], value_vars=["ev_home","ev_away"], var_name="side", value_name="ev")
+        ev_data = df_odds.melt(
+            id_vars=["home_team","away_team"],
+            value_vars=["ev_home","ev_away"],
+            var_name="side",
+            value_name="ev"
+        )
         chart_ev = alt.Chart(ev_data).mark_bar().encode(
             x=alt.X("ev", bin=alt.Bin(maxbins=30), title="Expected Value"),
             y="count()",
@@ -72,13 +81,14 @@ try:
         sim_df = df_odds.rename(columns={"home_win_prob":"prob", "home_odds":"decimal_odds"})
         sim_input = sim_df[["decimal_odds","prob","ev_home"]].dropna()
         if not sim_input.empty:
-            records, metrics = simulate_bankroll(sim_input, strategy="kelly")
-            st.write(f"Final Bankroll: ${metrics['final_bankroll']:.2f}")
-            st.write(f"ROI: {metrics['roi']*100:.2f}%")
-            st.write(f"Win Rate: {metrics['win_rate']*100:.2f}% ({metrics['wins']}W/{metrics['losses']}L)")
+            trajectories, metrics = simulate_bankroll(sim_input, strategy="kelly")
+            trajectory = trajectories[0]
+            st.write(f"Final Bankroll (mean): ${metrics['final_bankroll_mean']:.2f}")
+            st.write(f"ROI (mean): {metrics['roi_mean']*100:.2f}%")
+            st.write(f"Win Rate (mean): {metrics['win_rate_mean']*100:.2f}%")
 
             # Trajectory chart
-            trajectory_df = pd.DataFrame({"Bet #": range(len(records)), "Bankroll": records})
+            trajectory_df = pd.DataFrame({"Bet #": range(len(trajectory)), "Bankroll": trajectory})
             chart_bankroll = alt.Chart(trajectory_df).mark_line(point=True).encode(
                 x="Bet #",
                 y="Bankroll",
@@ -94,6 +104,17 @@ try:
             file_name=export_name,
             mime="text/csv"
         )
+
+        # Save metadata
+        meta = {
+            "generated_at": datetime.now().isoformat(),
+            "rows": len(df_odds),
+            "positive_ev": int(num_positive_ev)
+        }
+        with open("results/daily_predictions_meta.json", "w") as f:
+            json.dump(meta, f, indent=2)
+
+        st.success("Predictions generated successfully.")
 
 except Exception as e:
     st.error(f"Error generating predictions: {e}")

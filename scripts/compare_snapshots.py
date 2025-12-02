@@ -9,13 +9,25 @@ PREVIOUS_FILE = os.path.join(RESULTS_DIR, "player_leaderboards_previous.csv")
 TRENDS_FILE = os.path.join(RESULTS_DIR, "player_trends.csv")
 SUMMARY_FILE = os.path.join(RESULTS_DIR, "player_trends_summary.csv")
 
+REQUIRED_COLUMNS = {"PLAYER_NAME", "PTS", "REB", "AST", "TS_PCT"}
+
+def _ensure_columns(df, required_cols, name):
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"{name} is missing required columns: {missing}")
+
 def compare_snapshots(notify=False):
     if not os.path.exists(CURRENT_FILE) or not os.path.exists(PREVIOUS_FILE):
-        print("Missing snapshot files. Run weekly update first.")
+        print("❌ Missing snapshot files. Run weekly update first.")
         return
 
+    print("📂 Loading snapshot files...")
     current = pd.read_csv(CURRENT_FILE)
     previous = pd.read_csv(PREVIOUS_FILE)
+
+    # Validate required columns
+    _ensure_columns(current, REQUIRED_COLUMNS, "player_leaderboards_current.csv")
+    _ensure_columns(previous, REQUIRED_COLUMNS, "player_leaderboards_previous.csv")
 
     # Merge snapshots
     merged = current.merge(previous, on="PLAYER_NAME", suffixes=("_curr", "_prev"))
@@ -45,7 +57,10 @@ def compare_snapshots(notify=False):
     summary = merged.sort_values("impact_change", ascending=False).head(10)
     summary.to_csv(SUMMARY_FILE, index=False)
 
-    print(f"📊 Trends saved to {TRENDS_FILE} and summary exported to {SUMMARY_FILE}")
+    print(f"✅ Trends saved to {TRENDS_FILE}")
+    print(f"✅ Summary exported to {SUMMARY_FILE}")
+    print(f"📊 Rows: {len(merged)}, Columns: {len(merged.columns)}")
+    print(f"🔎 Summary Top Players: {list(summary['PLAYER_NAME'])}")
 
     # Telegram notification
     if notify and not summary.empty:
@@ -54,9 +69,14 @@ def compare_snapshots(notify=False):
         msg = (
             f"📊 Weekly Player Trends\n"
             f"Top Riser: {top_riser['PLAYER_NAME']} (+{top_riser['impact_change']:.1f} impact)\n"
-            f"Top Faller: {top_faller['PLAYER_NAME']} ({top_faller['impact_change']:.1f} impact)"
+            f"Top Faller: {top_faller['PLAYER_NAME']} ({top_faller['impact_change']:.1f} impact)\n"
+            f"Summary saved to {SUMMARY_FILE}"
         )
-        send_telegram_message(msg)
+        try:
+            send_telegram_message(msg)
+            print("✅ Telegram notification sent")
+        except Exception as e:
+            print(f"⚠️ Failed to send Telegram notification: {e}")
 
 if __name__ == "__main__":
     compare_snapshots(notify=True)

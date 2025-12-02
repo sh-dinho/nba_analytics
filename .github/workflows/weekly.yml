@@ -3,7 +3,7 @@ name: NBA Analytics Weekly Retrain
 on:
   schedule:
     - cron: "0 4 * * MON"   # Runs every Monday at 4 AM UTC
-  workflow_dispatch:         # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   retrain-and-run:
@@ -23,9 +23,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Fetch live player stats
+        run: |
+          python scripts/fetch_player_stats.py
+
       - name: Build training dataset
         run: |
-          python scripts/build_training_data.py
+          python scripts/build_features.py
 
       - name: Retrain model
         run: |
@@ -39,11 +43,15 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: nba-weekly-results
-          path: results/
+          path: |
+            results/
+            models/game_predictor.pkl
+            models/model_metadata.json
+            models/shap_feature_importance.png
 
       - name: Send Telegram notification
         run: |
           curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendDocument \
             -F chat_id=${{ secrets.TELEGRAM_CHANNEL }} \
             -F document=@results/picks.csv \
-            -F caption="📅 Weekly retrain complete — fresh NBA picks are ready!"
+            -F caption="📅 Weekly retrain complete — fresh NBA picks generated with live stats!\nMetrics and SHAP chart uploaded."
