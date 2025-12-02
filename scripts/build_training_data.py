@@ -5,9 +5,7 @@ import sys
 import logging
 from datetime import datetime
 import json
-
-REQUIRED_WEEKLY_COLUMNS = {"team", "date", "result"}
-REQUIRED_TRENDS_COLUMNS = {"team", "date"}
+import numpy as np
 
 # ----------------------------
 # Logging setup
@@ -18,13 +16,15 @@ handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
 logger.addHandler(handler)
 
+# ----------------------------
+# Constants
+# ----------------------------
+REQUIRED_FEATURE_COLUMNS = {"game_id", "date", "home_team", "away_team", "home_points", "away_points"}
+EXCLUDE_FROM_SCALING = {"home_win", "target_margin"}
 
-def _ensure_columns(df, required_cols, name):
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"{name} is missing required columns: {missing}")
-
-
+# ----------------------------
+# Helpers
+# ----------------------------
 def _scale_numeric(df, exclude_cols=None):
     """Standardize numeric columns (z-score)."""
     if exclude_cols is None:
@@ -38,51 +38,72 @@ def _scale_numeric(df, exclude_cols=None):
             logger.warning(f"Skipping scaling for {col} (std=0)")
     return df
 
+def _compute_streaks(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute winning and losing streaks per team."""
+    streaks = []
 
+    for team in pd.concat([df["home_team"], df["away_team"]]).unique():
+        team_games = df[(df["home_team"] == team) | (df["away_team"] == team)].sort_values("date")
+        wins = ( (team_games["home_team"] == team) & (team_games["home_points"] > team_games["away_points"]) ) | \
+               ( (team_games["away_team"] == team) & (team_games["away_points"] > team_games["home_points"]) )
+        streak = 0
+        streak_list = []
+        for w in wins:
+            streak = streak + 1 if w else 0
+            streak_list.append(streak)
+        team_games = team_games.copy()
+        team_games["streak"] = streak_list
+        streaks.append(team_games)
+
+    return pd.concat(streaks, ignore_index=True)
+
+# ----------------------------
+# Main function
+# ----------------------------
 def build_training_data(
-    weekly_file="results/weekly_summary.csv",
-    trends_file="results/player_trends.csv",
+    features_file="features/training_features.csv",
     out_file="features/training_data.csv",
     scale=True
 ):
     os.makedirs("features", exist_ok=True)
 
-    if not os.path.exists(weekly_file) or not os.path.exists(trends_file):
-        raise FileNotFoundError("Weekly summary or player trends file not found. Run those scripts first.")
+    if not os.path.exists(features_file):
+        raise FileNotFoundError(f"{features_file} not found. Run build_features.py first.")
 
-    logger.info("📂 Loading input files...")
-    weekly = pd.read_csv(weekly_file)
-    trends = pd.read_csv(trends_file)
+    logger.info("📂 Loading features...")
+    df = pd.read_csv(features_file)
+    _missing = REQUIRED_FEATURE_COLUMNS - set(df.columns)
+    if _missing:
+        raise ValueError(f"Features file is missing required columns: {_missing}")
 
-    # Validate columns
-    _ensure_columns(weekly, REQUIRED_WEEKLY_COLUMNS, "weekly_summary.csv")
-    _ensure_columns(trends, REQUIRED_TRENDS_COLUMNS, "player_trends.csv")
+    # Convert date
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"])
 
-    # Convert date to datetime
-    weekly["date"] = pd.to_datetime(weekly["date"], errors="coerce")
-    trends["date"] = pd.to_datetime(trends["date"], errors="coerce")
+    # Create targets
+    df["home_win"] = (df["home_points"] > df["away_points"]).astype(int)
+    df["target_margin"] = df["home_points"] - df["away_points"]
 
-    logger.info("🔗 Merging weekly summary with player trends...")
-    df = weekly.merge(trends, on=["team", "date"], how="left")
+    # Fill missing numeric features with 0
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.difference({"home_win", "target_margin"})
+    df[numeric_cols] = df[numeric_cols].fillna(0)
 
-    # Add target column (win/loss)
-    df["target_win"] = (weekly["result"] == "W").astype(int)
+    # Compute streaks
+    logger.info("📈 Computing winning streak features...")
+    df_streaks = _compute_streaks(df)
+    df = df.merge(df_streaks[["game_id", "streak"]], on="game_id", how="left")
 
-    # Optional: margin of victory target
-    if {"points_for", "points_against"}.issubset(weekly.columns):
-        df["target_margin"] = weekly["points_for"] - weekly["points_against"]
-
-    # Feature scaling (z-score normalization)
+    # Optional scaling
     if scale:
         logger.info("📊 Scaling numeric features...")
-        df = _scale_numeric(df, exclude_cols=["target_win", "target_margin"])
+        df = _scale_numeric(df, exclude_cols=EXCLUDE_FROM_SCALING)
 
-    # Save training dataset
+    # Save final training dataset
     df.to_csv(out_file, index=False)
     ts_out = f"features/training_data_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
     df.to_csv(ts_out, index=False)
 
-    logger.info(f"✅ Training dataset built and saved to {out_file}")
+    logger.info(f"✅ Training dataset saved to {out_file}")
     logger.info(f"📦 Timestamped backup saved to {ts_out}")
     logger.info(f"Rows: {len(df)}, Columns: {len(df.columns)}")
 
@@ -91,9 +112,9 @@ def build_training_data(
         "generated_at": datetime.now().isoformat(),
         "rows": len(df),
         "columns": df.columns.tolist(),
-        "weekly_file": weekly_file,
-        "trends_file": trends_file,
-        "scaled": scale
+        "features_file": features_file,
+        "scaled": scale,
+        "streak_feature": "streak"
     }
     meta_file = "features/training_data_meta.json"
     with open(meta_file, "w") as f:
@@ -102,13 +123,14 @@ def build_training_data(
 
     return df
 
-
+# ----------------------------
+# CLI
+# ----------------------------
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Build training dataset from weekly summary and player trends")
-    parser.add_argument("--weekly", type=str, default="results/weekly_summary.csv")
-    parser.add_argument("--trends", type=str, default="results/player_trends.csv")
+    parser = argparse.ArgumentParser(description="Build model-ready training dataset from training features")
+    parser.add_argument("--features", type=str, default="features/training_features.csv")
     parser.add_argument("--out", type=str, default="features/training_data.csv")
     parser.add_argument("--no-scale", action="store_true", help="Disable z-score scaling")
 
@@ -116,8 +138,7 @@ if __name__ == "__main__":
 
     try:
         build_training_data(
-            weekly_file=args.weekly,
-            trends_file=args.trends,
+            features_file=args.features,
             out_file=args.out,
             scale=not args.no_scale
         )

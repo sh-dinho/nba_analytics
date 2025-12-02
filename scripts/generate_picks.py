@@ -1,4 +1,5 @@
 # File: scripts/generate_picks.py
+
 import os
 import sys
 import pandas as pd
@@ -6,6 +7,7 @@ import argparse
 import logging
 import json
 from datetime import datetime
+from nba_analytics_core.notifications import send_telegram_message
 
 REQUIRED_PRED_COLS = {"game_id", "home_win_prob"}
 REQUIRED_ODDS_COLS = {"game_id", "home_moneyline", "away_moneyline", "spread", "total"}
@@ -55,7 +57,10 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
-def main(preds_file="results/predictions.csv", odds_file="data/odds.csv", out_file="results/picks.csv"):
+def main(preds_file="results/predictions.csv",
+         odds_file="data/odds.csv",
+         out_file="results/picks.csv",
+         notify=False):
     if not os.path.exists(preds_file):
         raise FileNotFoundError("❌ Predictions file not found. Run prediction pipeline first.")
 
@@ -71,6 +76,7 @@ def main(preds_file="results/predictions.csv", odds_file="data/odds.csv", out_fi
 
     # Baseline pick: HOME if win prob ≥ 0.5, else AWAY
     picks["pick"] = picks["home_win_prob"].apply(lambda p: "HOME" if p >= 0.5 else "AWAY")
+    picks["confidence"] = picks["home_win_prob"].apply(lambda p: "Strong" if p >= 0.6 else "Weak")
 
     if odds is not None:
         picks = picks.merge(
@@ -78,7 +84,7 @@ def main(preds_file="results/predictions.csv", odds_file="data/odds.csv", out_fi
             on="game_id", how="left"
         )
 
-        # EV calculations (safe handling of NaNs)
+        # EV calculations
         picks["home_ev"] = picks.apply(
             lambda r: r["home_win_prob"] * (payout(r["home_moneyline"]) or 0) - (1 - r["home_win_prob"]),
             axis=1
@@ -92,16 +98,20 @@ def main(preds_file="results/predictions.csv", odds_file="data/odds.csv", out_fi
             lambda r: "HOME" if r["home_ev"] >= r["away_ev"] else "AWAY",
             axis=1
         )
-        picks["pick"] = picks["pick_ev_side"]
+
+        # Override weak picks with EV pick
+        picks["pick"] = picks.apply(
+            lambda r: r["pick"] if r["confidence"] == "Strong" else r["pick_ev_side"], axis=1
+        )
 
         # Add implied probabilities for transparency
         picks["home_implied_prob"] = picks["home_moneyline"].apply(implied_prob)
         picks["away_implied_prob"] = picks["away_moneyline"].apply(implied_prob)
 
+    # Save picks
     os.makedirs(os.path.dirname(out_file) or ".", exist_ok=True)
     picks.to_csv(out_file, index=False)
 
-    # Save timestamped backup
     ts_file = out_file.replace(".csv", f"_{_timestamp()}.csv")
     picks.to_csv(ts_file, index=False)
 
@@ -111,14 +121,27 @@ def main(preds_file="results/predictions.csv", odds_file="data/odds.csv", out_fi
     summary.columns = ["side", "count"]
     summary.to_csv(summary_file, index=False)
 
+    home_count = summary.loc[summary["side"] == "HOME", "count"].sum()
+    away_count = summary.loc[summary["side"] == "AWAY", "count"].sum()
+
     logger.info(f"✅ Picks saved to {out_file}")
     logger.info(f"📦 Timestamped backup saved to {ts_file}")
     logger.info(f"📊 Summary saved to {summary_file}")
+    logger.info(f"🔎 HOME picks: {home_count}, AWAY picks: {away_count}")
 
-    home_count = summary.loc[summary["side"] == "HOME", "count"].sum()
-    away_count = summary.loc[summary["side"] == "AWAY", "count"].sum()
-    logger.info(f"🔎 HOME picks: {home_count}")
-    logger.info(f"🔎 AWAY picks: {away_count}")
+    # Telegram notification for top EV pick
+    if notify and "home_ev" in picks.columns:
+        top_game = picks.loc[picks[["home_ev", "away_ev"]].max(axis=1).idxmax()]
+        msg = (
+            f"🏀 Top EV Pick\n"
+            f"{top_game.get('home_team','HOME')} vs {top_game.get('away_team','AWAY')}\n"
+            f"Pick: {top_game['pick']} | EV Home: {top_game['home_ev']:.2f}, EV Away: {top_game['away_ev']:.2f}"
+        )
+        try:
+            send_telegram_message(msg)
+            logger.info("✅ Telegram notification sent for top EV pick")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to send Telegram message: {e}")
 
     # Save metadata
     meta = {
@@ -144,10 +167,11 @@ if __name__ == "__main__":
     parser.add_argument("--preds", type=str, default="results/predictions.csv", help="Path to predictions file")
     parser.add_argument("--odds", type=str, default="data/odds.csv", help="Path to odds file")
     parser.add_argument("--export", type=str, default="results/picks.csv", help="Path to export picks file")
+    parser.add_argument("--notify", action="store_true", help="Send Telegram notification for top EV pick")
     args = parser.parse_args()
 
     try:
-        main(preds_file=args.preds, odds_file=args.odds, out_file=args.export)
+        main(preds_file=args.preds, odds_file=args.odds, out_file=args.export, notify=args.notify)
     except Exception as e:
         logger.error(f"❌ Picks generation failed: {e}")
         sys.exit(1)

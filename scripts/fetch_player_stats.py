@@ -3,8 +3,8 @@ import os
 import time
 import requests
 import pandas as pd
-import argparse
-import sys
+import numpy as np
+import joblib
 import logging
 import json
 from datetime import datetime
@@ -16,12 +16,9 @@ HEADERS = {
     "Referer": "https://www.nba.com"
 }
 
-# ----------------------------
-# Logging setup
-# ----------------------------
 logger = logging.getLogger("fetch_player_stats")
 logger.setLevel(logging.INFO)
-handler = logging.StreamHandler(sys.stdout)
+handler = logging.StreamHandler()
 handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
 logger.addHandler(handler)
 
@@ -32,11 +29,7 @@ def _timestamp() -> str:
 
 def get_active_players(season="2024-25") -> pd.DataFrame:
     """Fetch all active NBA players for a given season."""
-    params = {
-        "LeagueID": "00",
-        "Season": season,
-        "IsOnlyCurrentSeason": "1"
-    }
+    params = {"LeagueID": "00", "Season": season, "IsOnlyCurrentSeason": "1"}
     try:
         r = requests.get(ALL_PLAYERS_URL, params=params, headers=HEADERS, timeout=10)
         r.raise_for_status()
@@ -51,11 +44,7 @@ def get_active_players(season="2024-25") -> pd.DataFrame:
 
 def fetch_player_stats(player_id, season="2024-25", retries=3) -> pd.DataFrame | None:
     """Fetch game logs for a single player with retry/backoff."""
-    params = {
-        "PlayerID": player_id,
-        "Season": season,
-        "SeasonType": "Regular Season"
-    }
+    params = {"PlayerID": player_id, "Season": season, "SeasonType": "Regular Season"}
     for attempt in range(retries):
         try:
             r = requests.get(NBA_API_URL, params=params, headers=HEADERS, timeout=10)
@@ -72,13 +61,41 @@ def fetch_player_stats(player_id, season="2024-25", retries=3) -> pd.DataFrame |
     return None
 
 
+def _compute_weekly_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute rolling weekly stats, differences, and z-scores."""
+    if "GAME_DATE" not in df.columns:
+        raise ValueError("Data must contain 'GAME_DATE' column")
+    
+    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"])
+    df = df.sort_values(["PlayerID", "GAME_DATE"])
+    df["week"] = df["GAME_DATE"].dt.isocalendar().week
+
+    # Aggregate weekly
+    weekly = df.groupby(["PlayerID", "week"]).agg({
+        "PTS": "mean",
+        "REB": "mean",
+        "AST": "mean",
+        "TS_PCT": "mean"
+    }).reset_index()
+
+    # Week-over-week difference
+    for col in ["PTS", "REB", "AST", "TS_PCT"]:
+        weekly[f"{col}_diff"] = weekly.groupby("PlayerID")[col].diff()
+
+    # Z-score normalization
+    numeric_cols = ["PTS", "REB", "AST", "TS_PCT", "PTS_diff", "REB_diff", "AST_diff", "TS_PCT_diff"]
+    for col in numeric_cols:
+        weekly[f"{col}_z"] = weekly.groupby("week")[col].transform(lambda x: (x - x.mean()) / (x.std(ddof=0) or 1))
+
+    return weekly
+
+
 def main(season="2024-25", resume=False):
     os.makedirs("data", exist_ok=True)
     logger.info(f"Fetching active players list for season {season}...")
     active_players = get_active_players(season)
     logger.info(f"Found {len(active_players)} active players.")
 
-    # Resume support: skip players already in saved file
     existing_file = "data/player_stats.csv"
     fetched_ids = set()
     existing_df = None
@@ -98,49 +115,59 @@ def main(season="2024-25", resume=False):
         df = fetch_player_stats(pid, season)
         if df is not None and not df.empty:
             all_stats.append(df)
-        time.sleep(1)  # polite delay
+        time.sleep(1)
 
-    if all_stats:
-        final_df = pd.concat(all_stats, ignore_index=True)
-        if resume and existing_df is not None:
-            final_df = pd.concat([existing_df, final_df], ignore_index=True)
-
-        final_df.to_csv(existing_file, index=False)
-        ts_file = f"data/player_stats_{_timestamp()}.csv"
-        final_df.to_csv(ts_file, index=False)
-
-        summary = final_df.groupby("PlayerID").size().reset_index(name="games_played")
-        summary.to_csv("data/player_stats_summary.csv", index=False)
-
-        logger.info("✅ Player stats saved to data/player_stats.csv")
-        logger.info(f"📦 Timestamped backup saved to {ts_file}")
-        logger.info("✅ Summary saved to data/player_stats_summary.csv")
-
-        # Save metadata
-        meta = {
-            "generated_at": datetime.now().isoformat(),
-            "season": season,
-            "rows": len(final_df),
-            "columns": final_df.columns.tolist(),
-            "players_fetched": len(final_df["PlayerID"].unique()),
-            "resume_mode": resume
-        }
-        meta_file = "data/player_stats_meta.json"
-        with open(meta_file, "w") as f:
-            json.dump(meta, f, indent=2)
-        logger.info(f"🧾 Metadata saved to {meta_file}")
-    else:
+    if not all_stats:
         logger.error("❌ No stats fetched.")
+        return
+
+    final_df = pd.concat(all_stats, ignore_index=True)
+    if resume and existing_df is not None:
+        final_df = pd.concat([existing_df, final_df], ignore_index=True)
+
+    # Save raw stats
+    final_df.to_csv(existing_file, index=False)
+    ts_file = f"data/player_stats_{_timestamp()}.csv"
+    final_df.to_csv(ts_file, index=False)
+
+    # Compute weekly features
+    weekly_features = _compute_weekly_features(final_df)
+    feature_file = "data/training_features.csv"
+    weekly_features.to_csv(feature_file, index=False)
+
+    # Save summary and metadata
+    summary = weekly_features.groupby("PlayerID").size().reset_index(name="weeks_played")
+    summary.to_csv("data/player_stats_summary.csv", index=False)
+
+    meta = {
+        "generated_at": datetime.now().isoformat(),
+        "season": season,
+        "rows": len(final_df),
+        "columns": final_df.columns.tolist(),
+        "players_fetched": len(final_df["PlayerID"].unique()),
+        "feature_rows": len(weekly_features),
+        "feature_columns": weekly_features.columns.tolist(),
+        "resume_mode": resume
+    }
+    meta_file = "data/player_stats_meta.json"
+    with open(meta_file, "w") as f:
+        json.dump(meta, f, indent=2)
+
+    logger.info(f"✅ Player stats saved to {existing_file}")
+    logger.info(f"📦 Timestamped backup saved to {ts_file}")
+    logger.info(f"✅ Weekly training features saved to {feature_file}")
+    logger.info(f"✅ Summary saved to data/player_stats_summary.csv")
+    logger.info(f"🧾 Metadata saved to {meta_file}")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fetch NBA player stats")
-    parser.add_argument("--season", type=str, default="2024-25", help="Season (e.g., 2024-25)")
-    parser.add_argument("--resume", action="store_true", help="Resume from existing file")
+    import argparse
+    parser = argparse.ArgumentParser(description="Fetch NBA player stats and generate weekly features")
+    parser.add_argument("--season", type=str, default="2024-25")
+    parser.add_argument("--resume", action="store_true")
     args = parser.parse_args()
 
     try:
         main(season=args.season, resume=args.resume)
     except Exception as e:
         logger.error(f"❌ Script failed: {e}")
-        sys.exit(1)

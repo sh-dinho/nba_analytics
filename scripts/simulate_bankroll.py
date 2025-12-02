@@ -1,4 +1,5 @@
 # File: scripts/simulate_bankroll.py
+
 import pandas as pd
 import numpy as np
 import argparse
@@ -8,6 +9,8 @@ import logging
 import json
 from datetime import datetime
 from tqdm import tqdm
+import os
+from typing import List, Tuple, Dict, Any, Optional
 
 # ----------------------------
 # Logging setup
@@ -23,33 +26,74 @@ def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
 
+# ================================================================
+# Core bankroll simulator
+# ================================================================
+
 def simulate_bankroll(
     df: pd.DataFrame,
     strategy: str = "kelly",
-    initial: float = 1000,
+    initial: float = 1000.0,
     max_fraction: float = 0.05,
     runs: int = 1,
-    seed: int = None,
-    show_progress: bool = True
-):
+    seed: Optional[int] = None,
+    show_progress: bool = True,
+    use_actual_outcomes: bool = True
+) -> Tuple[List[List[float]], Dict[str, Any]]:
     """
-    Simulate bankroll trajectory given predictions and odds.
+    Simulate bankroll trajectories.
 
-    Parameters:
-        df: DataFrame with columns ["decimal_odds", "prob", "ev"]
-        strategy: "kelly" or "flat"
-        initial: starting bankroll
-        max_fraction: cap on Kelly fraction or flat fraction
-        runs: number of Monte Carlo runs
-        seed: random seed for reproducibility
-        show_progress: whether to show tqdm progress bar
+    Parameters
+    ----------
+    df : DataFrame
+        Required columns:
+        - "decimal_odds": float
+        - "prob": model probability of home team winning
 
-    Returns:
-        all_trajectories (list of lists), metrics_dict (aggregated metrics)
+        Optional:
+        - "home_win": if present, used for real-outcome mode
+
+    strategy : str
+        "kelly" or "flat"
+    initial : float
+        Starting bankroll.
+    max_fraction : float
+        Maximum fraction used either as a Kelly cap or flat-bet fraction.
+    runs : int
+        Number of Monte Carlo runs.
+    seed : int or None
+        Reproducibility seed.
+    show_progress : bool
+        Whether to show tqdm bar.
+    use_actual_outcomes : bool
+        If True and "home_win" column is available → uses real outcomes instead of stochastic sampling.
+
+    Returns
+    -------
+    all_trajectories : list[list[float]]
+    metrics : dict
     """
+
+    required = {"decimal_odds", "prob"}
+    if not required.issubset(df.columns):
+        raise ValueError(f"DataFrame must contain columns: {required}")
+
     if seed is not None:
         np.random.seed(seed)
 
+    actual_available = use_actual_outcomes and ("home_win" in df.columns)
+
+    # Extract vectors for speed
+    probs = df["prob"].astype(float).values
+    odds = df["decimal_odds"].astype(float).values
+    b_vals = odds - 1.0
+
+    if actual_available:
+        actual = df["home_win"].astype(int).values
+
+    # ================================================================
+    # Simulation loop
+    # ================================================================
     all_trajectories = []
     final_bankrolls = []
     win_counts = []
@@ -59,29 +103,39 @@ def simulate_bankroll(
     if show_progress and runs > 1:
         iterator = tqdm(iterator, desc="Simulating runs", unit="run")
 
-    for run in iterator:
+    for _ in iterator:
         bankroll = initial
         trajectory = []
         wins = losses = 0
 
-        for _, row in df.iterrows():
-            p = float(row["prob"])
-            o = float(row["decimal_odds"])
-            b = o - 1.0
+        for i in range(len(df)):
+            p = probs[i]
+            o = odds[i]
+            b = b_vals[i]
 
+            # ----------------------------
             # Stake sizing
+            # ----------------------------
             if strategy == "kelly":
-                kelly = ((b * p) - (1 - p)) / b if b > 0 else 0
-                fraction = max(0.0, min(kelly, max_fraction))
-            elif strategy == "flat":
-                fraction = max_fraction
+                if b <= 0:
+                    fraction = 0.0
+                else:
+                    k = ((b * p) - (1 - p)) / b
+                    fraction = max(0.0, min(k, max_fraction))
             else:
-                raise ValueError(f"Unknown strategy: {strategy}")
+                # Flat betting
+                fraction = max_fraction
 
             stake = bankroll * fraction
 
-            # Random outcome based on probability
-            won = np.random.rand() < p
+            # ----------------------------
+            # Determine outcome
+            # ----------------------------
+            if actual_available:
+                won = bool(actual[i])
+            else:
+                won = np.random.rand() < p
+
             if won:
                 bankroll += stake * b
                 wins += 1
@@ -89,6 +143,7 @@ def simulate_bankroll(
                 bankroll -= stake
                 losses += 1
 
+            bankroll = max(bankroll, 0)  # avoid tiny negative float drift
             trajectory.append(bankroll)
 
         all_trajectories.append(trajectory)
@@ -96,32 +151,37 @@ def simulate_bankroll(
         win_counts.append(wins)
         loss_counts.append(losses)
 
+    # ================================================================
     # Aggregate metrics
-    avg_final = np.mean(final_bankrolls)
+    # ================================================================
+    avg_final = float(np.mean(final_bankrolls))
     roi = (avg_final - initial) / initial if initial else 0.0
-    avg_wins = np.mean(win_counts)
-    avg_losses = np.mean(loss_counts)
+    avg_wins = float(np.mean(win_counts))
+    avg_losses = float(np.mean(loss_counts))
     win_rate = avg_wins / (avg_wins + avg_losses) if (avg_wins + avg_losses) else 0.0
 
     metrics = {
         "final_bankroll_mean": avg_final,
-        "final_bankroll_std": np.std(final_bankrolls),
-        "roi_mean": roi,
+        "final_bankroll_std": float(np.std(final_bankrolls)),
+        "roi": roi,
         "wins_mean": avg_wins,
         "losses_mean": avg_losses,
-        "win_rate_mean": win_rate,
+        "win_rate": win_rate,
         "runs": runs,
         "initial": initial,
         "strategy": strategy,
         "max_fraction": max_fraction,
-        "seed": seed
+        "seed": seed,
+        "use_actual_outcomes": actual_available,
     }
 
     return all_trajectories, metrics
 
 
-def plot_trajectories(all_trajectories):
-    """Plot bankroll trajectories across runs."""
+# ================================================================
+# Plotting
+# ================================================================
+def plot_trajectories(all_trajectories: List[List[float]]):
     plt.figure(figsize=(8, 4))
     for traj in all_trajectories:
         plt.plot(traj, alpha=0.5)
@@ -133,19 +193,25 @@ def plot_trajectories(all_trajectories):
     plt.show()
 
 
+# ================================================================
+# CLI for standalone usage
+# ================================================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulate bankroll trajectory")
     parser.add_argument("--csv", type=str, default="results/picks.csv", help="Path to picks CSV file")
-    parser.add_argument("--strategy", choices=["kelly", "flat"], default="kelly", help="Betting strategy")
-    parser.add_argument("--initial", type=float, default=1000, help="Initial bankroll")
-    parser.add_argument("--max_fraction", type=float, default=0.05, help="Max fraction per bet")
-    parser.add_argument("--runs", type=int, default=1, help="Number of Monte Carlo runs")
-    parser.add_argument("--seed", type=int, default=None, help="Random seed")
-    parser.add_argument("--plot", action="store_true", help="Plot bankroll trajectories")
-    parser.add_argument("--no-progress", action="store_true", help="Disable progress bar")
+    parser.add_argument("--strategy", choices=["kelly", "flat"], default="kelly")
+    parser.add_argument("--initial", type=float, default=1000)
+    parser.add_argument("--max_fraction", type=float, default=0.05)
+    parser.add_argument("--runs", type=int, default=1)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--plot", action="store_true")
+    parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--ignore-actual", action="store_true",
+                        help="Force Monte Carlo even if actual outcomes are available")
     args = parser.parse_args()
 
     df = pd.read_csv(args.csv)
+
     trajectories, metrics = simulate_bankroll(
         df,
         strategy=args.strategy,
@@ -153,17 +219,18 @@ if __name__ == "__main__":
         max_fraction=args.max_fraction,
         runs=args.runs,
         seed=args.seed,
-        show_progress=not args.no_progress
+        show_progress=not args.no_progress,
+        use_actual_outcomes=not args.ignore_actual
     )
 
     logger.info("\n=== SIMULATION METRICS ===")
     for k, v in metrics.items():
-        if isinstance(v, (int, float)):
+        if isinstance(v, float):
             logger.info(f"{k}: {v:.4f}")
         else:
             logger.info(f"{k}: {v}")
 
-    # Save timestamped backups
+    # Save results
     os.makedirs("results", exist_ok=True)
     ts_metrics_file = f"results/simulation_metrics_{_timestamp()}.json"
     with open(ts_metrics_file, "w") as f:
