@@ -1,4 +1,5 @@
-# cli/run_daily.py
+# File: cli/run_daily.py
+
 import argparse
 from pipelines.daily_pipeline import run_daily_pipeline
 from core.logging import setup_logger
@@ -13,12 +14,14 @@ def main():
     parser.add_argument("--strategy", choices=["kelly","flat"], default="kelly")
     parser.add_argument("--max_fraction", type=float, default=0.05)
     parser.add_argument("--export", type=str, default="results/picks.csv")
+    parser.add_argument("--use-synthetic", action="store_true", help="Use synthetic player data instead of API fetch") # <--- FIXED: Added argument
     args = parser.parse_args()
 
     picks_df, metrics = run_daily_pipeline(
         threshold=args.threshold,
         strategy=args.strategy,
-        max_fraction=args.max_fraction
+        max_fraction=args.max_fraction,
+        use_synthetic=args.use_synthetic # <--- FIXED: Passed argument down
     )
 
     os.makedirs(os.path.dirname(args.export), exist_ok=True)
