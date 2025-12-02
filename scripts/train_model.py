@@ -25,12 +25,16 @@ def main():
     X_num = X.select_dtypes(include="number")
     X_num = X_num.fillna(0).replace([float("inf"), -float("inf")], 0)
 
+    # Train model
     model = LogisticRegression(max_iter=1000)
     model.fit(X_num, y)
 
+    # Save both model and feature order
+    feature_order = list(X_num.columns)
     os.makedirs(os.path.dirname(MODEL_FILE), exist_ok=True)
-    joblib.dump(model, MODEL_FILE)
-    logger.info(f"✅ Model trained and saved to {MODEL_FILE}")
+    joblib.dump({"model": model, "features": feature_order}, MODEL_FILE)
+
+    logger.info(f"✅ Model trained and saved to {MODEL_FILE} with feature order")
 
 if __name__ == "__main__":
     main()

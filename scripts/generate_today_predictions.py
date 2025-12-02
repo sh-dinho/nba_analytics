@@ -12,23 +12,24 @@ logger.addHandler(logging.StreamHandler())
 def generate_today_predictions(threshold=0.6):
     """
     Generate predictions for today's games using the trained model.
-    Ensures features match training by running new_games.csv through build_features_for_new_games.
+    Ensures features match training by reordering columns to saved feature order.
     """
     if not os.path.exists(MODEL_FILE):
         logger.error("No trained model found. Train a model first.")
         raise FileNotFoundError(MODEL_FILE)
 
-    model = joblib.load(MODEL_FILE)
-    logger.info(f"✅ Loaded model from {MODEL_FILE}")
+    saved = joblib.load(MODEL_FILE)
+    model = saved["model"]
+    feature_order = saved["features"]
+    logger.info(f"✅ Loaded model and feature order from {MODEL_FILE}")
 
     if not os.path.exists("data/new_games.csv"):
         raise FileNotFoundError("data/new_games.csv not found. Run fetch_new_games.py first.")
 
     df = build_features_for_new_games("data/new_games.csv")
 
-    # Select numeric features (same as training)
-    feature_cols = ["AGE", "PTS", "AST", "REB", "GAMES_PLAYED", "PTS_per_AST", "REB_rate"]
-    X_num = df[feature_cols].fillna(0).replace([float("inf"), -float("inf")], 0)
+    # Reorder columns to match training
+    X_num = df[feature_order].fillna(0).replace([float("inf"), -float("inf")], 0)
 
     # Predict probabilities
     probs = model.predict_proba(X_num)[:, 1]
