@@ -2,24 +2,17 @@ import os
 import time
 import pandas as pd
 from nba_api.stats.endpoints import leaguedashplayerstats
-from nba_api.library.http import NBAStatsHTTP
 
 DATA_DIR = "data"
 CACHE_FILE = f"{DATA_DIR}/player_stats.csv"
 os.makedirs(DATA_DIR, exist_ok=True)
-
-# Make requests look more like a browser
-NBAStatsHTTP.headers.update({
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-})
-NBAStatsHTTP.timeout = 60  # increase timeout
 
 def main(season="2024-25", retries=3, delay=10):
     """Fetch latest NBA player stats and save locally. Falls back to cached data if API fails."""
     print(f"Fetching player stats for season {season}...")
     for attempt in range(1, retries + 1):
         try:
-            stats = leaguedashplayerstats.LeagueDashPlayerStats(season=season)
+            stats = leaguedashplayerstats.LeagueDashPlayerStats(season=season, timeout=60)
             df = stats.get_data_frames()[0]
             df.to_csv(CACHE_FILE, index=False)
             print(f"Player stats saved to {CACHE_FILE}")
