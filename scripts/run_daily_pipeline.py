@@ -1,91 +1,44 @@
-# File: scripts/run_daily_pipeline.py
+# File: scripts/run_daily_pipeline_cli.py
 
-import logging
-import datetime
-import os
-import pandas as pd
+import argparse
+from scripts.utils import setup_logger # Assuming setup_logger is still accessible here
 from app.prediction_pipeline import PredictionPipeline
-import requests
-import json
 
-RESULTS_DIR = "results"
-os.makedirs(RESULTS_DIR, exist_ok=True)
-METRICS_LOG = f"{RESULTS_DIR}/pipeline_metrics.csv"
+logger = setup_logger("NBA_CLI")
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()]
-)
+def main():
+    parser = argparse.ArgumentParser(description="NBA Analytics CLI")
+    parser.add_argument("--threshold", type=float, default=0.6, help="Probability threshold for bets")
+    parser.add_argument("--strategy", choices=["kelly", "flat"], default="kelly", help="Bet sizing strategy")
+    parser.add_argument("--max_fraction", type=float, default=0.05, help="Max fraction of bankroll per bet")
+    parser.add_argument("--use-synthetic", action="store_true", help="Use synthetic player data instead of API fetch") # <-- FIX: Argument added
+    args = parser.parse_args()
 
-# Optional Telegram notifications
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+    logger.info(
+        f"Starting pipeline | threshold={args.threshold}, "
+        f"strategy={args.strategy}, max_fraction={args.max_fraction}, "
+        f"use_synthetic={args.use_synthetic}"
+    )
 
-def send_telegram_message(text: str):
-    """Send Telegram notification if credentials exist."""
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    pipeline = PredictionPipeline(
+        threshold=args.threshold,
+        strategy=args.strategy,
+        max_fraction=args.max_fraction,
+        use_synthetic=args.use_synthetic # <-- FIX: Argument passed to constructor
+    )
+
     try:
-        requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": text})
+        df, metrics = pipeline.run()
+        if metrics:
+            logger.info("✅ CLI run completed successfully")
+            logger.info(f"Games processed: {len(df)}")
+            logger.info(f"Final bankroll: {metrics.get('final_bankroll_mean', 0):.2f}")
+            logger.info(f"ROI: {metrics.get('roi', 0)*100:.2f}%")
+        else:
+            logger.warning("Pipeline completed but no metrics were returned.")
     except Exception as e:
-        logging.warning(f"Telegram notification failed: {e}")
+        logger.error(f"❌ CLI run failed: {e}")
+        raise
 
 if __name__ == "__main__":
-    try:
-        pipeline = PredictionPipeline(
-            threshold=0.6,
-            strategy="kelly",
-            max_fraction=0.05,
-            use_synthetic=False # <-- NEW ARGUMENT ADDED HERE
-        )
-
-        df, metrics = pipeline.run()
-
-        if metrics:
-            logging.info("✅ Daily pipeline completed successfully")
-            run_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-            final_bankroll = metrics.get("final_bankroll_mean")
-            roi = metrics.get("roi")
-
-            # Safe fallback values
-            fb_str = f"{final_bankroll:.2f}" if final_bankroll is not None else "0.00"
-            roi_str = f"{roi * 100:.2f}%" if roi is not None else "0.00%"
-
-            logging.info(f"Run timestamp: {run_time}")
-            logging.info(f"Final Bankroll: {fb_str}")
-            logging.info(f"ROI: {roi_str}")
-
-            logging.info(
-                f"📊 Pipeline summary: games={len(df)} | final_bankroll={fb_str} | roi={roi_str}"
-            )
-
-            # Append metrics to rolling CSV log
-            log_entry = pd.DataFrame([{
-                "timestamp": run_time,
-                "games": len(df),
-                "final_bankroll_mean": final_bankroll,
-                "roi": roi
-            }])
-
-            log_entry.to_csv(
-                METRICS_LOG,
-                mode="a" if os.path.exists(METRICS_LOG) else "w",
-                header=not os.path.exists(METRICS_LOG),
-                index=False
-            )
-
-            logging.info(f"📁 Metrics appended to {METRICS_LOG}")
-
-            send_telegram_message(f"✅ NBA Pipeline Success!\nGames: {len(df)}\nROI: {roi_str}")
-
-        else:
-            logging.warning("Pipeline completed but returned no metrics.")
-            send_telegram_message("⚠️ NBA Pipeline completed but no metrics returned.")
-
-    except Exception as e:
-        logging.error(f"❌ Daily pipeline failed: {e}")
-        send_telegram_message(f"❌ NBA Pipeline Failed!\nError: {e}")
+    main()
