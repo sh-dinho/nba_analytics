@@ -34,7 +34,7 @@ jobs:
       - name: Run prediction pipeline
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python scripts/prediction_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05 --model_type ${{ matrix.model_type }}
+          python app/prediction_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05 --model_type ${{ matrix.model_type }}
           mv results/picks_bankroll.csv results/picks_bankroll_${{ matrix.model_type }}.csv
 
       - name: Debug models directory
