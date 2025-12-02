@@ -1,112 +1,56 @@
+# ============================================================
 # File: scripts/simulate_bankroll.py
+# Purpose: Simulate bankroll trajectory with EV and Kelly bet sizes
+# ============================================================
 
 import pandas as pd
-import numpy as np
+from scripts.betting_utils import expected_value, calculate_kelly_criterion
 
-def simulate_bankroll(
-    df,
-    strategy="kelly",
-    max_fraction=0.05,
-    initial=1000.0,
-    n_sims=10,
-    seed=None
-):
+def simulate_bankroll(preds_df, strategy="kelly", max_fraction=0.05, bankroll=1000.0):
     """
-    Monte Carlo bankroll simulation.
-    df must contain:
-        - decimal_odds
-        - win_prob (or prob / pred_home_win_prob)
-        - ev (optional but useful)
+    Simulates bankroll evolution given predictions and odds.
+    Adds EV and Kelly bet size columns to preds_df.
     """
+    history = []
+    current_bankroll = bankroll
 
-    # -----------------------------
-    # Safety & column handling
-    # -----------------------------
-    if df is None or len(df) == 0:
-        return [], {
-            "final_bankroll_mean": initial,
-            "roi": 0.0,
-            "wins": 0,
-            "losses": 0,
-            "win_rate": 0.0
-        }
+    for idx, row in preds_df.iterrows():
+        prob = row.get("prob", None)
+        odds = row.get("american_odds", None)
 
-    df = df.copy()
+        if prob is None or odds is None:
+            preds_df.at[idx, "EV"] = None
+            preds_df.at[idx, "Kelly_Bet"] = None
+            continue
 
-    # Accept pipeline column names
-    if "prob" not in df.columns:
-        if "win_prob" in df.columns:
-            df["prob"] = df["win_prob"]
-        elif "pred_home_win_prob" in df.columns:
-            df["prob"] = df["pred_home_win_prob"]
+        # Expected value for $100 stake
+        ev = expected_value(prob, odds, stake=100)
+        preds_df.at[idx, "EV"] = ev
+
+        # Kelly bet size in dollars
+        kelly_bet = calculate_kelly_criterion(odds, prob, current_bankroll)
+        preds_df.at[idx, "Kelly_Bet"] = kelly_bet
+
+        # Apply strategy
+        if strategy == "kelly":
+            bet_size = min(kelly_bet, current_bankroll * max_fraction)
         else:
-            raise KeyError("df must contain 'prob', 'win_prob', or 'pred_home_win_prob'")
+            bet_size = current_bankroll * max_fraction
 
-    rng = np.random.default_rng(seed)  # reproducible RNG
+        # Simulate outcome (placeholder: assume win if prob > 0.5)
+        if prob > 0.5:
+            profit = (preds_df.at[idx, "EV"] / 100) * bet_size
+            current_bankroll += profit
+        else:
+            current_bankroll -= bet_size
 
-    all_metrics = []
-    all_trajectories = []
+        preds_df.at[idx, "bankroll"] = current_bankroll
+        history.append(current_bankroll)
 
-    # -----------------------------------------
-    # Precompute b = odds - 1 for efficiency
-    # -----------------------------------------
-    df["b"] = df["decimal_odds"] - 1
+    metrics = {
+        "final_bankroll": current_bankroll,
+        "avg_EV": preds_df["EV"].mean(),
+        "avg_Kelly_Bet": preds_df["Kelly_Bet"].mean()
+    }
 
-    for sim in range(n_sims):
-        bankroll = initial
-        trajectory = []
-        wins = 0
-        losses = 0
-
-        for _, row in df.iterrows():
-            p = row["prob"]
-            b = row["b"]
-
-            # ------------- Kelly stake fraction -------------
-            if strategy == "kelly":
-                if b <= 0:
-                    f_kelly = 0
-                else:
-                    # Kelly formula: f = (bp - q) / b
-                    q = 1 - p
-                    f_kelly = (b * p - q) / b
-
-                # Clamp
-                f = max(0, min(f_kelly, max_fraction))
-            else:
-                f = max_fraction
-
-            stake = bankroll * f
-
-            # ------------- Simulate outcome -------------
-            won = rng.random() < p
-            bankroll = bankroll + stake * b if won else bankroll - stake
-            bankroll = max(bankroll, 0)
-
-            if won:
-                wins += 1
-            else:
-                losses += 1
-
-            trajectory.append(bankroll)
-
-        # -------- Metrics for this simulation --------
-        metrics = {
-            "final_bankroll": bankroll,
-            "roi": (bankroll - initial) / initial,
-            "wins": wins,
-            "losses": losses,
-            "win_rate": wins / (wins + losses) if (wins + losses) > 0 else 0
-        }
-
-        all_metrics.append(metrics)
-        all_trajectories.append(trajectory)
-
-    # -----------------------------
-    # Aggregate metrics
-    # -----------------------------
-    metrics_df = pd.DataFrame(all_metrics)
-    avg_metrics = metrics_df.mean(numeric_only=True).to_dict()
-    avg_metrics["final_bankroll_mean"] = avg_metrics.pop("final_bankroll", None)
-
-    return all_trajectories, avg_metrics
+    return history, metrics

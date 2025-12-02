@@ -1,8 +1,6 @@
 # ============================================================
 # File: app/prediction_pipeline.py
-# NBA Prediction Pipeline – orchestrates stats, features, model training,
-# odds fetching, predictions (Logistic, NN, XGB), picks, bankroll simulation,
-# and saves daily summary with bankroll + win rate
+# Purpose: NBA Prediction Pipeline – includes EV, Kelly bet sizes, bankroll trajectory, and summary metrics
 # ============================================================
 
 import os
@@ -17,7 +15,7 @@ from scripts.train_model import main as train_model
 from scripts.fetch_new_games import main as fetch_new_games
 from scripts.generate_today_predictions import generate_today_predictions
 from scripts.generate_picks import main as generate_picks
-from scripts.simulate_bankroll import simulate_bankroll
+from scripts.simulate_bankroll import simulate_bankroll   # <-- updated simulate_bankroll with EV + Kelly
 from scripts.sbr_odds_provider import SbrOddsProvider
 from scripts.nn_runner import nn_runner
 from scripts.xgb_runner import xgb_runner
@@ -73,7 +71,7 @@ class PredictionPipeline:
                     "AST": 5,
                     "REB": 7,
                     "GAMES_PLAYED": 15,
-                    "decimal_odds": data[home]["money_line_odds"],
+                    "american_odds": data[home]["money_line_odds"],
                     "OU": data["under_over_odds"]
                 })
             df = pd.DataFrame(rows)
@@ -89,8 +87,8 @@ class PredictionPipeline:
             feature_cols = ["AGE","PTS","AST","REB","GAMES_PLAYED","PTS_per_AST","REB_rate"]
             data = df_new[feature_cols].fillna(0).to_numpy()
             games = list(zip(df_new["TEAM_HOME"], df_new["TEAM_AWAY"]))
-            home_team_odds = df_new["decimal_odds"].tolist()
-            away_team_odds = df_new["decimal_odds"].tolist()
+            home_team_odds = df_new["american_odds"].tolist()
+            away_team_odds = df_new["american_odds"].tolist()
             todays_games_uo = df_new.get("OU", [200] * len(df_new))
 
             if self.model_type == "nn":
@@ -113,23 +111,13 @@ class PredictionPipeline:
         generate_picks(preds_file=PREDICTIONS_FILE, out_file=PICKS_FILE)
         logger.info("✅ Picks generated")
 
-        # 7️⃣ Simulate bankroll
-        if "winner_confidence" in preds_df:
-            preds_df["prob"] = preds_df["winner_confidence"] / 100
-        if "decimal_odds" not in preds_df and "decimal_odds" in df_new:
-            preds_df["decimal_odds"] = df_new["decimal_odds"]
-
+        # 7️⃣ Simulate bankroll (adds EV + Kelly_Bet columns)
         history, metrics = simulate_bankroll(
-            preds_df[["decimal_odds", "prob"]],
+            preds_df,
             strategy=self.strategy,
-            max_fraction=self.max_fraction
+            max_fraction=self.max_fraction,
+            bankroll=1000.0   # starting bankroll
         )
-
-        if len(history) > 0:
-            avg_traj = np.mean(history, axis=0)
-            preds_df["bankroll"] = avg_traj[:len(preds_df)]
-        else:
-            preds_df["bankroll"] = 0
 
         # 8️⃣ Compute win rate
         total_games = len(preds_df)
@@ -138,11 +126,15 @@ class PredictionPipeline:
 
         # 9️⃣ Save predictions + summary
         preds_df.to_csv(PICKS_BANKROLL_FILE, index=False)
+
         summary = pd.DataFrame([{
             "Summary": "Daily Results",
             "Final_Bankroll": preds_df["bankroll"].iloc[-1],
-            "Win_Rate": f"{win_rate}%"
+            "Win_Rate": f"{win_rate}%",
+            "Avg_EV": round(preds_df["EV"].mean(), 2),
+            "Avg_Kelly_Bet": round(preds_df["Kelly_Bet"].mean(), 2)
         }])
+
         summary.to_csv(PICKS_BANKROLL_FILE, mode="a", header=True, index=False)
         logger.info(f"✅ Daily summary saved to {PICKS_BANKROLL_FILE}")
 
