@@ -1,52 +1,82 @@
 # ============================================================
 # File: app/prediction_pipeline.py
-# Purpose: Run prediction models and bankroll simulation
+# Purpose: Run predictions using trained model and bankroll simulation
 # ============================================================
 
 import argparse
+import os
 import pandas as pd
-from scripts.utils import Simulation   # <-- NEW
-from scripts.sbr_odds_provider import SbrOddsProvider
+import joblib
+from scripts.Utils import Simulation
+
+try:
+    import tensorflow as tf
+except ImportError:
+    tf = None
+
+
+def load_model(model_type: str):
+    """
+    Load trained model depending on type.
+    """
+    if model_type in ["logistic", "xgb"]:
+        model_path = "models/game_predictor.pkl"
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"{model_path} not found")
+        return joblib.load(model_path)
+
+    elif model_type == "nn":
+        model_path = "models/game_predictor.h5"
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"{model_path} not found")
+        if tf is None:
+            raise ImportError("TensorFlow not available to load NN model")
+        return tf.keras.models.load_model(model_path)
+
+    else:
+        raise ValueError(f"Unsupported model_type: {model_type}")
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--threshold", type=float, default=0.6)
     parser.add_argument("--strategy", type=str, default="kelly")
     parser.add_argument("--max_fraction", type=float, default=0.05)
-    parser.add_argument("--use_synthetic", action="store_true")
+    parser.add_argument("--model_type", type=str, default="logistic",
+                        choices=["logistic", "xgb", "nn"])
     args = parser.parse_args()
 
-    # 1️⃣ Load data (synthetic or real odds)
-    if args.use_synthetic:
-        bets = [
-            {"prob_win": 0.55, "odds": 2.0},
-            {"prob_win": 0.65, "odds": 1.8},
-            {"prob_win": 0.45, "odds": 2.2},
-        ]
-    else:
-        provider = SbrOddsProvider()
-        odds_data = provider.get_odds()
-        # Convert odds_data into bets list
-        bets = []
-        for matchup, teams in odds_data.items():
-            for team, data in teams.items():
-                if team != "under_over_odds":
-                    bets.append({
-                        "prob_win": 0.55,  # placeholder until model predicts
-                        "odds": (data["money_line_odds"] / 100) + 1 if data["money_line_odds"] > 0 else (100 / abs(data["money_line_odds"])) + 1
-                    })
+    # Load trained model
+    model = load_model(args.model_type)
 
-    # 2️⃣ Run simulation
+    # Example synthetic data (replace with real features)
+    X = pd.DataFrame({
+        "feature1": [0.1, 0.2, 0.8, 0.9],
+        "feature2": [1, 2, 3, 4]
+    })
+
+    # Predict probabilities
+    if args.model_type == "nn":
+        probs = model.predict(X).flatten()
+    else:
+        probs = model.predict_proba(X)[:, 1]
+
+    # Build bets list
+    bets = []
+    for prob in probs:
+        bets.append({"prob_win": prob, "odds": 2.0})  # placeholder odds
+
+    # Run bankroll simulation
     sim = Simulation(initial_bankroll=1000)
     sim.run(bets, strategy=args.strategy, max_fraction=args.max_fraction)
 
-    # 3️⃣ Save results
+    # Save results
     df = pd.DataFrame(sim.history)
+    os.makedirs("results", exist_ok=True)
     df.to_csv("results/picks_bankroll.csv", index=False)
 
-    # 4️⃣ Print summary
-    summary = sim.summary()
-    print("📊 Daily Summary:", summary)
+    # Print summary
+    print("📊 Pipeline Summary:", sim.summary())
 
 
 if __name__ == "__main__":
