@@ -19,7 +19,7 @@ def fetch_stats_bball_ref(season_year: str) -> pd.DataFrame:
         "Player": "PLAYER_NAME",
         "Pos": "POSITION",
         "Age": "AGE",
-        "Tm": "TEAM_ABBREVIATION",
+        "Team": "TEAM_ABBREVIATION",
         "G": "GAMES_PLAYED",
         "GS": "GAMES_STARTED",
         "MP": "MINUTES",
@@ -55,6 +55,7 @@ def fetch_stats_bball_ref(season_year: str) -> pd.DataFrame:
 def main(season="2024-25", force_refresh=False):
     try:
         df = fetch_stats_bball_ref(season.split("-")[0])
+        os.makedirs("data", exist_ok=True)
         df.to_csv("data/player_stats.csv", index=False)
         logger.info(f"✅ Player stats saved to data/player_stats.csv ({len(df)} rows)")
     except Exception as e:
@@ -67,8 +68,10 @@ def main(season="2024-25", force_refresh=False):
             "AST": [5, 7],
             "REB": [4, 6]
         })
+        os.makedirs("data", exist_ok=True)
         synth.to_csv("data/player_stats.csv", index=False)
         logger.info("📦 Synthetic player stats generated for CI reliability")
+        
 
 if __name__ == "__main__":
     import argparse
