@@ -1,107 +1,67 @@
-# app/predict_pipeline.py
 import pandas as pd
-import joblib
-import os
-from scripts.utils import setup_logger
+from scripts.utils import setup_logger, safe_mkdir
+from scripts.build_features import main as build_features
+from scripts.train_model import main as train_model
+from scripts.generate_today_predictions import generate_today_predictions
+from scripts.generate_picks import main as generate_picks
+from scripts.simulate_bankroll import simulate_bankroll
 
 logger = setup_logger("predict_pipeline")
 
-def generate_today_predictions(
-    features_file: str = "data/training_features.csv",
-    model_file: str = "models/game_predictor.pkl",
-    threshold: float = 0.6,
-    cli: bool = False,
-    notify: bool = False,
-    outdir: str = "results"
-) -> pd.DataFrame:
-    """
-    Generate predictions for today's games using a trained ML model.
+class PredictionPipeline:
+    def __init__(self, features_file="data/training_features.csv",
+                 model_file="models/game_predictor.pkl",
+                 predictions_dir="results",
+                 threshold=0.6,
+                 max_fraction=0.05,
+                 strategy="kelly"):
+        self.features_file = features_file
+        self.model_file = model_file
+        self.predictions_dir = predictions_dir
+        self.threshold = threshold
+        self.max_fraction = max_fraction
+        self.strategy = strategy
+        safe_mkdir(predictions_dir)
 
-    Args:
-        features_file: CSV file with today's game features.
-        model_file: Path to the trained model.
-        threshold: Minimum probability to consider a strong pick.
-        cli: If True, run in CLI mode (minimal logging).
-        notify: Whether to send Telegram notifications (optional).
-        outdir: Where to save predictions CSV.
+    def run(self, train_model_flag=True):
+        # =======================
+        # 1) Build Features
+        # =======================
+        df_feat = build_features(out_file=self.features_file)
+        logger.info(f"Features ready: {self.features_file}")
 
-    Returns:
-        pd.DataFrame: Predictions with columns:
-            - game_id
-            - home_team
-            - away_team
-            - pred_home_win_prob
-            - decimal_odds
-            - ev
-    """
-    os.makedirs(outdir, exist_ok=True)
+        # =======================
+        # 2) Train Model
+        # =======================
+        metrics = None
+        if train_model_flag:
+            metrics = train_model(features_file=self.features_file, model_file=self.model_file)
+            logger.info(f"Model trained. Metrics: {metrics}")
 
-    # ----------------------
-    # Load features
-    # ----------------------
-    if not os.path.exists(features_file):
-        raise FileNotFoundError(f"Features file not found: {features_file}")
-    features = pd.read_csv(features_file)
-    if features.empty:
-        raise ValueError(f"No features found in {features_file}")
-    logger.info(f"Loaded features for {len(features)} games from {features_file}")
+        # =======================
+        # 3) Generate Predictions
+        # =======================
+        df_preds = generate_today_predictions(
+            model_file=self.model_file,
+            features_file=self.features_file,
+            threshold=self.threshold,
+            outdir=self.predictions_dir
+        )
+        logger.info(f"Predictions generated: {len(df_preds)} rows")
 
-    # ----------------------
-    # Load trained model
-    # ----------------------
-    if not os.path.exists(model_file):
-        raise FileNotFoundError(f"Trained model not found: {model_file}")
-    model = joblib.load(model_file)
-    logger.info(f"Loaded trained model from {model_file}")
+        # =======================
+        # 4) Generate Picks
+        # =======================
+        df_picks = generate_picks(preds_file=f"{self.predictions_dir}/predictions.csv",
+                                  out_file=f"{self.predictions_dir}/picks.csv",
+                                  threshold=self.threshold)
+        logger.info(f"Picks generated: {len(df_picks)} rows")
 
-    # ----------------------
-    # Make predictions
-    # ----------------------
-    # Assuming model.predict_proba gives [prob_lose, prob_win]
-    probs = model.predict_proba(features)[:,1]
-    features["pred_home_win_prob"] = probs
+        # =======================
+        # 5) Bankroll Simulation
+        # =======================
+        trajectory, bankroll_metrics = simulate_bankroll(df_preds, strategy=self.strategy, max_fraction=self.max_fraction)
+        df_preds["bankroll"] = trajectory
+        logger.info(f"Bankroll simulation completed. Final bankroll: {bankroll_metrics['final_bankroll']}")
 
-    # ----------------------
-    # EV calculation
-    # ----------------------
-    if "decimal_odds" not in features.columns:
-        features["decimal_odds"] = 2.0  # default dummy odds
-
-    features["ev"] = features["pred_home_win_prob"] * (features["decimal_odds"] - 1) - (1 - features["pred_home_win_prob"])
-
-    # ----------------------
-    # Filter strong picks
-    # ----------------------
-    strong_preds = features[features["pred_home_win_prob"] >= threshold].copy()
-    strong_preds = strong_preds.reset_index(drop=True)
-    logger.info(f"{len(strong_preds)} strong picks above threshold {threshold}")
-
-    # ----------------------
-    # Save predictions
-    # ----------------------
-    out_file = os.path.join(outdir, "predictions.csv")
-    strong_preds.to_csv(out_file, index=False)
-    logger.info(f"Predictions saved to {out_file}")
-
-    return strong_preds
-
-# ----------------------
-# CLI entry
-# ----------------------
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Generate today's predictions from trained model")
-    parser.add_argument("--features", type=str, default="data/training_features.csv")
-    parser.add_argument("--model", type=str, default="models/game_predictor.pkl")
-    parser.add_argument("--threshold", type=float, default=0.6)
-    parser.add_argument("--outdir", type=str, default="results")
-    args = parser.parse_args()
-
-    generate_today_predictions(
-        features_file=args.features,
-        model_file=args.model,
-        threshold=args.threshold,
-        outdir=args.outdir,
-        cli=True
-    )
+        return df_preds, df_picks, bankroll_metrics, metrics

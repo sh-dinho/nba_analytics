@@ -1,29 +1,41 @@
-# scripts/generate_today_predictions.py
 import pandas as pd
-from scripts.utils import setup_logger
+import os
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
+import joblib
 
-logger = setup_logger("generate_today_predictions")
+RESULTS_DIR = "results"
+MODELS_DIR = "models"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+os.makedirs(MODELS_DIR, exist_ok=True)
 
-def generate_today_predictions(threshold=0.6, cli=False, notify=False, outdir="results"):
+def generate_today_predictions(threshold=0.6):
     """
     Generate predictions for today's games.
-    Currently returns dummy predictions.
+    Returns a DataFrame with columns: game_id, pred_home_win_prob, decimal_odds, ev
     """
-    import os
-    os.makedirs(outdir, exist_ok=True)
+    features_file = "data/training_features.csv"
+    model_file = f"{MODELS_DIR}/game_predictor.pkl"
 
-    logger.info("Generating today's predictions...")
-    df = pd.DataFrame({
-        "game_id": [101, 102, 103],
-        "home_team": ["Team X", "Team Y", "Team Z"],
-        "away_team": ["Team A", "Team B", "Team C"],
-        "pred_home_win_prob": [0.65, 0.55, 0.70],
-        "decimal_odds": [1.8, 2.0, 1.9],
-        "ev": [0.07, 0.02, 0.09]
-    })
+    if not os.path.exists(features_file):
+        raise FileNotFoundError(f"{features_file} not found. Generate training features first.")
 
-    # Filter strong picks
+    if not os.path.exists(model_file):
+        raise FileNotFoundError(f"{model_file} not found. Train the model first.")
+
+    # Load features and model
+    features = pd.read_csv(features_file)
+    model = joblib.load(model_file)
+
+    X = features.drop(columns=["game_id", "home_win"])
+    preds = model.predict_proba(X)[:,1]
+
+    df = features[["game_id"]].copy()
+    df["pred_home_win_prob"] = preds
+    df["decimal_odds"] = 1.9  # default odds, replace with real odds fetching logic
+    df["ev"] = df["pred_home_win_prob"] * df["decimal_odds"] - 1
     df = df[df["pred_home_win_prob"] >= threshold]
-    df.to_csv(f"{outdir}/predictions.csv", index=False)
-    logger.info(f"Predictions saved to {outdir}/predictions.csv")
+
+    df.to_csv(f"{RESULTS_DIR}/predictions.csv", index=False)
+    print(f"Predictions saved to {RESULTS_DIR}/predictions.csv")
     return df
