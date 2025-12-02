@@ -15,6 +15,7 @@ requests==2.32.3
 # Logging & utilities
 python-dateutil==2.9.0.post0
 toml==0.10.2
+colorama==0.4.6   # <-- NEW
 
 # Optional: visualization
 matplotlib==3.9.2
