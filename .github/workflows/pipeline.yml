@@ -4,8 +4,11 @@
 name: NBA Analytics Pipeline
 
 on:
+  push:
+    branches:
+      - main   # or whichever branch you merge into
   schedule:
-    - cron: "0 9 * * *"   
+    - cron: "0 9 * * *"
   workflow_dispatch:
 
 jobs:
