@@ -1,5 +1,3 @@
-# File: prediction_pipeline.py
-
 import os
 import pandas as pd
 import logging
@@ -10,6 +8,7 @@ from scripts.fetch_player_stats import main as fetch_stats
 from scripts.generate_today_predictions import generate_today_predictions
 from scripts.generate_picks import main as generate_picks
 from scripts.simulate_bankroll import simulate_bankroll
+from config import PREDICTIONS_FILE, PICKS_FILE, PICKS_BANKROLL_FILE
 
 logger = logging.getLogger("PredictionPipeline")
 logger.setLevel(logging.INFO)
@@ -39,10 +38,7 @@ class PredictionPipeline:
         logger.info("✅ Predictions generated")
 
         # 3️⃣ Generate picks
-        generate_picks(
-            preds_file=f"{self.results_dir}/predictions.csv",
-            out_file=f"{self.results_dir}/picks.csv"
-        )
+        generate_picks(preds_file=PREDICTIONS_FILE, out_file=PICKS_FILE)
         logger.info("✅ Picks generated")
 
         # 4️⃣ Simulate bankroll
@@ -59,37 +55,5 @@ class PredictionPipeline:
         else:
             preds_df["bankroll"] = 0
 
-        preds_df.to_csv(f"{self.results_dir}/picks_bankroll.csv", index=False)
-        logger.info("✅ Bankroll simulation complete")
-
-        return preds_df, metrics
-
-
-# CLI entrypoint
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the NBA prediction pipeline")
-    parser.add_argument("--threshold", type=float, default=0.6,
-                        help="Prediction threshold for picks")
-    parser.add_argument("--strategy", type=str, default="kelly",
-                        help="Bankroll strategy (e.g., kelly, flat)")
-    parser.add_argument("--max_fraction", type=float, default=0.05,
-                        help="Maximum fraction of bankroll to bet")
-    parser.add_argument("--results_dir", type=str, default="results",
-                        help="Directory to save results")
-    parser.add_argument("--use_synthetic", action="store_true",
-                        help="Use synthetic stats fallback instead of live scraping")
-
-    args = parser.parse_args()
-
-    pipeline = PredictionPipeline(
-        threshold=args.threshold,
-        strategy=args.strategy,
-        max_fraction=args.max_fraction,
-        results_dir=args.results_dir,
-        use_synthetic=args.use_synthetic
-    )
-
-    preds_df, metrics = pipeline.run()
-    if preds_df is not None:
-        logger.info("✅ Pipeline finished successfully")
-        logger.info(f"Metrics: {metrics}")
+        preds_df.to_csv(PICKS_BANKROLL_FILE, index=False)
+        logger.info("✅ Bankroll simulation completed")

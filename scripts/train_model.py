@@ -1,42 +1,36 @@
-# File: scripts/train_model.py
-
 import os
 import logging
 import pandas as pd
+import joblib
 from sklearn.linear_model import LogisticRegression
+from config import TRAINING_FEATURES_FILE, MODEL_FILE
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 logger.addHandler(logging.StreamHandler())
 
 def main():
-    features_file = "data/training_features.csv"
-    if not os.path.exists(features_file):
-        raise FileNotFoundError(f"{features_file} not found. Run build_features.py first.")
+    if not os.path.exists(TRAINING_FEATURES_FILE):
+        raise FileNotFoundError(f"{TRAINING_FEATURES_FILE} not found. Run build_features.py first.")
 
-    df = pd.read_csv(features_file)
-
+    df = pd.read_csv(TRAINING_FEATURES_FILE)
     if "home_win" not in df.columns:
-        raise ValueError("Training data missing 'home_win' column. "
-                         "Ensure build_features.py merges game outcomes or adds synthetic labels.")
+        raise ValueError("Training data missing 'home_win' column.")
 
     logger.info("Training model...")
 
-    # Separate features and target
     X = df.drop(columns=["home_win"])
     y = df["home_win"].fillna(0).astype(int)
 
-    # Select numeric features only
     X_num = X.select_dtypes(include="number")
-
-    # Replace NaN/inf with safe defaults
     X_num = X_num.fillna(0).replace([float("inf"), -float("inf")], 0)
 
-    # Train logistic regression
     model = LogisticRegression(max_iter=1000)
     model.fit(X_num, y)
 
-    logger.info("✅ Model trained successfully")
+    os.makedirs(os.path.dirname(MODEL_FILE), exist_ok=True)
+    joblib.dump(model, MODEL_FILE)
+    logger.info(f"✅ Model trained and saved to {MODEL_FILE}")
 
 if __name__ == "__main__":
     main()
