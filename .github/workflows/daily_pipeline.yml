@@ -17,17 +17,14 @@ jobs:
       PYTHONUNBUFFERED: 1
 
     steps:
-      # 1. Checkout repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Python 3.12
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # 3. Cache pip dependencies
       - name: Cache pip
         uses: actions/cache@v4
         with:
@@ -36,7 +33,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      # 4. Verify requirements.txt exists
       - name: Verify requirements.txt
         run: |
           if [ ! -f requirements.txt ]; then
@@ -44,29 +40,26 @@ jobs:
             exit 1
           fi
 
-      # 5. Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # Ensure HTML parsers are available for pandas.read_html
+          pip install lxml html5lib beautifulsoup4
 
-      # 6. Install project (editable mode)
       - name: Install project
         run: pip install -e .
 
-      # 7. Fetch player stats
       - name: Fetch player stats
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python scripts/fetch_player_stats.py
+          python scripts/fetch_player_stats.py --season 2024-25
 
-      # 8. Generate training features
       - name: Generate training features
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
           python scripts/build_features.py
 
-      # 9. Run NBA Analytics Pipeline
       - name: Run NBA Analytics Pipeline
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
@@ -78,7 +71,6 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # 10. Upload cached player stats
       - name: Upload cached player stats
         uses: actions/upload-artifact@v4
         with:
@@ -86,7 +78,6 @@ jobs:
           path: data/player_stats.csv
           if-no-files-found: warn
 
-      # 11. Upload pipeline results
       - name: Upload pipeline results
         uses: actions/upload-artifact@v4
         with:
@@ -94,7 +85,6 @@ jobs:
           path: results/
           if-no-files-found: warn
 
-      # 12. Upload pipeline logs
       - name: Upload pipeline logs
         uses: actions/upload-artifact@v4
         with:
