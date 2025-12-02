@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: 1
-      PIPELINE_ENV: ci   # 👈 ensures config.py uses CI paths
+      PIPELINE_ENV: ci
 
     steps:
       - name: Checkout repository
@@ -36,8 +36,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          # Ensure HTML parsers are available for pandas.read_html
-          pip install lxml html5lib beautifulsoup4 scikit-learn joblib requests
+          pip install lxml html5lib beautifulsoup4 scikit-learn joblib requests pandas
 
       - name: Run prediction pipeline
         run: |
@@ -68,10 +67,60 @@ jobs:
           path: logs/
           if-no-files-found: warn
 
-      - name: Send Telegram notification
+      - name: Generate daily summary CSV
+        run: |
+          mkdir -p summaries
+          SUMMARY_FILE="summaries/daily_summary.csv"
+          DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          BANKROLL="N/A"
+          WINRATE="N/A"
+
+          if [ -f results/picks_bankroll.csv ]; then
+            BANKROLL=$(tail -n 1 results/picks_bankroll.csv | cut -d',' -f$(head -n1 results/picks_bankroll.csv | tr ',' '\n' | nl | grep bankroll | awk '{print $1}'))
+          fi
+
+          if [ -f results/predictions.csv ]; then
+            TOTAL=$(wc -l < results/predictions.csv)
+            CORRECT=$(awk -F',' 'NR>1 {if($NF==$((NF-1))) c++} END{print c+0}' results/predictions.csv)
+            if [ "$TOTAL" -gt 1 ]; then
+              WINRATE=$(echo "scale=2; $CORRECT/($TOTAL-1)*100" | bc)
+              WINRATE="${WINRATE}%"
+            fi
+          fi
+
+          if [ ! -f "$SUMMARY_FILE" ]; then
+            echo "date,bankroll,winrate" > "$SUMMARY_FILE"
+          fi
+          echo "$DATE,$BANKROLL,$WINRATE" >> "$SUMMARY_FILE"
+
+      - name: Upload daily summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nba-daily-summary
+          path: summaries/daily_summary.csv
+          if-no-files-found: error
+
+      - name: Send Telegram notification with metrics
         if: always()
         run: |
-          MESSAGE="🏀 NBA Pipeline run completed on $GITHUB_REF\nStatus: ${{ job.status }}\nArtifacts: results, model, logs"
+          BANKROLL="N/A"
+          WINRATE="N/A"
+
+          if [ -f results/picks_bankroll.csv ]; then
+            BANKROLL=$(tail -n 1 results/picks_bankroll.csv | cut -d',' -f$(head -n1 results/picks_bankroll.csv | tr ',' '\n' | nl | grep bankroll | awk '{print $1}'))
+          fi
+
+          if [ -f results/predictions.csv ]; then
+            TOTAL=$(wc -l < results/predictions.csv)
+            CORRECT=$(awk -F',' 'NR>1 {if($NF==$((NF-1))) c++} END{print c+0}' results/predictions.csv)
+            if [ "$TOTAL" -gt 1 ]; then
+              WINRATE=$(echo "scale=2; $CORRECT/($TOTAL-1)*100" | bc)
+              WINRATE="${WINRATE}%"
+            fi
+          fi
+
+          MESSAGE="🏀 NBA Pipeline run completed on $GITHUB_REF\nStatus: ${{ job.status }}\nFinal bankroll: $BANKROLL\nWin rate: $WINRATE\nArtifacts: results, model, logs, daily summary"
+
           curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage \
             -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
             -d text="$MESSAGE"

@@ -24,8 +24,7 @@ else:  # local dev defaults
 # -----------------------------
 # Model artifact
 # -----------------------------
-MODEL_FILE = os.path.join(BASE_MODELS_DIR, "game_predictor.pkl")
-
+MODEL_FILE = "models/game_predictor.pkl"
 # -----------------------------
 # Data files
 # -----------------------------
