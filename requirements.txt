@@ -8,3 +8,4 @@ joblib>=1.4
 nba_api==1.4.1
 python-telegram-bot==21.7
 lxml
+tensorflow==2.15.0
