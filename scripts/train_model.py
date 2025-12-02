@@ -21,8 +21,9 @@ METRICS_LOG = os.path.join(RESULTS_DIR, "training_metrics.csv")
 
 def main():
     features_file = os.path.join(DATA_DIR, "training_features.csv")
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    model_file = os.path.join(MODELS_DIR, f"game_predictor_{timestamp}.pkl")
+    
+    # 🌟 FIX: Save the model to a fixed path, which the prediction script expects
+    model_file = os.path.join(MODELS_DIR, "game_predictor.pkl")
 
     if not os.path.exists(features_file):
         logger.error(f"{features_file} not found. Build features first.")
@@ -38,7 +39,7 @@ def main():
 
     # Auto-select numeric columns except target
     numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    if "home_win" not in df.columns:
+    if "home_win" not in numeric_cols:
         raise KeyError("Target column 'home_win' not found in features CSV.")
     feature_cols = [c for c in numeric_cols if c != "home_win"]
 
@@ -73,21 +74,21 @@ def main():
     run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     metrics_entry = pd.DataFrame([{
         "timestamp": run_time,
-        **metrics
+        "model_file": model_file,
+        "n_features": len(feature_cols),
+        "n_samples": len(df),
+        "accuracy": metrics["accuracy"],
+        "log_loss": metrics["log_loss"],
+        "auc": metrics["auc"]
     }])
 
     if os.path.exists(METRICS_LOG):
         metrics_entry.to_csv(METRICS_LOG, mode="a", header=False, index=False)
     else:
         metrics_entry.to_csv(METRICS_LOG, index=False)
-
     logger.info(f"📁 Training metrics appended to {METRICS_LOG}")
-
+    
     return metrics
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        logger.error(f"❌ Training failed: {e}")
-        raise
+    main()

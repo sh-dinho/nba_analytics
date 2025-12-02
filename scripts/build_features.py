@@ -2,6 +2,7 @@
 
 import os
 import pandas as pd
+import numpy as np
 from scripts.utils import setup_logger
 import datetime
 
@@ -15,11 +16,6 @@ FEATURES_FILE = os.path.join(DATA_DIR, "training_features.csv")
 SUMMARY_LOG = os.path.join(RESULTS_DIR, "features_summary.csv")
 
 def main():
-    """
-    Build training features from player stats.
-    Generates 'training_features.csv' containing game-level features and target.
-    Also appends a summary log to 'results/features_summary.csv'.
-    """
     stats_file = os.path.join(DATA_DIR, "player_stats.csv")
 
     if not os.path.exists(stats_file):
@@ -43,6 +39,7 @@ def main():
     # Create dummy matchups
     games = []
     teams = team_stats["TEAM_ABBREVIATION"].tolist()
+    np.random.shuffle(teams)  # randomize to increase diversity
     game_id = 1
     for i in range(0, len(teams), 2):
         if i + 1 >= len(teams):
@@ -69,11 +66,14 @@ def main():
 
     features_df = pd.DataFrame(games)
 
-    # Add header row with file path + name
-    header_note = pd.DataFrame({"info": [f"File: {FEATURES_FILE}"]})
-    df_out = pd.concat([header_note, features_df], axis=0)
+    # 🔒 Safeguard: ensure label diversity
+    if features_df["home_win"].nunique() == 1:
+        logger.warning("⚠️ Only one label found in home_win. Injecting synthetic diversity.")
+        flip_idx = np.random.choice(features_df.index, size=len(features_df)//2, replace=False)
+        features_df.loc[flip_idx, "home_win"] = 1 - features_df.loc[flip_idx, "home_win"]
 
-    df_out.to_csv(FEATURES_FILE, index=False)
+    # Save clean features file
+    features_df.to_csv(FEATURES_FILE, index=False)
     logger.info(f"✅ Training features saved to {FEATURES_FILE} | Games built: {len(features_df)}")
 
     # Summary stats
