@@ -1,58 +1,50 @@
+# File: scripts/build_features.py
+# FIX: Use config.py paths. Removed synthetic label fallback for training.
+
 import os
 import logging
 import pandas as pd
+from core.config import TRAINING_FEATURES_FILE, PLAYER_STATS_FILE, GAME_RESULTS_FILE 
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler())
-
-TRAINING_FEATURES_FILE = "data/training_features.csv"
 
 def build_features():
-    """
-    Build training features from player_stats.csv and game_results.csv.
-    Adds engineered features like PTS_per_AST and REB_rate.
-    """
-    os.makedirs("data", exist_ok=True)
+    """Build training features, requires actual game results."""
+    os.makedirs(os.path.dirname(TRAINING_FEATURES_FILE), exist_ok=True) 
 
-    # Load player stats
-    stats_file = "data/player_stats.csv"
-    if not os.path.exists(stats_file):
-        raise FileNotFoundError(f"{stats_file} not found")
+    if not os.path.exists(PLAYER_STATS_FILE):
+        raise FileNotFoundError(f"{PLAYER_STATS_FILE} not found. Run fetch_player_stats.py first.")
 
-    df = pd.read_csv(stats_file)
+    df = pd.read_csv(PLAYER_STATS_FILE)
 
     # Add engineered features
     df["PTS_per_AST"] = df["PTS"] / df["AST"].replace(0, 1)
     df["REB_rate"] = df["REB"] / df["GAMES_PLAYED"].replace(0, 1)
 
-    # Add synthetic labels if game_results.csv missing
-    results_file = "data/game_results.csv"
-    if os.path.exists(results_file):
-        results = pd.read_csv(results_file)
-        df = df.merge(results, on="PLAYER_NAME", how="left")
+    # Add ACTUAL labels - CRITICAL FIX: Must have real labels for training
+    if os.path.exists(GAME_RESULTS_FILE):
+        results = pd.read_csv(GAME_RESULTS_FILE)
+        df = df.merge(results, on=["PLAYER_NAME"], how="left")
+        
+        if 'home_win' not in df.columns or df['home_win'].isnull().all():
+             logger.warning("⚠️ Labels not successfully merged. Training data may be incomplete.")
     else:
-        logger.warning("⚠️ No game_results.csv found. Adding synthetic labels.")
-        df["home_win"] = [1 if i % 2 == 0 else 0 for i in range(len(df))]
+        # CRITICAL FIX: Raise error instead of adding synthetic labels for training
+        raise FileNotFoundError(f"Missing ACTUAL game results file: {GAME_RESULTS_FILE}. Cannot create training data.")
 
     df.to_csv(TRAINING_FEATURES_FILE, index=False)
     logger.info(f"✅ Features saved to {TRAINING_FEATURES_FILE} ({len(df)} rows)")
 
-def build_features_for_new_games(new_games_file: str):
-    """
-    Build features for prediction from new_games.csv.
-    Ensures engineered features match training.
-    """
+def build_features_for_new_games(new_games_file: str) -> pd.DataFrame:
+    # ... (function body remains the same but uses central config paths if updated) ...
+    # This is where features for NEW games are built.
     if not os.path.exists(new_games_file):
-        raise FileNotFoundError(f"{new_games_file} not found")
-
+        raise FileNotFoundError(f"{new_games_file} not found. Run fetch_new_games.py first.")
+    
     df = pd.read_csv(new_games_file)
-
-    # Add engineered features
+    
     df["PTS_per_AST"] = df["PTS"] / df["AST"].replace(0, 1)
     df["REB_rate"] = df["REB"] / df["GAMES_PLAYED"].replace(0, 1)
-
+    
     return df
-
-if __name__ == "__main__":
-    build_features()

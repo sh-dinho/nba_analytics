@@ -1,22 +1,20 @@
-# Core scientific stack
-numpy==1.26.4
-pandas==2.2.2
-scikit-learn==1.5.2
+# File: requirements.txt
+# Core dependencies for the NBA analytics pipeline
 
-# Deep learning (for nn_runner) — Python 3.12 compatible
-tensorflow==2.16.1
-
-# Gradient boosting (for xgb_runner)
-xgboost==2.1.1
-
-# Odds provider / web requests
-requests==2.32.3
-
-# Logging & utilities
-python-dateutil==2.9.0.post0
-toml==0.10.2
-colorama==0.4.6   # <-- NEW
-
-# Optional: visualization
-matplotlib==3.9.2
-seaborn==0.13.2
+# Data Handling
+pandas
+numpy
+# API/Config
+requests
+toml
+# Model Artifacts
+joblib
+# Machine Learning
+scikit-learn
+xgboost
+# Neural Network (NN) model
+tensorflow
+# Plotting
+matplotlib
+# Console Output
+colorama
