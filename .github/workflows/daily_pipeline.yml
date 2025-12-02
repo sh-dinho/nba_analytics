@@ -38,10 +38,10 @@ jobs:
           pip install -r requirements.txt
           pip install lxml html5lib beautifulsoup4 scikit-learn joblib requests pandas
 
-      - name: Run prediction pipeline
+      - name: Run prediction pipeline (synthetic stats in CI)
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python app/prediction_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05
+          python app/prediction_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05 --use_synthetic
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
