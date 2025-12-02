@@ -4,9 +4,8 @@ import pandas as pd
 import os
 import numpy as np
 import logging
-from sklearn.ensemble import RandomForestClassifier
-import joblib
 import datetime
+import joblib
 
 RESULTS_DIR = "results"
 MODELS_DIR = "models"
@@ -20,7 +19,11 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-def generate_today_predictions(threshold=0.6, odds=1.9):
+def generate_synthetic_odds(n_games, low=1.5, high=3.0):
+    """Generate synthetic decimal odds for each game."""
+    return np.round(np.random.uniform(low, high, size=n_games), 2)
+
+def generate_today_predictions(threshold=0.6):
     """
     Generate predictions for today's games.
     Returns a DataFrame with columns: game_id, pred_home_win_prob, decimal_odds, ev
@@ -34,40 +37,33 @@ def generate_today_predictions(threshold=0.6, odds=1.9):
     if not os.path.exists(model_file):
         raise FileNotFoundError(f"{model_file} not found. Train the model first.")
 
-    try:
-        features = pd.read_csv(features_file)
-        model = joblib.load(model_file)
-    except Exception as e:
-        logging.error(f"Error loading files: {e}")
-        raise
+    # Load features and model
+    features = pd.read_csv(features_file)
+    model = joblib.load(model_file)
 
-    # Prepare features
     X = features.drop(columns=["game_id", "home_win"])
     preds = model.predict_proba(X)[:, 1]
 
-    # Build results DataFrame
     df = features[["game_id"]].copy()
     df["pred_home_win_prob"] = preds
-    df["decimal_odds"] = odds
+
+    # Generate synthetic odds per game
+    df["decimal_odds"] = generate_synthetic_odds(len(df))
+
+    # Expected value calculation
     df["ev"] = df["pred_home_win_prob"] * df["decimal_odds"] - 1
+
+    # Apply threshold filter
     df = df[df["pred_home_win_prob"] >= threshold]
 
-    # Save with timestamped filename for versioning
+    # Save with timestamped filename
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     output_file = f"{RESULTS_DIR}/predictions_{timestamp}.csv"
+    df.to_csv(output_file, index=False)
 
-    # Add header row with file path + name
-    header_note = pd.DataFrame({"info": [f"File: {output_file}"]})
-    df_out = pd.concat([header_note, df], axis=0)
-
-    df_out.to_csv(output_file, index=False)
-
-    # Summary log line
-    avg_prob = df["pred_home_win_prob"].mean() if not df.empty else 0
-    avg_ev = df["ev"].mean() if not df.empty else 0
     logging.info(
         f"✅ Predictions saved to {output_file} | Games: {len(df)} | "
-        f"Avg Prob: {avg_prob:.3f} | Avg EV: {avg_ev:.3f}"
+        f"Avg Prob: {df['pred_home_win_prob'].mean():.3f} | Avg EV: {df['ev'].mean():.3f}"
     )
 
     return df
