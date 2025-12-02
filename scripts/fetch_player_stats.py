@@ -6,7 +6,7 @@ import pandas as pd
 import logging
 import datetime
 import requests
-import numpy as np # <-- NEW IMPORT
+import numpy as np
 
 # Directories and cache file
 DATA_DIR = "data"
@@ -40,7 +40,7 @@ LEAGUE_DASH_URL = (
     "Season={season}&SeasonType=Regular+Season&MeasureType=Base&PerMode=PerGame"
 )
 
-def generate_synthetic_stats(n_players=450): # <-- NEW FUNCTION
+def generate_synthetic_stats(n_players=450):
     """Generates synthetic player stats for testing/fallback."""
     logging.info("Generating synthetic player stats...")
     data = {
@@ -57,6 +57,7 @@ def generate_synthetic_stats(n_players=450): # <-- NEW FUNCTION
     required_cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB", "STL", "BLK"]
     return df[required_cols]
 
+
 def fetch_stats_direct(season: str, timeout=30): # <-- TIMEOUT INCREASED (15s to 30s)
     url = LEAGUE_DASH_URL.format(season=season)
     r = requests.get(url, headers=NBA_HEADERS, timeout=timeout)
@@ -67,10 +68,10 @@ def fetch_stats_direct(season: str, timeout=30): # <-- TIMEOUT INCREASED (15s to
     rows = data["resultSets"][0]["rowSet"]
     return pd.DataFrame(rows, columns=headers)
 
-def main(season="2024-25", retries=4, base_delay=5, max_total_wait=60, use_synthetic=False): # <-- ADD use_synthetic
+def main(season="2024-25", retries=4, base_delay=5, max_total_wait=60, use_synthetic=False): # <-- NEW ARGUMENT
     logging.info(f"Fetching player stats for season {season}...")
 
-    # --- Synthetic Data Logic (NEW) ---
+    # --- Synthetic Data Logic ---
     if use_synthetic:
         df = generate_synthetic_stats()
         df.to_csv(CACHE_FILE, index=False)
@@ -95,7 +96,7 @@ def main(season="2024-25", retries=4, base_delay=5, max_total_wait=60, use_synth
         logging.info(f"📁 Fetch summary appended to {SUMMARY_LOG} (Synthetic)")
         logging.info(f"✅ Synthetic player stats saved to {CACHE_FILE}")
         return df
-    # ----------------------------------
+    # ----------------------------
 
 
     total_wait = 0

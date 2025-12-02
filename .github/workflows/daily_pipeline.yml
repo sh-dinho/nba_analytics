@@ -1,3 +1,5 @@
+# File: daily_pipeline.yml
+
 name: NBA Analytics Pipeline
 
 on:
