@@ -1,4 +1,5 @@
 # File: scripts/fetch_player_stats.py
+import os
 import pandas as pd
 import logging
 
