@@ -2,8 +2,7 @@ name: NBA Analytics Pipeline
 
 on:
   schedule:
-    - cron: "0 9 * * *"   # Daily run
-    - cron: "0 12 * * 0"  # Weekly run every Sunday at 12 UTC
+    - cron: "0 9 * * *"   # Run daily at 9 AM UTC
   workflow_dispatch:
 
 jobs:
@@ -12,17 +11,54 @@ jobs:
     strategy:
       matrix:
         model_type: [logistic, xgb, nn]
+
     steps:
-      # ... (same as before: train, run, upload results)
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Train model
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          python scripts/train_model.py --model_type ${{ matrix.model_type }}
+
+      - name: Run prediction pipeline
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          python scripts/prediction_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05 --model_type ${{ matrix.model_type }}
+          mv results/picks_bankroll.csv results/picks_bankroll_${{ matrix.model_type }}.csv
+
+      - name: Debug models directory
+        run: ls -R models
+
+      - name: Upload trained model
+        uses: actions/upload-artifact@v4
+        with:
+          name: nba-trained-model-${{ matrix.model_type }}
+          path: |
+            models/game_predictor.pkl
+            models/game_predictor.h5
+          if-no-files-found: ignore   # ✅ prevents failure if only one format exists
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: nba-results-${{ matrix.model_type }}
+          path: results/picks_bankroll_${{ matrix.model_type }}.csv
+          if-no-files-found: error
 
   aggregate:
     runs-on: ubuntu-latest
     needs: nba-pipeline
-    steps:
-      # ... (same as before: aggregate daily, upload chart, send Telegram)
-
-  weekly-aggregate:
-    runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -40,32 +76,28 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas
+          pip install pandas matplotlib requests
 
-      - name: Weekly aggregation
+      - name: Aggregate results
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python scripts/weekly_aggregate.py
+          python scripts/aggregate_results.py
 
-      - name: Upload weekly summary
+      - name: Upload combined summary
         uses: actions/upload-artifact@v4
         with:
-          name: nba-weekly-summary
-          path: results/weekly_summary.csv
+          name: nba-combined-summary
+          path: results/combined_summary.csv
 
-      - name: Upload weekly AI insight
+      - name: Upload bankroll chart
         uses: actions/upload-artifact@v4
         with:
-          name: nba-weekly-ai-insight
-          path: results/weekly_ai_insight.txt
+          name: nba-bankroll-chart
+          path: results/bankroll_comparison.png
 
-      - name: Send Telegram weekly report
+      - name: Send Telegram report
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          insight=$(cat results/weekly_ai_insight.txt)
-          curl -s -X POST https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage \
-            -d chat_id=${TELEGRAM_CHAT_ID} \
-            -d parse_mode=Markdown \
-            -d text="*📅 Weekly NBA Report*\n\n$(cat results/weekly_summary.csv)\n\n${insight}"
+          python scripts/telegram_report.py
