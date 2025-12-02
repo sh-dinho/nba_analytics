@@ -2,7 +2,7 @@
 import pandas as pd
 from core.config import PLAYER_STATS_URL, DATA_DIR
 import os
-from core.logging import setup_logger
+from core.log_config import setup_logger
 
 logger = setup_logger("fetch_player_stats")
 

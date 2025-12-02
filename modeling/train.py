@@ -1,7 +1,7 @@
 # modeling/train.py
 import pandas as pd
 import pickle
-from core.logging import setup_logger
+from core.log_config import setup_logger
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, log_loss, roc_auc_score, brier_score_loss

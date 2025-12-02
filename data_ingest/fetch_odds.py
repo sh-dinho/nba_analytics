@@ -1,7 +1,7 @@
 # data_ingest/fetch_odds.py
 import pandas as pd
 from core.config import ODDS_SOURCE_URL, DATA_DIR
-from core.logging import setup_logger
+from core.log_config import setup_logger
 import os
 
 logger = setup_logger("fetch_odds")

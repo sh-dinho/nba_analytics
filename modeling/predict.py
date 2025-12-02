@@ -1,7 +1,7 @@
 # modeling/predict.py
 import pandas as pd
 import pickle
-from core.logging import setup_logger
+from core.log_config import setup_logger
 from core.paths import MODELS_DIR
 import os
 
