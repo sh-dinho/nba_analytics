@@ -9,7 +9,7 @@ logger.addHandler(logging.StreamHandler())
 def main(use_synthetic: bool = False):
     """
     Fetch today's games. If use_synthetic=True, generate synthetic games for CI/testing.
-    Saves to data/new_games.csv with the same feature columns as training.
+    Saves to data/new_games.csv with raw stats (feature engineering added later).
     """
     os.makedirs("data", exist_ok=True)
     out_file = "data/new_games.csv"
@@ -33,7 +33,6 @@ def main(use_synthetic: bool = False):
     # --- Real scraping logic placeholder ---
     try:
         logger.info("Fetching real games...")
-        # Replace with actual scraping/API call
         df = pd.DataFrame({
             "TEAM_HOME": ["LAL", "GSW"],
             "TEAM_AWAY": ["BOS", "MIA"],

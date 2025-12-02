@@ -3,6 +3,7 @@ import logging
 import pandas as pd
 import joblib
 from config import MODEL_FILE, PREDICTIONS_FILE
+from scripts.build_features import build_features_for_new_games
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -11,7 +12,7 @@ logger.addHandler(logging.StreamHandler())
 def generate_today_predictions(threshold=0.6):
     """
     Generate predictions for today's games using the trained model.
-    Ensures features match training (AGE, PTS, AST, REB, GAMES_PLAYED).
+    Ensures features match training by running new_games.csv through build_features_for_new_games.
     """
     if not os.path.exists(MODEL_FILE):
         logger.error("No trained model found. Train a model first.")
@@ -23,10 +24,10 @@ def generate_today_predictions(threshold=0.6):
     if not os.path.exists("data/new_games.csv"):
         raise FileNotFoundError("data/new_games.csv not found. Run fetch_new_games.py first.")
 
-    df = pd.read_csv("data/new_games.csv")
+    df = build_features_for_new_games("data/new_games.csv")
 
-    # Select the same numeric features used in training
-    feature_cols = ["AGE", "PTS", "AST", "REB", "GAMES_PLAYED"]
+    # Select numeric features (same as training)
+    feature_cols = ["AGE", "PTS", "AST", "REB", "GAMES_PLAYED", "PTS_per_AST", "REB_rate"]
     X_num = df[feature_cols].fillna(0).replace([float("inf"), -float("inf")], 0)
 
     # Predict probabilities
