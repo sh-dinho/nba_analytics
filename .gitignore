@@ -10,3 +10,4 @@ env/
 results/
 models/
 *.log
+venv/
