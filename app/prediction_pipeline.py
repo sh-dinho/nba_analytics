@@ -5,7 +5,7 @@ import numpy as np
 import argparse
 
 from scripts.fetch_player_stats import main as fetch_stats
-from scripts.build_features import main as build_features
+from scripts.build_features import build_features
 from scripts.train_model import main as train_model
 from scripts.fetch_new_games import main as fetch_new_games
 from scripts.generate_today_predictions import generate_today_predictions
@@ -59,7 +59,7 @@ class PredictionPipeline:
         # 7️⃣ Simulate bankroll
         sim_df = preds_df.rename(columns={"pred_home_win_prob": "prob"})
         history, metrics = simulate_bankroll(
-            sim_df[["decimal_odds", "prob", "ev"]],
+            sim_df[["decimal_odds", "prob"]],
             strategy=self.strategy,
             max_fraction=self.max_fraction
         )
