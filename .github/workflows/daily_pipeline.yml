@@ -5,17 +5,15 @@ on:
     branches:
       - main
   schedule:
-    - cron: '0 2 * * *'   # Every night at 2:00 AM UTC
-    - cron: '0 3 * * 0'   # Every Sunday at 3:00 AM UTC
-    - cron: '0 4 1 * *'   # First day of every month at 4:00 AM UTC
-  workflow_dispatch:       # Manual trigger
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 jobs:
   run_pipeline:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: [3.10, 3.11, 3.12]   # Run on multiple Python versions
+        python-version: [3.10, 3.11, 3.12]
     env:
       PYTHONUNBUFFERED: 1
 
@@ -37,13 +35,6 @@ jobs:
             ${{ runner.os }}-pip-${{ matrix.python-version }}-
             ${{ runner.os }}-pip-
 
-      - name: Verify requirements.txt
-        run: |
-          if [ ! -f requirements.txt ]; then
-            echo "requirements.txt not found!"
-            exit 1
-          fi
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -51,16 +42,6 @@ jobs:
 
       - name: Install project
         run: pip install -e .
-
-      - name: Fetch player stats
-        run: |
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python scripts/fetch_player_stats.py
-
-      - name: Generate training features
-        run: |
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python scripts/build_features.py
 
       - name: Run NBA Analytics Pipeline
         run: |
@@ -73,23 +54,9 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      - name: Upload cached player stats
-        uses: actions/upload-artifact@v4
-        with:
-          name: player-stats-cache-${{ matrix.python-version }}
-          path: data/player_stats.csv
-          if-no-files-found: warn
-
       - name: Upload pipeline results
         uses: actions/upload-artifact@v4
         with:
           name: nba-pipeline-results-${{ matrix.python-version }}
           path: results/
-          if-no-files-found: warn
-
-      - name: Upload pipeline logs
-        uses: actions/upload-artifact@v4
-        with:
-          name: nba-pipeline-logs-${{ matrix.python-version }}
-          path: logs/
           if-no-files-found: warn
