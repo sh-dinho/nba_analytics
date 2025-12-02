@@ -13,97 +13,83 @@ on:
 jobs:
   run_pipeline:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.10, 3.11, 3.12]   # Run on multiple Python versions
     env:
       PYTHONUNBUFFERED: 1
 
     steps:
-      # 1. Checkout repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Python
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: 3.12
+          python-version: ${{ matrix.python-version }}
 
-      # 3. Verify requirements.txt exists
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-${{ matrix.python-version }}-
+            ${{ runner.os }}-pip-
+
       - name: Verify requirements.txt
         run: |
           if [ ! -f requirements.txt ]; then
-            echo "❌ requirements.txt not found!"
+            echo "requirements.txt not found!"
             exit 1
           fi
 
-      # 4. Install dependencies
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt || { echo "❌ Failed to install dependencies"; exit 1; }
+          pip install -r requirements.txt
 
-      # 5. Install project (editable)
       - name: Install project
         run: pip install -e .
 
-      # 6. Fetch player stats (NEW STEP)
       - name: Fetch player stats
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          # This creates the data/player_stats.csv file
           python scripts/fetch_player_stats.py
 
-      # 7. Generate training features (FIXED SCRIPT NAME)
       - name: Generate training features
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          # Corrected file name to build_features.py
           python scripts/build_features.py
 
-      # 8. Run NBA Analytics CLI (ADDED CONDITIONAL LOGIC)
       - name: Run NBA Analytics Pipeline
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          
-          # Define the base command
-          RUN_COMMAND="python scripts/run_daily_pipeline_cli.py \
+          python scripts/run_daily_pipeline_cli.py \
             --threshold 0.6 \
             --strategy kelly \
-            --max_fraction 0.05"
-          
-          # Conditionally add --use-synthetic for scheduled runs
-          if [ "${{ github.event_name }}" == "schedule" ]; then
-            RUN_COMMAND="$RUN_COMMAND --use-synthetic"
-            echo "Running scheduled job with synthetic data flag for reliability."
-          else
-            echo "Running standard job (manual, push, or dispatch) with live fetch."
-          fi
-          
-          # Execute the command
-          eval $RUN_COMMAND
+            --max_fraction 0.05
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # 9. Upload cached player stats
       - name: Upload cached player stats
         uses: actions/upload-artifact@v4
         with:
-          name: player-stats-cache
+          name: player-stats-cache-${{ matrix.python-version }}
           path: data/player_stats.csv
           if-no-files-found: warn
 
-      # 10. Upload pipeline results
       - name: Upload pipeline results
         uses: actions/upload-artifact@v4
         with:
-          name: nba-pipeline-results
+          name: nba-pipeline-results-${{ matrix.python-version }}
           path: results/
           if-no-files-found: warn
 
-      # 11. Upload logs
       - name: Upload pipeline logs
         uses: actions/upload-artifact@v4
         with:
-          name: nba-pipeline-logs
+          name: nba-pipeline-logs-${{ matrix.python-version }}
           path: logs/
           if-no-files-found: warn

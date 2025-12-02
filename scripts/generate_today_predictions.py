@@ -1,73 +1,73 @@
 # File: scripts/generate_today_predictions.py
 
-import pandas as pd
 import os
-import numpy as np
-import logging
-import datetime
+import pandas as pd
 import joblib
+import argparse
+import datetime
+from scripts.utils import setup_logger
 
-RESULTS_DIR = "results"
+logger = setup_logger("generate_predictions")
+
+DATA_DIR = "data"
 MODELS_DIR = "models"
+RESULTS_DIR = "results"
 os.makedirs(RESULTS_DIR, exist_ok=True)
-os.makedirs(MODELS_DIR, exist_ok=True)
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger("generate_predictions")
+PREDICTIONS_FILE = os.path.join(RESULTS_DIR, "today_predictions.csv")
 
-
-def generate_synthetic_odds(n_games, low=1.5, high=3.0):
-    """Generate synthetic decimal odds for each game."""
-    return np.round(np.random.uniform(low, high, size=n_games), 2)
-
-def generate_today_predictions(threshold=0.6):
-    """
-    Generate predictions for today's games.
-    Returns a DataFrame with columns: game_id, pred_home_win_prob, decimal_odds, ev
-    """
-    features_file = "data/training_features.csv"
-    model_file = f"{MODELS_DIR}/game_predictor.pkl"
-
-    if not os.path.exists(features_file):
-        raise FileNotFoundError(f"{features_file} not found. Generate training features first.")
+def generate_today_predictions(threshold=0.6, strategy="kelly", max_fraction=0.05):
+    model_file = os.path.join(MODELS_DIR, "game_predictor.pkl")
+    features_file = os.path.join(DATA_DIR, "training_features.csv")
 
     if not os.path.exists(model_file):
-        raise FileNotFoundError(f"{model_file} not found. Train the model first.")
+        logger.error("No trained model found. Train a model first.")
+        raise FileNotFoundError(model_file)
+    if not os.path.exists(features_file):
+        logger.error("No features file found. Build features first.")
+        raise FileNotFoundError(features_file)
 
-    # Load features and model
-    features = pd.read_csv(features_file)
+    logger.info("Loading model and features...")
     model = joblib.load(model_file)
+    df = pd.read_csv(features_file)
 
-    # Assume all numeric columns except game_id, home_win are features for simplicity
-    feature_cols = [c for c in features.select_dtypes(include="number").columns if c not in ["game_id", "home_win"]]
-    X = features[feature_cols]
+    # ✅ Exclude identifiers and target
+    drop_cols = ["home_win", "game_id", "home_team", "away_team"]
+    feature_cols = [c for c in df.columns if c not in drop_cols]
+    X = df[feature_cols].fillna(0)
 
+    logger.info("Generating predictions...")
     preds = model.predict_proba(X)[:, 1]
 
-    df = features[["game_id", "home_team", "away_team"]].copy()
-    df["pred_home_win_prob"] = preds
+    df["win_prob"] = preds
+    df["bet_recommendation"] = (df["win_prob"] >= threshold).astype(int)
 
-    # Generate synthetic odds per game
-    df["decimal_odds"] = generate_synthetic_odds(len(df))
+    if strategy == "kelly":
+        df["bet_fraction"] = (df["win_prob"] - threshold) / (1 - threshold)
+        df["bet_fraction"] = df["bet_fraction"].clip(lower=0, upper=max_fraction)
+    else:
+        df["bet_fraction"] = 0
 
-    # Expected value calculation: EV = (P * O) - 1
-    df["ev"] = df["pred_home_win_prob"] * df["decimal_odds"] - 1
+    df.to_csv(PREDICTIONS_FILE, index=False)
+    logger.info(f"Predictions saved to {PREDICTIONS_FILE}")
 
-    # Apply threshold filter
-    df = df[df["pred_home_win_prob"] >= threshold]
-
-    # 🌟 FIX: Use fixed filename 'predictions.csv'
-    output_file = f"{RESULTS_DIR}/predictions.csv"
-
-    df.to_csv(output_file, index=False)
-    logger.info(f"✅ Predictions saved to {output_file} | Games predicted: {len(df)}")
+    # ✅ Summary line
+    n_bets = int(df["bet_recommendation"].sum())
+    avg_prob = df["win_prob"].mean()
+    run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    summary_line = (f"SUMMARY: Bets recommended={n_bets}, Avg win_prob={avg_prob:.3f}, "
+                    f"Threshold={threshold}, Strategy={strategy}, MaxFraction={max_fraction}, RunTime={run_time}")
+    logger.info(summary_line)
 
     return df
 
 if __name__ == "__main__":
-    generate_today_predictions()
+    parser = argparse.ArgumentParser(description="Generate today's predictions")
+    parser.add_argument("--threshold", type=float, default=0.6)
+    parser.add_argument("--strategy", type=str, default="kelly")
+    parser.add_argument("--max_fraction", type=float, default=0.05)
+    args = parser.parse_args()
+
+    generate_today_predictions(threshold=args.threshold,
+                               strategy=args.strategy,
+                               max_fraction=args.max_fraction)

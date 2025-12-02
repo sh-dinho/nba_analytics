@@ -17,7 +17,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 
-def main(preds_file=f"{RESULTS_DIR}/predictions.csv", out_file=f"{RESULTS_DIR}/picks.csv"):
+def main(preds_file=f"{RESULTS_DIR}/today_predictions.csv", out_file=f"{RESULTS_DIR}/picks.csv"):
     """
     Generate picks from predictions using a simple EV strategy.
     Adds a rolling summary log for tracking.
@@ -27,21 +27,23 @@ def main(preds_file=f"{RESULTS_DIR}/predictions.csv", out_file=f"{RESULTS_DIR}/p
 
     df = pd.read_csv(preds_file)
 
+    # Use win_prob column if present, else fallback
+    prob_col = "win_prob" if "win_prob" in df.columns else "pred_home_win_prob"
+
     # Simple strategy: pick HOME if prob > 0.5, else AWAY
-    df["pick"] = df.apply(lambda row: "HOME" if row.pred_home_win_prob > 0.5 else "AWAY", axis=1)
+    df["pick"] = df.apply(lambda row: "HOME" if row[prob_col] > 0.5 else "AWAY", axis=1)
 
     # Save picks
     df.to_csv(out_file, index=False)
-    logging.info(f"✅ Picks saved to {out_file} | Total picks: {len(df)}")
+    logging.info(f"Picks saved to {out_file} | Total picks: {len(df)}")
 
     # Summary stats
     home_picks = (df["pick"] == "HOME").sum()
     away_picks = (df["pick"] == "AWAY").sum()
     avg_ev = df["ev"].mean() if "ev" in df.columns else None
 
-    logging.info(
-        f"📊 Picks summary: HOME={home_picks}, AWAY={away_picks}, Avg EV={avg_ev:.3f if avg_ev else 0}"
-    )
+    avg_ev_str = f"{avg_ev:.3f}" if avg_ev is not None else "N/A"
+    logging.info(f"Picks summary: HOME={home_picks}, AWAY={away_picks}, Avg EV={avg_ev_str}")
 
     # Append to rolling log
     run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -58,8 +60,7 @@ def main(preds_file=f"{RESULTS_DIR}/predictions.csv", out_file=f"{RESULTS_DIR}/p
     else:
         summary_entry.to_csv(PICKS_LOG, index=False)
 
-    logging.info(f"📁 Picks summary appended to {PICKS_LOG}")
-
+    logging.info(f"Picks summary appended to {PICKS_LOG}")
     return df
 
 if __name__ == "__main__":

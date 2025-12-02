@@ -15,8 +15,8 @@ def simulate_bankroll(
     Monte Carlo bankroll simulation.
     df must contain:
         - decimal_odds
-        - prob   (or pred_home_win_prob)
-        - ev     (not required but useful)
+        - win_prob (or prob / pred_home_win_prob)
+        - ev (optional but useful)
     """
 
     # -----------------------------
@@ -33,12 +33,14 @@ def simulate_bankroll(
 
     df = df.copy()
 
-    # Accept your pipeline column name
+    # Accept pipeline column names
     if "prob" not in df.columns:
-        if "pred_home_win_prob" in df.columns:
+        if "win_prob" in df.columns:
+            df["prob"] = df["win_prob"]
+        elif "pred_home_win_prob" in df.columns:
             df["prob"] = df["pred_home_win_prob"]
         else:
-            raise KeyError("df must contain either 'prob' or 'pred_home_win_prob'")
+            raise KeyError("df must contain 'prob', 'win_prob', or 'pred_home_win_prob'")
 
     rng = np.random.default_rng(seed)  # reproducible RNG
 
@@ -58,7 +60,6 @@ def simulate_bankroll(
 
         for _, row in df.iterrows():
             p = row["prob"]
-            o = row["decimal_odds"]
             b = row["b"]
 
             # ------------- Kelly stake fraction -------------
@@ -72,7 +73,6 @@ def simulate_bankroll(
 
                 # Clamp
                 f = max(0, min(f_kelly, max_fraction))
-
             else:
                 f = max_fraction
 
