@@ -1,18 +1,26 @@
+# File: scripts/build_features.py
+
 import os
 import pandas as pd
 from scripts.utils import setup_logger
+import datetime
 
 logger = setup_logger("build_features")
 DATA_DIR = "data"
+RESULTS_DIR = "results"
 os.makedirs(DATA_DIR, exist_ok=True)
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+FEATURES_FILE = os.path.join(DATA_DIR, "training_features.csv")
+SUMMARY_LOG = os.path.join(RESULTS_DIR, "features_summary.csv")
 
 def main():
     """
     Build training features from player stats.
     Generates 'training_features.csv' containing game-level features and target.
+    Also appends a summary log to 'results/features_summary.csv'.
     """
     stats_file = os.path.join(DATA_DIR, "player_stats.csv")
-    features_file = os.path.join(DATA_DIR, "training_features.csv")
 
     if not os.path.exists(stats_file):
         logger.error(f"{stats_file} not found. Fetch player stats first.")
@@ -23,7 +31,7 @@ def main():
     # Load raw player stats
     df = pd.read_csv(stats_file)
 
-    # Example: Aggregate stats per team
+    # Aggregate stats per team
     team_stats = df.groupby("TEAM_ABBREVIATION").agg({
         "PTS": "mean",
         "AST": "mean",
@@ -32,19 +40,18 @@ def main():
         "BLK": "mean"
     }).reset_index()
 
-    # For simplicity, create dummy matchups
+    # Create dummy matchups
     games = []
     teams = team_stats["TEAM_ABBREVIATION"].tolist()
     game_id = 1
     for i in range(0, len(teams), 2):
-        if i+1 >= len(teams):
+        if i + 1 >= len(teams):
             break
         home = teams[i]
-        away = teams[i+1]
-        home_stats = team_stats[team_stats["TEAM_ABBREVIATION"]==home].iloc[0]
-        away_stats = team_stats[team_stats["TEAM_ABBREVIATION"]==away].iloc[0]
+        away = teams[i + 1]
+        home_stats = team_stats[team_stats["TEAM_ABBREVIATION"] == home].iloc[0]
+        away_stats = team_stats[team_stats["TEAM_ABBREVIATION"] == away].iloc[0]
 
-        # Features: difference in stats
         features = {
             "game_id": game_id,
             "home_team": home,
@@ -55,14 +62,46 @@ def main():
             "away_ast_avg": away_stats["AST"],
             "home_reb_avg": home_stats["REB"],
             "away_reb_avg": away_stats["REB"],
-            "home_win": 1 if home_stats["PTS"] > away_stats["PTS"] else 0  # target
+            "home_win": 1 if home_stats["PTS"] > away_stats["PTS"] else 0
         }
         games.append(features)
         game_id += 1
 
     features_df = pd.DataFrame(games)
-    features_df.to_csv(features_file, index=False)
-    logger.info(f"Training features saved to {features_file}")
+
+    # Add header row with file path + name
+    header_note = pd.DataFrame({"info": [f"File: {FEATURES_FILE}"]})
+    df_out = pd.concat([header_note, features_df], axis=0)
+
+    df_out.to_csv(FEATURES_FILE, index=False)
+    logger.info(f"✅ Training features saved to {FEATURES_FILE} | Games built: {len(features_df)}")
+
+    # Summary stats
+    avg_pts_diff = (features_df["home_pts_avg"] - features_df["away_pts_avg"]).mean()
+    avg_ast_diff = (features_df["home_ast_avg"] - features_df["away_ast_avg"]).mean()
+    avg_reb_diff = (features_df["home_reb_avg"] - features_df["away_reb_avg"]).mean()
+
+    logger.info(
+        f"📊 Feature summary: Avg PTS diff={avg_pts_diff:.2f}, "
+        f"Avg AST diff={avg_ast_diff:.2f}, Avg REB diff={avg_reb_diff:.2f}"
+    )
+
+    # Append summary to rolling log
+    run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    summary_entry = pd.DataFrame([{
+        "timestamp": run_time,
+        "games_built": len(features_df),
+        "avg_pts_diff": avg_pts_diff,
+        "avg_ast_diff": avg_ast_diff,
+        "avg_reb_diff": avg_reb_diff
+    }])
+
+    if os.path.exists(SUMMARY_LOG):
+        summary_entry.to_csv(SUMMARY_LOG, mode="a", header=False, index=False)
+    else:
+        summary_entry.to_csv(SUMMARY_LOG, index=False)
+
+    logger.info(f"📁 Features summary appended to {SUMMARY_LOG}")
 
     return features_df
 
