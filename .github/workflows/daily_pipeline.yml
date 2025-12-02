@@ -27,17 +27,25 @@ jobs:
         with:
           python-version: 3.12
 
-      # 3. Install dependencies
+      # 3. Verify requirements.txt exists
+      - name: Verify requirements.txt
+        run: |
+          if [ ! -f requirements.txt ]; then
+            echo "❌ requirements.txt not found!"
+            exit 1
+          fi
+
+      # 4. Install dependencies (fail fast if broken)
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r requirements.txt || { echo "❌ Failed to install dependencies"; exit 1; }
 
-      # 4. Create results directory
-      - name: Create results directory
-        run: mkdir -p results
+      # 5. Install project (so imports like `app` work)
+      - name: Install project
+        run: pip install -e .
 
-      # 5. Run daily pipeline (with PYTHONPATH fix)
+      # 6. Run daily pipeline
       - name: Run NBA Analytics Pipeline
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
@@ -46,8 +54,16 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # 6. Upload results as artifacts
-      - name: Upload results
+      # 7. Upload cached player stats
+      - name: Upload cached player stats
+        uses: actions/upload-artifact@v4
+        with:
+          name: player-stats-cache
+          path: data/player_stats.csv
+          if-no-files-found: warn
+
+      # 8. Upload pipeline results
+      - name: Upload pipeline results
         uses: actions/upload-artifact@v4
         with:
           name: nba-pipeline-results
