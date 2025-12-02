@@ -9,7 +9,7 @@ logger.addHandler(logging.StreamHandler())
 def main(use_synthetic: bool = False):
     """
     Fetch today's games. If use_synthetic=True, generate synthetic games for CI/testing.
-    Saves to data/new_games.csv.
+    Saves to data/new_games.csv with the same feature columns as training.
     """
     os.makedirs("data", exist_ok=True)
     out_file = "data/new_games.csv"
@@ -19,9 +19,12 @@ def main(use_synthetic: bool = False):
         df = pd.DataFrame({
             "TEAM_HOME": ["SYN_A", "SYN_B"],
             "TEAM_AWAY": ["SYN_C", "SYN_D"],
+            "AGE": [25, 28],
+            "PTS": [15, 20],
+            "AST": [5, 7],
+            "REB": [4, 6],
+            "GAMES_PLAYED": [10, 12],
             "decimal_odds": [1.8, 2.1],
-            "feature1": [0.5, 0.7],
-            "feature2": [1.2, 0.9],
         })
         df.to_csv(out_file, index=False)
         logger.info(f"✅ Synthetic new_games.csv saved to {out_file}")
@@ -34,9 +37,12 @@ def main(use_synthetic: bool = False):
         df = pd.DataFrame({
             "TEAM_HOME": ["LAL", "GSW"],
             "TEAM_AWAY": ["BOS", "MIA"],
+            "AGE": [30, 27],
+            "PTS": [25, 29],
+            "AST": [7, 6],
+            "REB": [8, 5],
+            "GAMES_PLAYED": [20, 18],
             "decimal_odds": [1.9, 2.2],
-            "feature1": [0.6, 0.8],
-            "feature2": [1.1, 0.95],
         })
         df.to_csv(out_file, index=False)
         logger.info(f"✅ Real new_games.csv saved to {out_file}")
