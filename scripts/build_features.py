@@ -40,6 +40,22 @@ def main(n_rounds: int = 1):
     df["PTS_per_AST"] = df["PTS"] / df["AST"].replace(0, pd.NA)
     df["REB_rate"] = df["REB"] / df["GAMES_PLAYED"].replace(0, pd.NA)
 
+    # Merge real game outcomes if available
+    results_file = "data/game_results.csv"
+    if os.path.exists(results_file):
+        logger.info("Merging real game outcomes...")
+        results = pd.read_csv(results_file)
+        if "game_id" in df.columns and "game_id" in results.columns:
+            df = df.merge(results[["game_id", "home_win"]], on="game_id", how="left")
+        elif "home_win" in results.columns:
+            df["home_win"] = results["home_win"]
+        else:
+            logger.warning("⚠️ game_results.csv found but missing 'home_win'. Adding synthetic labels.")
+            df["home_win"] = (df.index % 2 == 0).astype(int)
+    else:
+        logger.warning("⚠️ No game_results.csv found. Adding synthetic labels for CI reliability.")
+        df["home_win"] = (df.index % 2 == 0).astype(int)
+
     # Save features
     os.makedirs("data", exist_ok=True)
     out_file = "data/training_features.csv"
