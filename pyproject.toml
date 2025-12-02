@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nba-analytics"
+version = "0.1.0"
+description = "NBA analytics pipeline"
+authors = [{ name = "Your Name" }]
+dependencies = [
+    # put runtime dependencies here if you want pip to install them automatically
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app", "scripts"]

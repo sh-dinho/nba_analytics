@@ -8,6 +8,7 @@ on:
     - cron: '0 2 * * *'   # Every night at 2:00 AM
     - cron: '0 3 * * 0'   # Every Sunday at 3:00 AM
     - cron: '0 4 1 * *'   # First day of every month at 4:00 AM
+  workflow_dispatch:       # Manual trigger
 
 jobs:
   run_pipeline:
