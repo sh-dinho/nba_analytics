@@ -5,7 +5,7 @@
 
 import argparse
 import pandas as pd
-from scripts.Utils import Simulation   # <-- NEW
+from scripts.utils import Simulation   # <-- NEW
 from scripts.sbr_odds_provider import SbrOddsProvider
 
 def main():
