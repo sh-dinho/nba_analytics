@@ -6,6 +6,7 @@ import pandas as pd
 import logging
 import datetime
 import requests
+import numpy as np # <-- NEW IMPORT
 
 # Directories and cache file
 DATA_DIR = "data"
@@ -39,7 +40,24 @@ LEAGUE_DASH_URL = (
     "Season={season}&SeasonType=Regular+Season&MeasureType=Base&PerMode=PerGame"
 )
 
-def fetch_stats_direct(season: str, timeout=15):
+def generate_synthetic_stats(n_players=450): # <-- NEW FUNCTION
+    """Generates synthetic player stats for testing/fallback."""
+    logging.info("Generating synthetic player stats...")
+    data = {
+        "PLAYER_NAME": [f"Player_{i}" for i in range(n_players)],
+        "TEAM_ABBREVIATION": np.random.choice(["LAL", "BOS", "GSW", "MIL", "DEN", "PHX", "BKN", "DAL", "PHI", "TOR"], n_players),
+        "PTS": np.random.uniform(5, 30, n_players),
+        "AST": np.random.uniform(1, 10, n_players),
+        "REB": np.random.uniform(2, 15, n_players),
+        "STL": np.random.uniform(0, 2, n_players),
+        "BLK": np.random.uniform(0, 2, n_players),
+    }
+    df = pd.DataFrame(data)
+    # Ensure required columns for downstream tasks are present
+    required_cols = ["PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB", "STL", "BLK"]
+    return df[required_cols]
+
+def fetch_stats_direct(season: str, timeout=30): # <-- TIMEOUT INCREASED (15s to 30s)
     url = LEAGUE_DASH_URL.format(season=season)
     r = requests.get(url, headers=NBA_HEADERS, timeout=timeout)
     r.raise_for_status()
@@ -49,8 +67,36 @@ def fetch_stats_direct(season: str, timeout=15):
     rows = data["resultSets"][0]["rowSet"]
     return pd.DataFrame(rows, columns=headers)
 
-def main(season="2024-25", retries=4, base_delay=5, max_total_wait=60):
+def main(season="2024-25", retries=4, base_delay=5, max_total_wait=60, use_synthetic=False): # <-- ADD use_synthetic
     logging.info(f"Fetching player stats for season {season}...")
+
+    # --- Synthetic Data Logic (NEW) ---
+    if use_synthetic:
+        df = generate_synthetic_stats()
+        df.to_csv(CACHE_FILE, index=False)
+        source = "Synthetic"
+        
+        # Log successful synthetic run before returning
+        run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        summary_entry = pd.DataFrame([{
+            "timestamp": run_time,
+            "season": season,
+            "source": source,
+            "attempts": 1,
+            "total_wait": 0,
+            "rows_fetched": len(df)
+        }])
+        summary_entry.to_csv(
+            SUMMARY_LOG,
+            mode="a" if os.path.exists(SUMMARY_LOG) else "w",
+            index=False,
+            header=not os.path.exists(SUMMARY_LOG),
+        )
+        logging.info(f"📁 Fetch summary appended to {SUMMARY_LOG} (Synthetic)")
+        logging.info(f"✅ Synthetic player stats saved to {CACHE_FILE}")
+        return df
+    # ----------------------------------
+
 
     total_wait = 0
     attempts = 0
@@ -61,7 +107,7 @@ def main(season="2024-25", retries=4, base_delay=5, max_total_wait=60):
         attempts = attempt
 
         try:
-            df = fetch_stats_direct(season, timeout=12)
+            df = fetch_stats_direct(season, timeout=30) # <-- TIMEOUT INCREASED (12s to 30s)
             df.to_csv(CACHE_FILE, index=False)
             source = "API"
             logging.info(f"✅ Player stats saved to {CACHE_FILE}")

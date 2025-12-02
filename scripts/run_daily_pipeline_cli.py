@@ -11,14 +11,21 @@ def main():
     parser.add_argument("--threshold", type=float, default=0.6, help="Probability threshold for bets")
     parser.add_argument("--strategy", choices=["kelly", "flat"], default="kelly", help="Bet sizing strategy")
     parser.add_argument("--max_fraction", type=float, default=0.05, help="Max fraction of bankroll per bet")
+    # --- NEW ARGUMENT ---
+    parser.add_argument("--use-synthetic", action="store_true", help="Use synthetic player data instead of API fetch")
+    # --------------------
     args = parser.parse_args()
 
-    logger.info(f"Starting pipeline | threshold={args.threshold}, strategy={args.strategy}, max_fraction={args.max_fraction}")
+    # --- UPDATE logger.info ---
+    logger.info(f"Starting pipeline | threshold={args.threshold}, strategy={args.strategy}, max_fraction={args.max_fraction}, use_synthetic={args.use_synthetic}")
 
     pipeline = PredictionPipeline(
         threshold=args.threshold,
         strategy=args.strategy,
-        max_fraction=args.max_fraction
+        max_fraction=args.max_fraction,
+        # --- PASS NEW ARGUMENT ---
+        use_synthetic=args.use_synthetic
+        # -------------------------
     )
 
     try:

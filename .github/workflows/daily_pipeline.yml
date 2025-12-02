@@ -45,14 +45,24 @@ jobs:
       - name: Install project
         run: pip install -e .
 
-      # 6. Run NBA Analytics CLI
+      # 6. Run NBA Analytics CLI (MODIFIED FOR CONDITIONAL SYNTHETIC DATA)
       - name: Run NBA Analytics Pipeline
         run: |
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python scripts/run_daily_pipeline_cli.py \
+          RUN_COMMAND="python scripts/run_daily_pipeline_cli.py \
             --threshold 0.6 \
             --strategy kelly \
-            --max_fraction 0.05
+            --max_fraction 0.05"
+          
+          # Add --use-synthetic for scheduled runs for reliability
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            RUN_COMMAND="$RUN_COMMAND --use-synthetic"
+            echo "Running scheduled job with synthetic data flag."
+          else
+            echo "Running standard job (manual or push) with live fetch."
+          fi
+          
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          eval $RUN_COMMAND
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
