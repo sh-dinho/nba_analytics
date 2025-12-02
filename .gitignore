@@ -1,12 +1,64 @@
+# -------------------------
+# Python cache & bytecode
+# -------------------------
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# -------------------------
+# Virtual environments
+# -------------------------
 env/
 .venv/
 .ENV/
+venv/
+
+# -------------------------
+# Logs
+# -------------------------
+*.log
+logs/
+
+# -------------------------
+# Databases
+# -------------------------
 *.sqlite3
 *.db
+
+# -------------------------
+# Results & models
+# -------------------------
 results/
 models/
-*.log
+
+# -------------------------
+# Data files (optional)
+# Comment out if you want to commit raw stats/features
+data/
+data/player_stats.csv
+data/training_features.csv
+
+# -------------------------
+# Jupyter & notebooks
+# -------------------------
+.ipynb_checkpoints/
+*.ipynb
+
+# -------------------------
+# Testing & type checking
+# -------------------------
+.pytest_cache/
+.mypy_cache/
+
+# -------------------------
+# OS-specific
+# -------------------------
+.DS_Store
+Thumbs.db
+
+# -------------------------
+# IDE/editor configs
+# -------------------------
+.vscode/
+.idea/
