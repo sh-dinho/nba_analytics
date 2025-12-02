@@ -1,6 +1,7 @@
-# requirements.txt
 pandas
-scikit-learn
-matplotlib
-streamlit
 numpy
+matplotlib
+tqdm
+requests
+scikit-learn
+nba-analytics-core
