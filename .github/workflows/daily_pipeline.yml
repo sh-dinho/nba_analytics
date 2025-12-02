@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: 1
-      PIPELINE_ENV: ci   
+      PIPELINE_ENV: ci   # 👈 ensures config.py uses CI paths
 
     steps:
       - name: Checkout repository
@@ -37,12 +37,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           # Ensure HTML parsers are available for pandas.read_html
-          pip install lxml html5lib beautifulsoup4 scikit-learn joblib
+          pip install lxml html5lib beautifulsoup4 scikit-learn joblib requests
 
       - name: Run prediction pipeline
         run: |
           export PYTHONPATH=$PYTHONPATH:$(pwd)
-          python prediction_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05
+          python app/prediction_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -67,3 +67,11 @@ jobs:
           name: nba-pipeline-logs
           path: logs/
           if-no-files-found: warn
+
+      - name: Send Telegram notification
+        if: always()
+        run: |
+          MESSAGE="🏀 NBA Pipeline run completed on $GITHUB_REF\nStatus: ${{ job.status }}\nArtifacts: results, model, logs"
+          curl -s -X POST https://api.telegram.org/bot${{ secrets.TELEGRAM_TOKEN }}/sendMessage \
+            -d chat_id=${{ secrets.TELEGRAM_CHAT_ID }} \
+            -d text="$MESSAGE"
