@@ -1,5 +1,3 @@
-# File: daily_pipeline.yml
-
 name: NBA Analytics Pipeline
 
 on:
@@ -47,29 +45,25 @@ jobs:
       - name: Install project
         run: pip install -e .
 
-      # 6. Run NBA Analytics CLI (MODIFIED FOR CONDITIONAL SYNTHETIC DATA)
+      # 6. Generate training features (NEW STEP)
+      - name: Generate training features
+        run: |
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          python scripts/generate_training_features.py
+
+      # 7. Run NBA Analytics CLI
       - name: Run NBA Analytics Pipeline
         run: |
-          RUN_COMMAND="python scripts/run_daily_pipeline_cli.py \
+          export PYTHONPATH=$PYTHONPATH:$(pwd)
+          python scripts/run_daily_pipeline_cli.py \
             --threshold 0.6 \
             --strategy kelly \
-            --max_fraction 0.05"
-          
-          # Add --use-synthetic for scheduled runs for reliability
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            RUN_COMMAND="$RUN_COMMAND --use-synthetic"
-            echo "Running scheduled job with synthetic data flag."
-          else
-            echo "Running standard job (manual or push) with live fetch."
-          fi
-          
-          export PYTHONPATH=$PYTHONPATH:$(pwd)
-          eval $RUN_COMMAND
+            --max_fraction 0.05
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # 7. Upload cached player stats
+      # 8. Upload cached player stats
       - name: Upload cached player stats
         uses: actions/upload-artifact@v4
         with:
@@ -77,7 +71,7 @@ jobs:
           path: data/player_stats.csv
           if-no-files-found: warn
 
-      # 8. Upload pipeline results
+      # 9. Upload pipeline results
       - name: Upload pipeline results
         uses: actions/upload-artifact@v4
         with:
@@ -85,7 +79,7 @@ jobs:
           path: results/
           if-no-files-found: warn
 
-      # 9. Upload logs
+      # 10. Upload logs
       - name: Upload pipeline logs
         uses: actions/upload-artifact@v4
         with:
