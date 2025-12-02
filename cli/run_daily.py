@@ -2,7 +2,7 @@
 
 import argparse
 from pipelines.daily_pipeline import run_daily_pipeline
-from core.logging import setup_logger
+from core.log_config import setup_logger
 import os
 import pandas as pd
 
