@@ -1,10 +1,11 @@
 # File: scripts/build_training_data.py
-import pandas as pd
 import os
 import sys
+import json
 import logging
 from datetime import datetime
-import json
+
+import pandas as pd
 import numpy as np
 
 # ----------------------------
@@ -23,7 +24,7 @@ REQUIRED_FEATURE_COLUMNS = {"game_id", "date", "home_team", "away_team", "home_p
 EXCLUDE_FROM_SCALING = {"home_win", "target_margin"}
 
 # ----------------------------
-# Helpers
+# Helper functions
 # ----------------------------
 def _scale_numeric(df, exclude_cols=None):
     """Standardize numeric columns (z-score)."""
@@ -39,13 +40,14 @@ def _scale_numeric(df, exclude_cols=None):
     return df
 
 def _compute_streaks(df: pd.DataFrame) -> pd.DataFrame:
-    """Compute winning and losing streaks per team."""
+    """Compute winning streaks per team across games."""
     streaks = []
 
-    for team in pd.concat([df["home_team"], df["away_team"]]).unique():
+    teams = pd.concat([df["home_team"], df["away_team"]]).unique()
+    for team in teams:
         team_games = df[(df["home_team"] == team) | (df["away_team"] == team)].sort_values("date")
-        wins = ( (team_games["home_team"] == team) & (team_games["home_points"] > team_games["away_points"]) ) | \
-               ( (team_games["away_team"] == team) & (team_games["away_points"] > team_games["home_points"]) )
+        wins = ((team_games["home_team"] == team) & (team_games["home_points"] > team_games["away_points"])) | \
+               ((team_games["away_team"] == team) & (team_games["away_points"] > team_games["home_points"]))
         streak = 0
         streak_list = []
         for w in wins:
@@ -60,11 +62,9 @@ def _compute_streaks(df: pd.DataFrame) -> pd.DataFrame:
 # ----------------------------
 # Main function
 # ----------------------------
-def build_training_data(
-    features_file="features/training_features.csv",
-    out_file="features/training_data.csv",
-    scale=True
-):
+def build_training_data(features_file="features/training_features.csv",
+                        out_file="features/training_data.csv",
+                        scale=True):
     os.makedirs("features", exist_ok=True)
 
     if not os.path.exists(features_file):
@@ -72,20 +72,21 @@ def build_training_data(
 
     logger.info("📂 Loading features...")
     df = pd.read_csv(features_file)
-    _missing = REQUIRED_FEATURE_COLUMNS - set(df.columns)
-    if _missing:
-        raise ValueError(f"Features file is missing required columns: {_missing}")
 
-    # Convert date
+    missing_cols = REQUIRED_FEATURE_COLUMNS - set(df.columns)
+    if missing_cols:
+        raise ValueError(f"Features file is missing required columns: {missing_cols}")
+
+    # Parse date
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=["date"])
 
-    # Create targets
+    # Target variables
     df["home_win"] = (df["home_points"] > df["away_points"]).astype(int)
     df["target_margin"] = df["home_points"] - df["away_points"]
 
-    # Fill missing numeric features with 0
-    numeric_cols = df.select_dtypes(include=[np.number]).columns.difference({"home_win", "target_margin"})
+    # Fill missing numeric features
+    numeric_cols = df.select_dtypes(include=[np.number]).columns.difference(EXCLUDE_FROM_SCALING)
     df[numeric_cols] = df[numeric_cols].fillna(0)
 
     # Compute streaks
@@ -98,16 +99,16 @@ def build_training_data(
         logger.info("📊 Scaling numeric features...")
         df = _scale_numeric(df, exclude_cols=EXCLUDE_FROM_SCALING)
 
-    # Save final training dataset
+    # Save datasets
     df.to_csv(out_file, index=False)
-    ts_out = f"features/training_data_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
-    df.to_csv(ts_out, index=False)
+    ts_file = f"features/training_data_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.csv"
+    df.to_csv(ts_file, index=False)
 
     logger.info(f"✅ Training dataset saved to {out_file}")
-    logger.info(f"📦 Timestamped backup saved to {ts_out}")
+    logger.info(f"📦 Timestamped backup saved to {ts_file}")
     logger.info(f"Rows: {len(df)}, Columns: {len(df.columns)}")
 
-    # Save metadata
+    # Metadata
     meta = {
         "generated_at": datetime.now().isoformat(),
         "rows": len(df),
@@ -128,8 +129,7 @@ def build_training_data(
 # ----------------------------
 if __name__ == "__main__":
     import argparse
-
-    parser = argparse.ArgumentParser(description="Build model-ready training dataset from training features")
+    parser = argparse.ArgumentParser(description="Build model-ready training dataset")
     parser.add_argument("--features", type=str, default="features/training_features.csv")
     parser.add_argument("--out", type=str, default="features/training_data.csv")
     parser.add_argument("--no-scale", action="store_true", help="Disable z-score scaling")
@@ -137,11 +137,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     try:
-        build_training_data(
-            features_file=args.features,
-            out_file=args.out,
-            scale=not args.no_scale
-        )
+        build_training_data(features_file=args.features, out_file=args.out, scale=not args.no_scale)
     except Exception as e:
         logger.error(f"❌ Training data build failed: {e}")
         sys.exit(1)

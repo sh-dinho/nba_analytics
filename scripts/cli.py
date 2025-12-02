@@ -8,30 +8,29 @@ from datetime import datetime
 from app.predict_pipeline import generate_predictions
 from scripts.simulate_bankroll import simulate_bankroll
 from nba_analytics_core.notifications import send_telegram_message, send_ev_summary
+import json
 
 REQUIRED_PRED_COLS = {"pred_home_win_prob", "decimal_odds", "ev"}
 
-# ----------------------------
-# Logging setup
-# ----------------------------
+# ---------------------------- Logging ----------------------------
 logger = logging.getLogger("cli")
 logger.setLevel(logging.INFO)
 handler = logging.StreamHandler(sys.stdout)
 handler.setFormatter(logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s"))
 logger.addHandler(handler)
 
-
+# ---------------------------- Helpers ----------------------------
 def _ensure_columns(df, required_cols, name):
     missing = [c for c in required_cols if c not in df.columns]
     if missing:
         raise ValueError(f"{name} is missing required columns: {missing}")
 
-
 def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-
+# ---------------------------- Pipeline Runner ----------------------------
 def run_pipeline(threshold, strategy, max_fraction, export, notify=False, plot=False):
+    """Generate predictions, simulate bankroll, save results, optionally notify/plot."""
     try:
         df = generate_predictions(
             threshold=threshold,
@@ -49,6 +48,7 @@ def run_pipeline(threshold, strategy, max_fraction, export, notify=False, plot=F
 
     _ensure_columns(df, REQUIRED_PRED_COLS, "predictions")
 
+    # Simulate bankroll
     sim_df = df.rename(columns={"pred_home_win_prob": "prob"})
     history, metrics = simulate_bankroll(
         sim_df[["decimal_odds", "prob", "ev"]],
@@ -56,23 +56,26 @@ def run_pipeline(threshold, strategy, max_fraction, export, notify=False, plot=F
         max_fraction=max_fraction
     )
 
-    df["bankroll"] = history[1:][:len(df)]
+    # Attach bankroll history
+    df["bankroll"] = pd.Series(history[1:][:len(df)])
 
+    # Log metrics
     logger.info("=== BANKROLL METRICS ===")
     logger.info(f'Final Bankroll: ${metrics["final_bankroll"]:.2f}')
     logger.info(f'ROI: {metrics["roi"]*100:.2f}%')
     logger.info(f'Win Rate: {metrics["win_rate"]*100:.2f}% ({metrics["wins"]}W/{metrics["losses"]}L)')
 
+    # Ensure export directory exists
     os.makedirs(os.path.dirname(export) or ".", exist_ok=True)
 
-    # Save detailed results
+    # Save main CSV and timestamped backup
     df.to_csv(export, index=False)
     ts_file = export.replace(".csv", f"_{_timestamp()}.csv")
     df.to_csv(ts_file, index=False)
     logger.info(f"📂 Detailed results saved to {export}")
     logger.info(f"📦 Timestamped backup saved to {ts_file}")
 
-    # Save summary
+    # Save summary CSV and timestamped backup
     summary_path = export.replace(".csv", "_summary.csv")
     pd.DataFrame([metrics]).to_csv(summary_path, index=False)
     ts_summary_path = summary_path.replace(".csv", f"_{_timestamp()}.csv")
@@ -80,7 +83,7 @@ def run_pipeline(threshold, strategy, max_fraction, export, notify=False, plot=F
     logger.info(f"📂 Summary saved to {summary_path}")
     logger.info(f"📦 Timestamped summary backup saved to {ts_summary_path}")
 
-    # Save metadata
+    # Save metadata JSON
     meta = {
         "generated_at": datetime.now().isoformat(),
         "threshold": threshold,
@@ -92,10 +95,10 @@ def run_pipeline(threshold, strategy, max_fraction, export, notify=False, plot=F
     }
     meta_file = export.replace(".csv", "_meta.json")
     with open(meta_file, "w") as f:
-        import json
         json.dump(meta, f, indent=2)
     logger.info(f"🧾 Metadata saved to {meta_file}")
 
+    # Optional Telegram notifications
     if notify:
         msg = (
             f"📊 CLI Bankroll Summary\n"
@@ -110,6 +113,7 @@ def run_pipeline(threshold, strategy, max_fraction, export, notify=False, plot=F
         except Exception as e:
             logger.warning(f"⚠️ Failed to send Telegram notification: {e}")
 
+    # Optional plot of bankroll trajectory
     if plot:
         try:
             import matplotlib.pyplot as plt
@@ -127,7 +131,7 @@ def run_pipeline(threshold, strategy, max_fraction, export, notify=False, plot=F
 
     return df, metrics
 
-
+# ---------------------------- Show Metrics ----------------------------
 def show_metrics(export):
     summary_path = export.replace(".csv", "_summary.csv")
     if not os.path.exists(summary_path):
@@ -137,11 +141,12 @@ def show_metrics(export):
     logger.info("=== LAST SAVED METRICS ===")
     for k, v in metrics.items():
         if isinstance(v, (int, float)):
-            logger.info(f"{k}: {v:.4f}" if not k.endswith("_rate") else f"{k}: {v*100:.2f}%")
+            # Display percentages properly
+            logger.info(f"{k}: {v*100:.2f}%" if "rate" in k.lower() else f"{k}: {v:.4f}")
         else:
             logger.info(f"{k}: {v}")
 
-
+# ---------------------------- CLI Entry ----------------------------
 def main():
     parser = argparse.ArgumentParser(description="NBA Analytics CLI")
     parser.add_argument("--threshold", type=float, default=0.6, help="Strong pick probability threshold")
@@ -164,7 +169,6 @@ def main():
             notify=args.notify,
             plot=args.plot
         )
-
 
 if __name__ == "__main__":
     main()
