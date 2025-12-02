@@ -38,7 +38,8 @@ if __name__ == "__main__":
         pipeline = PredictionPipeline(
             threshold=0.6,
             strategy="kelly",
-            max_fraction=0.05
+            max_fraction=0.05,
+            use_synthetic=False # <-- NEW ARGUMENT ADDED HERE
         )
 
         df, metrics = pipeline.run()
@@ -86,5 +87,5 @@ if __name__ == "__main__":
             send_telegram_message("⚠️ NBA Pipeline completed but no metrics returned.")
 
     except Exception as e:
-        logging.error(f"❌ Pipeline failed: {e}")
-        send_telegram_message(f"❌ NBA Pipeline FAILED:\n{e}")
+        logging.error(f"❌ Daily pipeline failed: {e}")
+        send_telegram_message(f"❌ NBA Pipeline Failed!\nError: {e}")

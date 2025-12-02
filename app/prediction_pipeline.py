@@ -1,3 +1,5 @@
+# File: prediction_pipeline.py
+
 import pandas as pd
 from scripts.fetch_player_stats import main as fetch_stats
 from scripts.generate_today_predictions import generate_today_predictions
@@ -5,15 +7,17 @@ from scripts.generate_picks import main as generate_picks
 from scripts.simulate_bankroll import simulate_bankroll
 
 class PredictionPipeline:
-    def __init__(self, threshold=0.6, strategy="kelly", max_fraction=0.05, results_dir="results"):
+    def __init__(self, threshold=0.6, strategy="kelly", max_fraction=0.05, results_dir="results", use_synthetic=False):
         self.threshold = threshold
         self.strategy = strategy
         self.max_fraction = max_fraction
         self.results_dir = results_dir
+        self.use_synthetic = use_synthetic # <-- NEW ATTRIBUTE ADDED HERE
 
     def run(self):
         # 1️⃣ Fetch player stats
-        fetch_stats()
+        # Pass the new argument down to handle synthetic data or live fetch
+        fetch_stats(use_synthetic=self.use_synthetic) 
 
         # 2️⃣ Generate predictions
         preds_df = generate_today_predictions(threshold=self.threshold)
