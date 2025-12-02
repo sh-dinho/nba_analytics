@@ -41,7 +41,7 @@ jobs:
 
       # 5. Optional: Upload results as artifacts
       - name: Upload results
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: nba-pipeline-results
           path: results/
