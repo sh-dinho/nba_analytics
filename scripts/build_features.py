@@ -36,9 +36,12 @@ def main(n_rounds: int = 1):
 
     logger.info("Building features...")
 
-    # Example engineered features
+    # Safe feature engineering (avoid NaNs)
     df["PTS_per_AST"] = df["PTS"] / df["AST"].replace(0, pd.NA)
+    df["PTS_per_AST"] = df["PTS_per_AST"].fillna(0)
+
     df["REB_rate"] = df["REB"] / df["GAMES_PLAYED"].replace(0, pd.NA)
+    df["REB_rate"] = df["REB_rate"].fillna(0)
 
     # Merge real game outcomes if available
     results_file = "data/game_results.csv"

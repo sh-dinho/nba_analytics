@@ -3,6 +3,7 @@
 import os
 import logging
 import pandas as pd
+from sklearn.linear_model import LogisticRegression
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -20,13 +21,20 @@ def main():
                          "Ensure build_features.py merges game outcomes or adds synthetic labels.")
 
     logger.info("Training model...")
+
+    # Separate features and target
     X = df.drop(columns=["home_win"])
     y = df["home_win"].fillna(0).astype(int)
 
-    # Example: simple model training placeholder
-    from sklearn.linear_model import LogisticRegression
+    # Select numeric features only
+    X_num = X.select_dtypes(include="number")
+
+    # Replace NaN/inf with safe defaults
+    X_num = X_num.fillna(0).replace([float("inf"), -float("inf")], 0)
+
+    # Train logistic regression
     model = LogisticRegression(max_iter=1000)
-    model.fit(X.select_dtypes(include="number"), y)
+    model.fit(X_num, y)
 
     logger.info("✅ Model trained successfully")
 
