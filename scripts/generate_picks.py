@@ -1,11 +1,18 @@
 import pandas as pd
 import os
 
-def main(preds_file="results/predictions.csv", out_file="results/picks.csv", notify=False):
-    print(f"🎯 Generating picks from {preds_file}")
+RESULTS_DIR = "results"
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+def main(preds_file=f"{RESULTS_DIR}/predictions.csv", out_file=f"{RESULTS_DIR}/picks.csv"):
+    """
+    Generate picks from predictions and simple EV strategy.
+    """
+    if not os.path.exists(preds_file):
+        raise FileNotFoundError(f"{preds_file} not found.")
+
     df = pd.read_csv(preds_file)
-    # Simple pick logic: choose games with EV > 0
-    df["pick"] = df["ev"].apply(lambda x: "HOME" if x > 0 else "AWAY")
-    os.makedirs(os.path.dirname(out_file), exist_ok=True)
+    df["pick"] = df.apply(lambda row: "HOME" if row.pred_home_win_prob > 0.5 else "AWAY", axis=1)
     df.to_csv(out_file, index=False)
-    print(f"✅ Picks saved to {out_file}")
+    print(f"Picks saved to {out_file}")
+    return df
