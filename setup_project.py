@@ -1,102 +1,89 @@
+# setup_project.py
 import os
+import shutil
+import argparse
 
-# Define project structure
-PROJECT_ROOT = r"C:\Users\Mohamadou\projects\nba_analytics"
+KEEP_FILES = {".env", ".gitignore", "README.md", "requirements.txt", ".git"}
 
-structure = {
-    "app": {
-        "__init__.py": "",
-        "app.py": """import streamlit as st
-st.set_page_config(page_title="NBA Analytics Dashboard", layout="wide")
-st.title("🏀 NBA Analytics Dashboard")
-st.sidebar.success("Use the sidebar to navigate pages")
-""",
-        "predict_pipeline.py": """# Prediction pipeline placeholder
-def generate_predictions():
-    pass
-""",
-        "pages": {
-            "ai_predictions.py": "# Streamlit page: AI Predictions",
-            "bankroll_sim.py": "# Streamlit page: Bankroll Simulation",
-            "stats_overview.py": "# Streamlit page: Stats Overview",
-        },
-    },
-    "nba_analytics_core": {
-        "__init__.py": "",
-        "data.py": "# Functions to fetch NBA stats",
-        "odds.py": "# Functions to fetch bookmaker odds",
-        "utils.py": "# Utility functions",
-    },
-    "scripts": {
-        "__init__.py": "",
-        "train_model.py": "# Script to retrain model",
-        "run_cli.py": """import argparse
-def main():
-    parser = argparse.ArgumentParser(description="NBA Analytics CLI")
-    args = parser.parse_args()
-    print("CLI running...")
-if __name__ == "__main__":
-    main()
-""",
-        "cleanup.py": "# Cleanup utility script",
-    },
-    "models": {
-        # Empty folder for trained models
-    },
-    "": {  # Root-level files
-        "config.py": """import logging
-ODDS_API_KEY = "your-odds-api-key-here"
-DB_PATH = "data/nba.db"
-def configure_logging():
-    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-""",
-        "requirements.txt": """streamlit
-nba_api
-scikit-learn
-pandas
-numpy
-requests
-joblib
-""",
-        ".gitignore": """__pycache__/
-*.log
-*.tmp
-artifacts/
-models/*.pkl
-.env
-.streamlit/
-.ipynb_checkpoints/
-.pytest_cache/
-""",
-        "README.md": """# NBA Analytics Project
+FOLDERS = [
+    "core",
+    "data_ingest",
+    "features",
+    "modeling",
+    "betting",
+    "pipelines",
+    "cli",
+    "app",
+    "app/dashboard",
+    "results",
+]
 
-This project provides:
-- Streamlit dashboard for NBA analytics
-- CLI for predictions
-- Automated model retraining
-- Cleanup utilities
-
-## Usage
-- Run Streamlit: `streamlit run app/app.py`
-- Run CLI: `python scripts/run_cli.py`
-- Retrain model: `python scripts/train_model.py`
-- Cleanup: `python scripts/cleanup.py`
-""",
-    },
+PLACEHOLDERS = {
+    "core/config.py": "# Configurations\n",
+    "core/logging.py": "# Logging setup\n",
+    "core/utils.py": "# Utility functions\n",
+    "core/paths.py": "# Paths and directories\n",
+    "core/odds_cache.py": "# Odds caching logic\n",
+    "core/data_models.py": "# Data models\n",
+    "core/exceptions.py": "# Custom exceptions\n",
+    "cli/main.py": "# CLI entry point\n",
+    "app/__main__.py": "# App entry point\n",
+    "pipelines/base_pipeline.py": "# Base pipeline template\n",
 }
 
-def create_structure(base_path, struct):
-    for name, content in struct.items():
-        path = os.path.join(base_path, name)
-        if isinstance(content, dict):
-            os.makedirs(path, exist_ok=True)
-            create_structure(path, content)
+def cleanup():
+    """Delete everything except KEEP_FILES."""
+    for item in os.listdir("."):
+        if item in KEEP_FILES:
+            continue
+        if os.path.isdir(item):
+            shutil.rmtree(item)
+            print(f"Deleted folder: {item}")
         else:
-            os.makedirs(base_path, exist_ok=True)
-            file_path = os.path.join(base_path, name)
-            with open(file_path, "w", encoding="utf-8") as f:
+            os.remove(item)
+            print(f"Deleted file: {item}")
+    print("✅ Cleanup complete.")
+
+def create_structure():
+    """Create folder structure with __init__.py files."""
+    for folder in FOLDERS:
+        os.makedirs(folder, exist_ok=True)
+        init_file = os.path.join(folder, "__init__.py")
+        if not os.path.exists(init_file):
+            with open(init_file, "w") as f:
+                f.write("# Package init\n")
+        print(f"Created folder and __init__.py: {folder}")
+    print("✅ Folder structure created.")
+
+def add_placeholders():
+    """Create placeholder files with starter content."""
+    for file, content in PLACEHOLDERS.items():
+        if not os.path.exists(file):
+            with open(file, "w") as f:
                 f.write(content)
+            print(f"Created placeholder: {file}")
+        else:
+            print(f"Skipped existing file: {file}")
+    print("✅ Placeholders added.")
+
+def main():
+    parser = argparse.ArgumentParser(description="Project setup utility")
+    parser.add_argument("--cleanup", action="store_true", help="Delete all except KEEP_FILES")
+    parser.add_argument("--structure", action="store_true", help="Create folder structure")
+    parser.add_argument("--placeholders", action="store_true", help="Add placeholder files")
+    parser.add_argument("--init", action="store_true", help="Run full initialization (cleanup + structure + placeholders)")
+    args = parser.parse_args()
+
+    if args.cleanup:
+        cleanup()
+    if args.structure:
+        create_structure()
+    if args.placeholders:
+        add_placeholders()
+    if args.init:
+        cleanup()
+        create_structure()
+        add_placeholders()
 
 if __name__ == "__main__":
-    create_structure(PROJECT_ROOT, structure)
-    print(f"✅ Project structure created at {PROJECT_ROOT}")
+    main()

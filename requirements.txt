@@ -1,9 +1,0 @@
-# Path: requirements.txt
-streamlit
-nba_api
-scikit-learn
-pandas
-numpy
-joblib
-python-dotenv
-matplotlib
