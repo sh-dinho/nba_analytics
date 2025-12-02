@@ -1,17 +1,13 @@
 name: NBA Analytics Pipeline
 
 on:
-  # Run on push to main or scheduled
   push:
     branches:
       - main
   schedule:
-    # Every night at 2:00 AM
-    - cron: '0 2 * * *'
-    # Every Sunday at 3:00 AM
-    - cron: '0 3 * * 0'
-    # First day of every month at 4:00 AM
-    - cron: '0 4 1 * *'
+    - cron: '0 2 * * *'   # Every night at 2:00 AM
+    - cron: '0 3 * * 0'   # Every Sunday at 3:00 AM
+    - cron: '0 4 1 * *'   # First day of every month at 4:00 AM
 
 jobs:
   run_pipeline:
@@ -20,11 +16,11 @@ jobs:
     steps:
       # 1. Checkout repo
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # 2. Setup Python
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: 3.12
 
@@ -34,14 +30,19 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4. Run daily pipeline
+      # 4. Install project (so imports like `app` work)
+      - name: Install project
+        run: pip install -e .
+
+      # 5. Run daily pipeline
       - name: Run NBA Analytics Pipeline
         run: |
           python scripts/run_daily_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05
 
-      # 5. Optional: Upload results as artifacts
+      # 6. Upload results as artifacts
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: nba-pipeline-results
           path: results/
+          if-no-files-found: warn
