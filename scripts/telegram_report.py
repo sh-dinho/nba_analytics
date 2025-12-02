@@ -1,13 +1,12 @@
 # ============================================================
 # File: scripts/telegram_report.py
-# Purpose: Send bankroll summary to Telegram
+# Purpose: Send bankroll summary + chart + trend analysis to Telegram
 # ============================================================
 
 import os
 import logging
 import requests
 import pandas as pd
-from scripts.Utils import Simulation   # <-- NEW
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -24,37 +23,59 @@ def send_message(text: str):
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
     try:
         requests.post(url, json=payload)
-        logger.info("📲 Telegram report sent successfully")
+        logger.info("📲 Telegram text report sent successfully")
     except Exception as e:
-        logger.error(f"❌ Failed to send Telegram report: {e}")
+        logger.error(f"❌ Failed to send Telegram text report: {e}")
 
-def main():
-    # Load picks_bankroll.csv
-    if not os.path.exists("results/picks_bankroll.csv"):
-        logger.warning("⚠️ No picks_bankroll.csv found. Skipping report.")
+def send_photo(photo_path: str, caption: str = None):
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("⚠️ Telegram credentials not set. Skipping photo upload.")
+        return
+    if not os.path.exists(photo_path):
+        logger.warning(f"⚠️ Chart not found at {photo_path}. Skipping photo upload.")
         return
 
-    df = pd.read_csv("results/picks_bankroll.csv")
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+    with open(photo_path, "rb") as photo:
+        files = {"photo": photo}
+        data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption or ""}
+        try:
+            requests.post(url, data=data, files=files)
+            logger.info("📸 Telegram chart sent successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to send Telegram chart: {e}")
 
-    # Reconstruct simulation from history
-    sim = Simulation(initial_bankroll=df.iloc[0]["bankroll"])
+def main():
+    # Load combined summary
+    if not os.path.exists("results/combined_summary.csv"):
+        logger.warning("⚠️ No combined_summary.csv found. Skipping report.")
+        return
+
+    df = pd.read_csv("results/combined_summary.csv")
+
+    # Format summary message
+    message = "*🏀 NBA Daily Combined Report*\n\n"
     for _, row in df.iterrows():
-        sim.history.append(row.to_dict())
-    sim.bankroll = df.iloc[-1]["bankroll"]
+        message += (
+            f"📌 Model: {row['Model']}\n"
+            f"🏦 Final Bankroll: {row['Final_Bankroll']:.2f}\n"
+            f"✅ Win Rate: {row['Win_Rate']:.2%}\n"
+            f"💰 Avg EV: {row['Avg_EV']:.2f}\n"
+            f"🎯 Avg Stake: {row['Avg_Stake']:.2f}\n"
+            f"📊 Total Bets: {int(row['Total_Bets'])}\n\n"
+        )
 
-    summary = sim.summary()
+    # Trend analysis: find best model by final bankroll
+    best_model = df.loc[df["Final_Bankroll"].idxmax()]
+    trend_line = f"📈 *Trend Analysis:* {best_model['Model']} outperformed others today with a bankroll of {best_model['Final_Bankroll']:.2f}."
 
-    # Format message
-    message = (
-        f"🏀 *NBA Daily Report*\n\n"
-        f"🏦 Final Bankroll: {summary['Final_Bankroll']:.2f}\n"
-        f"✅ Win Rate: {summary['Win_Rate']:.2%}\n"
-        f"💰 Avg EV: {summary['Avg_EV']:.2f}\n"
-        f"🎯 Avg Stake: {summary['Avg_Stake']:.2f}\n"
-        f"📊 Total Bets: {summary['Total_Bets']}"
-    )
+    message += trend_line
 
+    # Send text summary
     send_message(message)
+
+    # Send bankroll chart
+    send_photo("results/bankroll_comparison.png", caption="📈 Bankroll Trajectories")
 
 if __name__ == "__main__":
     main()

@@ -37,6 +37,9 @@ jobs:
           python app/prediction_pipeline.py --threshold 0.6 --strategy kelly --max_fraction 0.05 --model_type ${{ matrix.model_type }}
           mv results/picks_bankroll.csv results/picks_bankroll_${{ matrix.model_type }}.csv
 
+      - name: Debug models directory
+        run: ls -R models
+
       - name: Upload trained model
         uses: actions/upload-artifact@v4
         with:
@@ -44,7 +47,7 @@ jobs:
           path: |
             models/game_predictor.pkl
             models/game_predictor.h5
-          if-no-files-found: ignore
+          if-no-files-found: ignore   # ✅ prevents failure if only one format exists
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -73,7 +76,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas
+          pip install pandas matplotlib requests
 
       - name: Aggregate results
         run: |
@@ -85,4 +88,16 @@ jobs:
         with:
           name: nba-combined-summary
           path: results/combined_summary.csv
-          if-no-files-found: error
+
+      - name: Upload bankroll chart
+        uses: actions/upload-artifact@v4
+        with:
+          name: nba-bankroll-chart
+          path: results/bankroll_comparison.png
+
+      - name: Send Telegram report
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/telegram_report.py

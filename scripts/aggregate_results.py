@@ -1,14 +1,18 @@
 # ============================================================
 # File: scripts/aggregate_results.py
-# Purpose: Merge results from all model types into one summary CSV
+# Purpose: Merge results from all model types into one summary CSV + chart
 # ============================================================
 
 import os
 import pandas as pd
+import matplotlib.pyplot as plt
 
 def main():
     model_types = ["logistic", "xgb", "nn"]
     summaries = []
+
+    # Prepare plot
+    plt.figure(figsize=(10, 6))
 
     for m in model_types:
         path = f"results/picks_bankroll_{m}.csv"
@@ -33,11 +37,24 @@ def main():
             "Avg_Stake": avg_stake
         })
 
+        # Plot bankroll trajectory
+        plt.plot(df.index, df["bankroll"], label=m)
+
     if summaries:
         summary_df = pd.DataFrame(summaries)
         os.makedirs("results", exist_ok=True)
         summary_df.to_csv("results/combined_summary.csv", index=False)
         print("📊 Combined summary saved to results/combined_summary.csv")
+
+        # Save chart
+        plt.title("Bankroll Trajectories by Model")
+        plt.xlabel("Bet Index")
+        plt.ylabel("Bankroll")
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig("results/bankroll_comparison.png")
+        print("📈 Bankroll comparison chart saved to results/bankroll_comparison.png")
     else:
         print("❌ No results found to aggregate.")
 
