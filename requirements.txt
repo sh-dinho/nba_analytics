@@ -1,11 +1,21 @@
-pandas>=2.0
-numpy>=1.25
-matplotlib>=3.8
-scikit-learn>=1.3
-tqdm>=4.66
-requests>=2.31
-joblib>=1.4
-nba_api==1.4.1
-python-telegram-bot==21.7
-lxml
+# Core scientific stack
+numpy==1.26.4
+pandas==2.2.2
+scikit-learn==1.5.2
+
+# Deep learning (for nn_runner)
 tensorflow==2.15.0
+
+# Gradient boosting (for xgb_runner)
+xgboost==2.1.1
+
+# Odds provider / web requests
+requests==2.32.3
+
+# Logging & utilities
+python-dateutil==2.9.0.post0
+toml==0.10.2
+
+# Optional: visualization if you add plots
+matplotlib==3.9.2
+seaborn==0.13.2
