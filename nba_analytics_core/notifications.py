@@ -1,4 +1,24 @@
+# ============================================================
+# File: notifications.py
 # Path: nba_analytics_core/notifications.py
+#
+# Description:
+#   Functions for sending notifications via Telegram.
+#   Includes:
+#     - send_telegram_message: generic Telegram bot message
+#     - send_ev_summary: positive EV bets summary
+#     - send_bankroll_summary: bankroll simulation summary
+#
+# Author: Your Name
+# Created: 2025-12-01
+# Updated: 2025-12-01
+#
+# Notes:
+#   - Requires environment variables:
+#       TELEGRAM_TOKEN
+#       TELEGRAM_CHAT_ID
+#   - Dependencies: requests, logging, os
+# ============================================================
 
 import os
 import requests

@@ -1,3 +1,14 @@
+# ============================================================
+# File: 3_Weekly_Player_Trends.py
+# Path: <project_root>/pages/3_Weekly_Player_Trends.py
+#
+# Description:
+#   Streamlit page to track weekly player performance trends
+#   across multiple metrics (points, assists, rebounds). Supports
+#   filtering by player or team, interactive charts, metrics, and
+#   CSV export.
+# ============================================================
+
 import streamlit as st
 import pandas as pd
 import altair as alt

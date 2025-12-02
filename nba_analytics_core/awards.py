@@ -1,4 +1,21 @@
+# ============================================================
+# File: awards.py
 # Path: nba_analytics_core/awards.py
+#
+# Description:
+#   Functions for building MVP candidate features, training
+#   a logistic regression MVP classifier, and predicting MVP
+#   probabilities for players.
+#
+# Author: Your Name
+# Created: 2025-12-01
+# Updated: 2025-12-01
+#
+# Notes:
+#   - Dependencies: pandas, numpy, scikit-learn
+#   - Required features for MVP model: PTS, AST, REB, TS_PCT, MIN
+# ============================================================
+
 import pandas as pd
 import numpy as np
 from sklearn.preprocessing import StandardScaler

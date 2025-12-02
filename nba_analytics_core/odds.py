@@ -1,4 +1,21 @@
+# ============================================================
+# File: odds.py
 # Path: nba_analytics_core/odds.py
+#
+# Description:
+#   Functions for fetching NBA odds from The Odds API.
+#   Includes:
+#     - fetch_odds: fetches head-to-head (H2H) odds for NBA games
+#
+# Author: Your Name
+# Created: 2025-12-01
+# Updated: 2025-12-01
+#
+# Notes:
+#   - Requires environment variable: ODDS_API_KEY
+#   - Dependencies: requests, logging, os
+#   - Returns decimal odds and bookmaker info
+# ============================================================
 
 import os
 import requests

@@ -1,3 +1,14 @@
+# ============================================================
+# File: 4_CLI_Results.py
+# Path: <project_root>/pages/4_CLI_Results.py
+#
+# Description:
+#   Streamlit page displaying recommended picks generated
+#   from the CLI pipeline. Includes table view, summary
+#   metrics, EV distribution charts, bankroll simulation
+#   preview, and CSV export.
+# ============================================================
+
 import streamlit as st
 import pandas as pd
 import altair as alt

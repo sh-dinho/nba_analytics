@@ -1,3 +1,14 @@
+# ============================================================
+# File: 7_AI_Predictor.py
+# Path: <project_root>/pages/7_AI_Predictor.py
+#
+# Description:
+#   Streamlit page for predicting NBA game outcomes using the 
+#   trained model. Supports single game input via form or 
+#   batch CSV uploads. Includes metrics, distribution charts,
+#   filtering, and CSV export functionality.
+# ============================================================
+
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -14,7 +25,6 @@ with st.form("predict_form"):
     home_team = st.text_input("Home Team", "")
     away_team = st.text_input("Away Team", "")
     date = st.date_input("Game Date")
-
     submitted = st.form_submit_button("Predict")
 
 if submitted:

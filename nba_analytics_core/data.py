@@ -1,4 +1,25 @@
+# ============================================================
+# File: data.py
 # Path: nba_analytics_core/data.py
+#
+# Description:
+#   Functions for fetching and processing NBA game data.
+#   Includes:
+#     - Historical game data retrieval
+#     - Today's games retrieval
+#     - Team stats aggregation
+#     - Matchup feature engineering
+#     - CSV export of team stats and matchup features
+#
+# Author: Your Name
+# Created: 2025-12-01
+# Updated: 2025-12-01
+#
+# Notes:
+#   - Dependencies: pandas, numpy, nba_api, logging
+#   - CSV output paths default to "data/team_stats.csv" and "data/matchup_features.csv"
+# ============================================================
+
 import pandas as pd
 import numpy as np
 import logging

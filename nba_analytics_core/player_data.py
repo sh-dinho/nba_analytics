@@ -1,91 +1,93 @@
-# Path: nba_analytics_core/player_data.py
+# ============================================================
+# File: odds.py
+# Path: nba_analytics_core/odds.py
+#
+# Description:
+#   Functions for fetching NBA odds from The Odds API.
+#   Includes:
+#     - fetch_odds: fetches head-to-head (H2H) odds for NBA games
+#
+# Author: Your Name
+# Created: 2025-12-01
+# Updated: 2025-12-01
+#
+# Notes:
+#   - Requires environment variable: ODDS_API_KEY
+#   - Dependencies: requests, logging, os
+#   - Returns decimal odds and bookmaker info
+# ============================================================
 
-import pandas as pd
+import os
+import requests
 import logging
-from datetime import datetime
-from nba_api.stats.endpoints import leaguedashplayerstats
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-REQUIRED_COLUMNS = ["PLAYER_NAME", "TEAM_ABBREVIATION", "GP", "MIN", "PTS", "REB", "AST", "TS_PCT"]
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+BASE_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
 
-def fetch_player_season_stats(season: str = "2025-26", per_mode: str = "PerGame") -> pd.DataFrame:
+def fetch_odds(home_team=None, away_team=None, region="us", markets="h2h", bookmaker_preference=None):
     """
-    Fetches real player season statistics using nba_api.
-    Returns DataFrame with PTS, REB, AST, TS%, etc.
+    Fetch bookmaker odds for NBA H2H market in decimal format.
+    Returns dict: {"home_odds": float, "away_odds": float, "bookmaker": str, "last_update": str} or None.
     """
-    logger.info(f"Fetching {per_mode} player stats for season {season}...")
+    if not ODDS_API_KEY:
+        raise ValueError("ODDS_API_KEY not set. Add it to .env or environment variables.")
+
+    params = {
+        "apiKey": ODDS_API_KEY,
+        "regions": region,
+        "markets": markets,
+        "oddsFormat": "decimal"
+    }
 
     try:
-        stats = leaguedashplayerstats.LeagueDashPlayerStats(
-            season=season,
-            per_mode_detailed=per_mode,
-            measure_type_detailed_defense="Base"
-        )
-        df = stats.get_data_frames()[0]
-    except Exception as e:
-        logger.error(f"Failed to fetch player stats: {e}")
-        return pd.DataFrame()
+        resp = requests.get(BASE_URL, params=params, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except requests.RequestException as e:
+        logger.error(f"Odds API error: {e}")
+        return None
 
-    # Select key columns for dashboard
-    available_cols = [c for c in REQUIRED_COLUMNS if c in df.columns]
-    if not available_cols:
-        logger.warning("No required columns found in API response.")
-        return pd.DataFrame()
+    for game in data:
+        home = game.get("home_team")
+        away = game.get("away_team")
+        if home_team and away_team and home and away:
+            if home.lower() == home_team.lower() and away.lower() == away_team.lower():
+                bookmakers = game.get("bookmakers", [])
+                if not bookmakers:
+                    logger.warning(f"No bookmakers available for {home} vs {away}")
+                    continue
 
-    df = df[available_cols].replace([float("inf"), float("-inf")], pd.NA).fillna(0)
+                # Choose bookmaker
+                bookmaker = bookmakers[0]
+                if bookmaker_preference:
+                    for b in bookmakers:
+                        if b["title"].lower() == bookmaker_preference.lower():
+                            bookmaker = b
+                            break
 
-    logger.info(f"✔ Retrieved stats for {len(df)} players.")
-    return df.sort_values(by=["PTS", "AST", "REB"], ascending=False).reset_index(drop=True)
+                markets_data = bookmaker.get("markets", [])
+                if not markets_data:
+                    logger.warning(f"No markets available for bookmaker {bookmaker['title']}")
+                    continue
 
+                outcomes = markets_data[0].get("outcomes", [])
+                home_odds = next((o["price"] for o in outcomes if o["name"].lower() == home.lower()), None)
+                away_odds = next((o["price"] for o in outcomes if o["name"].lower() == away.lower()), None)
 
-def build_player_leaderboards(df: pd.DataFrame, top_n: int = 10) -> dict:
-    """
-    Builds a dictionary of DataFrames representing different leaderboards.
-    """
-    if df.empty:
-        logger.warning("Cannot build leaderboards: input DataFrame is empty.")
-        return {}
+                if home_odds is not None and away_odds is not None:
+                    return {
+                        "home_odds": float(home_odds),
+                        "away_odds": float(away_odds),
+                        "bookmaker": bookmaker["title"],
+                        "last_update": bookmaker.get("last_update"),
+                        "commence_time": game.get("commence_time"),
+                        "sport_key": game.get("sport_key")
+                    }
+                else:
+                    logger.warning(f"Odds missing for {home} vs {away} at bookmaker {bookmaker['title']}")
 
-    leaderboards = {
-        "Scoring (PTS)": df.nlargest(top_n, "PTS"),
-        "Rebounding (REB)": df.nlargest(top_n, "REB"),
-        "Assists (AST)": df.nlargest(top_n, "AST"),
-        "Efficiency (TS_PCT)": df.nlargest(top_n, "TS_PCT"),
-        "Minutes (MIN)": df.nlargest(top_n, "MIN"),
-        "Composite Impact": df.assign(IMPACT=df["PTS"] + df["REB"] + df["AST"]).nlargest(top_n, "IMPACT")
-    }
-
-    logger.info(f"Leaderboards built for top {top_n} players.")
-    return leaderboards
-
-
-def export_leaderboards(leaderboards: dict, out_dir: str = "results", season: str = "2025-26"):
-    """
-    Export leaderboards to CSV files.
-    """
-    if not leaderboards:
-        logger.warning("No leaderboards to export.")
-        return
-
-    import os
-    os.makedirs(out_dir, exist_ok=True)
-
-    for name, df in leaderboards.items():
-        safe_name = name.replace(" ", "_").replace("(", "").replace(")", "").lower()
-        file_path = os.path.join(out_dir, f"leaderboard_{safe_name}.csv")
-        df.to_csv(file_path, index=False)
-        logger.info(f"📊 Leaderboard '{name}' exported to {file_path}")
-
-    # Save metadata
-    meta = {
-        "season": season,
-        "generated_at": datetime.now().isoformat(),
-        "leaderboards": list(leaderboards.keys())
-    }
-    meta_file = os.path.join(out_dir, "leaderboards_meta.json")
-    import json
-    with open(meta_file, "w") as f:
-        json.dump(meta, f, indent=2)
-    logger.info(f"🧾 Metadata saved to {meta_file}")
+    logger.info(f"No odds found for {home_team} vs {away_team}")
+    return None

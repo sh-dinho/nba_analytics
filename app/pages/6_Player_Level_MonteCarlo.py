@@ -1,3 +1,13 @@
+# ============================================================
+# File: 6_Player_Level_Monte_Carlo.py
+# Path: <project_root>/pages/6_Player_Level_Monte_Carlo.py
+#
+# Description:
+#   Streamlit page to run bankroll simulations for picks involving
+#   the selected player's team. Includes trajectory preview,
+#   distribution of final bankrolls, and CSV export.
+# ============================================================
+
 import streamlit as st
 import pandas as pd
 import altair as alt

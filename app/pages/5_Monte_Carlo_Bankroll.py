@@ -1,3 +1,14 @@
+# ============================================================
+# File: 5_Monte_Carlo_Bankroll_Simulation.py
+# Path: <project_root>/pages/5_Monte_Carlo_Bankroll_Simulation.py
+#
+# Description:
+#   Streamlit page to run Monte Carlo simulations of bankroll
+#   growth using picks from the pipeline. Allows multiple
+#   simulations, strategy selection, trajectory preview, and
+#   distribution visualization.
+# ============================================================
+
 import streamlit as st
 import pandas as pd
 import altair as alt
