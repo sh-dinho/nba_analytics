@@ -1,38 +1,27 @@
+# ============================================================
 # File: scripts/run_daily_pipeline_cli.py
+# Purpose: Run daily NBA prediction pipeline end-to-end
+# ============================================================
 
 import argparse
-import logging
 import os
 import subprocess
 import datetime
-import sys
 import pandas as pd
+from core.config import BASE_DATA_DIR, MODELS_DIR, RESULTS_DIR, SUMMARY_FILE
+from core.log_config import setup_logger
+from core.exceptions import PipelineError
 
-DATA_DIR = "data"
-MODELS_DIR = "models"
-RESULTS_DIR = "results"
-os.makedirs(DATA_DIR, exist_ok=True)
+# Ensure directories exist
+os.makedirs(BASE_DATA_DIR, exist_ok=True)
 os.makedirs(MODELS_DIR, exist_ok=True)
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
 today = datetime.datetime.now().strftime("%Y%m%d")
 LOG_FILE = os.path.join(RESULTS_DIR, f"pipeline_run_{today}.log")
-SUMMARY_FILE = os.path.join(RESULTS_DIR, "pipeline_summary.csv")
 
-def setup_pipeline_logger():
-    logger = logging.getLogger("pipeline")
-    logger.setLevel(logging.INFO)
-    if not logger.handlers:
-        formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-        ch = logging.StreamHandler(sys.stdout)
-        ch.setFormatter(formatter)
-        logger.addHandler(ch)
-        fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
-    return logger
+logger = setup_logger("pipeline")
 
-logger = setup_pipeline_logger()
 
 def ensure_player_stats(season="2024-25", force_refresh=False):
     args = ["python", "scripts/fetch_player_stats.py", "--season", season]
@@ -41,52 +30,58 @@ def ensure_player_stats(season="2024-25", force_refresh=False):
     logger.info(f"Ensuring player stats for season {season} (force_refresh={force_refresh})...")
     subprocess.run(args, check=True)
 
+
 def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
          season="2024-25", force_refresh=False, rounds=10):
     logger.info(f"Starting pipeline | threshold={threshold}, strategy={strategy}, "
                 f"max_fraction={max_fraction}, season={season}, force_refresh={force_refresh}, rounds={rounds}")
 
-    # Step 1: Ensure stats
-    ensure_player_stats(season=season, force_refresh=force_refresh)
+    try:
+        # Step 1: Ensure stats
+        ensure_player_stats(season=season, force_refresh=force_refresh)
 
-    # Step 2: Build features
-    subprocess.run(["python", "scripts/build_features.py", "--rounds", str(rounds)], check=True)
+        # Step 2: Build features
+        subprocess.run(["python", "scripts/build_features.py", "--rounds", str(rounds)], check=True)
 
-    # Step 3: Train model
-    subprocess.run(["python", "scripts/train_model.py"], check=True)
+        # Step 3: Train model
+        subprocess.run(["python", "scripts/train_model.py"], check=True)
 
-    # Step 4: Generate predictions
-    subprocess.run([
-        "python", "scripts/generate_today_predictions.py",
-        "--threshold", str(threshold),
-        "--strategy", strategy,
-        "--max_fraction", str(max_fraction)
-    ], check=True)
+        # Step 4: Generate predictions
+        subprocess.run([
+            "python", "scripts/generate_today_predictions.py",
+            "--threshold", str(threshold),
+            "--strategy", strategy,
+            "--max_fraction", str(max_fraction)
+        ], check=True)
 
-    # Step 5: Generate picks
-    subprocess.run(["python", "scripts/generate_picks.py"], check=True)
+        # Step 5: Generate picks
+        subprocess.run(["python", "scripts/generate_picks.py"], check=True)
+
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Pipeline step failed: {e}")
+        raise PipelineError(f"Pipeline execution failed: {e}")
 
     # Step 6: Collect summaries
     try:
-        n_games = len(pd.read_csv(os.path.join(DATA_DIR, "training_features.csv")))
+        n_games = len(pd.read_csv(os.path.join(BASE_DATA_DIR, "training_features.csv")))
     except Exception:
         n_games = 0
 
     try:
         metrics_df = pd.read_csv(os.path.join(RESULTS_DIR, "training_metrics.csv"))
         last_metrics = metrics_df.iloc[-1].to_dict()
-        acc = last_metrics.get("accuracy", None)
-        auc = last_metrics.get("auc", None)
-        logloss = last_metrics.get("log_loss", None)
-        brier = last_metrics.get("brier", None)
+        acc = last_metrics.get("accuracy")
+        auc = last_metrics.get("auc")
+        logloss = last_metrics.get("log_loss")
+        brier = last_metrics.get("brier")
     except Exception:
         acc, auc, logloss, brier = None, None, None, None
 
     try:
         preds_df = pd.read_csv(os.path.join(RESULTS_DIR, "today_predictions.csv"))
         n_preds = len(preds_df)
-        n_bets = int(preds_df["bet_recommendation"].sum())
-        avg_prob = preds_df["win_prob"].mean()
+        n_bets = int(preds_df.get("bet_recommendation", pd.Series([0])).sum())
+        avg_prob = preds_df.get("win_prob", pd.Series([0.0])).mean()
     except Exception:
         n_preds, n_bets, avg_prob = 0, 0, 0.0
 
@@ -138,6 +133,7 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         summary_entry.to_csv(SUMMARY_FILE, index=False)
 
     logger.info(f"Pipeline summary appended to {SUMMARY_FILE}")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run daily NBA prediction pipeline")

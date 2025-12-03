@@ -3,11 +3,12 @@
 # Purpose: Provide sportsbook odds data
 # ============================================================
 
-import logging
 import random
+from core.log_config import setup_logger
+from core.exceptions import PipelineError
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger = setup_logger("sbr_odds_provider")
+
 
 class SbrOddsProvider:
     """
@@ -16,10 +17,10 @@ class SbrOddsProvider:
     can run end-to-end without errors.
     """
 
-    def __init__(self, sportsbook="fanduel"):
+    def __init__(self, sportsbook: str = "fanduel"):
         self.sportsbook = sportsbook
 
-    def get_odds(self):
+    def get_odds(self) -> dict:
         """
         Return odds data for today's games.
         Structure:
@@ -41,10 +42,10 @@ class SbrOddsProvider:
                 odds_data[f"{home}:{away}"] = {
                     home: {"money_line_odds": random.choice([+120, +150, -110])},
                     away: {"money_line_odds": random.choice([-120, -150, +110])},
-                    "under_over_odds": random.choice([208.5, 210.5, 215.0])
+                    "under_over_odds": random.choice([208.5, 210.5, 215.0]),
                 }
 
-            logger.info(f"✅ Generated dummy odds for {len(teams)} games")
+            logger.info(f"✅ Generated dummy odds for {len(teams)} games (sportsbook={self.sportsbook})")
             return odds_data
 
         except Exception as e:
@@ -54,6 +55,6 @@ class SbrOddsProvider:
                 "LAL:BOS": {
                     "LAL": {"money_line_odds": +150},
                     "BOS": {"money_line_odds": -150},
-                    "under_over_odds": 210.5
+                    "under_over_odds": 210.5,
                 }
             }
