@@ -5,10 +5,19 @@
 
 import os
 import pandas as pd
+import numpy as np
 import joblib
-from core.config import MODEL_FILE_PKL, PREDICTIONS_FILE, DEFAULT_BANKROLL, MAX_KELLY_FRACTION, PICKS_FILE
+from pathlib import Path
+from core.config import (
+    MODEL_FILE_PKL,
+    PREDICTIONS_FILE,
+    DEFAULT_BANKROLL,
+    MAX_KELLY_FRACTION,
+    PICKS_FILE,
+)
 from core.log_config import setup_logger
 from core.utils import ensure_columns
+from core.exceptions import DataError, PipelineError
 
 logger = setup_logger("generate_today_predictions")
 
@@ -19,13 +28,15 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
     Handles binary, regression, and multi-class targets.
     Saves predictions to PREDICTIONS_FILE and returns DataFrame.
     """
-    if not os.path.exists(features_file):
+    features_file = Path(features_file)
+
+    if not features_file.exists():
         raise FileNotFoundError(f"{features_file} not found. Run build_features_for_new_games first.")
 
     df = pd.read_csv(features_file)
 
     # Load trained model artifact
-    if not os.path.exists(MODEL_FILE_PKL):
+    if not Path(MODEL_FILE_PKL).exists():
         raise FileNotFoundError(f"{MODEL_FILE_PKL} not found. Run train_model first.")
 
     artifact = joblib.load(MODEL_FILE_PKL)
@@ -45,7 +56,10 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
 
     # Predict depending on target type
     if target == "label":
-        probs = pipeline.predict_proba(X)[:, 1] if hasattr(pipeline, "predict_proba") else pipeline.predict(X)
+        if hasattr(pipeline, "predict_proba"):
+            probs = pipeline.predict_proba(X)[:, 1]
+        else:
+            probs = pipeline.predict(X)
         preds = (probs >= threshold).astype(int)
         df["pred_home_win_prob"] = probs
         df["predicted_home_win"] = preds
@@ -54,20 +68,22 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
         preds = pipeline.predict(X)
         df["predicted_margin"] = preds
         # Convert margin prediction into implied win probability (sigmoid approximation)
-        df["pred_home_win_prob"] = 1 / (1 + pd.np.exp(-0.1 * preds))
+        df["pred_home_win_prob"] = 1 / (1 + np.exp(-0.1 * preds))
         df["predicted_home_win"] = (df["pred_home_win_prob"] >= threshold).astype(int)
 
     elif target == "outcome_category":
         preds = pipeline.predict(X)
         df["predicted_outcome_category"] = preds
-        # If predict_proba available, log probabilities
         if hasattr(pipeline, "predict_proba"):
             prob_df = pd.DataFrame(pipeline.predict_proba(X), columns=pipeline.classes_)
             df = pd.concat([df, prob_df], axis=1)
 
     # Save predictions
-    df.to_csv(PREDICTIONS_FILE, index=False)
-    logger.info(f"📊 Predictions saved to {PREDICTIONS_FILE} ({len(df)} rows)")
+    try:
+        df.to_csv(PREDICTIONS_FILE, index=False)
+        logger.info(f"📊 Predictions saved to {PREDICTIONS_FILE} ({len(df)} rows)")
+    except Exception as e:
+        raise PipelineError(f"Failed to save predictions: {e}")
 
     # Picks logic only applies to binary/derived win probability
     picks = []
@@ -80,6 +96,7 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
             b = odds - 1
             ev = p * odds - 1
             kelly_fraction = (b * p - q) / b if b > 0 else 0
+
             if kelly_fraction > 0:
                 kelly_fraction = min(kelly_fraction, MAX_KELLY_FRACTION)
                 stake_amount = DEFAULT_BANKROLL * kelly_fraction
@@ -94,11 +111,17 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
                     "kelly_fraction": kelly_fraction,
                     "stake_amount": stake_amount,
                 })
-                logger.info(f"{row['home_team']} vs {row['away_team']} → EV={ev:.3f} | ✅ Pick | Stake={stake_amount:.2f}")
+                logger.info(
+                    f"{row['home_team']} vs {row['away_team']} → EV={ev:.3f} | ✅ Pick | Stake={stake_amount:.2f}"
+                )
 
+    # Save picks if any
     if picks:
-        pd.DataFrame(picks).to_csv(PICKS_FILE, index=False)
-        logger.info(f"💾 Picks saved to {PICKS_FILE} ({len(picks)} rows)")
+        try:
+            pd.DataFrame(picks).to_csv(PICKS_FILE, index=False)
+            logger.info(f"💾 Picks saved to {PICKS_FILE} ({len(picks)} rows)")
+        except Exception as e:
+            raise PipelineError(f"Failed to save picks: {e}")
     else:
         logger.info("ℹ️ No positive EV picks found today.")
 

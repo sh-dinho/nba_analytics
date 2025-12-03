@@ -8,6 +8,7 @@ import os
 import subprocess
 import datetime
 import pandas as pd
+from pathlib import Path
 from core.config import ensure_dirs, BASE_DATA_DIR, MODELS_DIR, RESULTS_DIR, SUMMARY_FILE
 from core.log_config import setup_logger
 from core.exceptions import PipelineError
@@ -18,28 +19,33 @@ ensure_dirs()
 today = datetime.datetime.now().strftime("%Y%m%d")
 LOG_FILE = os.path.join(RESULTS_DIR, f"pipeline_run_{today}.log")
 
-# Configure logger (optionally add file handler if desired)
 logger = setup_logger("pipeline")
 
 
-def get_current_season():
+def get_current_season() -> str:
     """Return current NBA season string like '2025-26' based on today's date."""
     today = datetime.date.today()
     year = today.year
     month = today.month
+    return f"{year}-{str(year+1)[-2:]}" if month >= 10 else f"{year-1}-{str(year)[-2:]}"
 
-    if month >= 10:  # October or later → season starts this year
-        return f"{year}-{str(year+1)[-2:]}"
-    else:  # Before October → season started last year
-        return f"{year-1}-{str(year)[-2:]}"
+
+def run_step(args, step_name: str):
+    """Run a subprocess step with logging and error handling."""
+    logger.info(f"▶️ {step_name}...")
+    try:
+        subprocess.run(args, check=True, capture_output=True, text=True)
+        logger.info(f"✅ {step_name} completed")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ {step_name} failed: {e.stderr}")
+        raise PipelineError(f"{step_name} failed: {e.stderr}")
 
 
 def ensure_player_stats(season="2025-26", force_refresh=False):
     args = ["python", "-m", "scripts.fetch_player_stats", "--season", season]
     if force_refresh:
         args.append("--force_refresh")
-    logger.info(f"Ensuring player stats for season {season} (force_refresh={force_refresh})...")
-    subprocess.run(args, check=True, capture_output=True, text=True)
+    run_step(args, f"Ensuring player stats for season {season}")
 
 
 def format_metric(name, value, fmt=".4f"):
@@ -49,65 +55,41 @@ def format_metric(name, value, fmt=".4f"):
 
 def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
          season=None, force_refresh=False, rounds=10,
-         target="label", model_type="logistic"):
+         target="label", model_type="logistic") -> pd.DataFrame:
 
-    # Auto-detect season if not provided
     season = season or get_current_season()
     logger.info(f"📅 Auto-detected NBA season: {season}")
-
     logger.info(f"Starting pipeline | threshold={threshold}, strategy={strategy}, "
                 f"max_fraction={max_fraction}, season={season}, force_refresh={force_refresh}, "
                 f"rounds={rounds}, target={target}, model_type={model_type}")
 
-    try:
-        # Step 1: Ensure stats
-        ensure_player_stats(season=season, force_refresh=force_refresh)
+    # Steps 1–5
+    ensure_player_stats(season=season, force_refresh=force_refresh)
 
-        # Step 2: Build features
-        if target in ["label", "margin", "outcome_category"]:
-            logger.info("Building training features (labels included)...")
-            subprocess.run([
-                "python", "-m", "scripts.build_features",
-                "--rounds", str(rounds),
-                "--training"
-            ], check=True, capture_output=True, text=True)
-        else:
-            logger.info("Building new game features (no labels)...")
-            subprocess.run([
-                "python", "-m", "scripts.build_features",
-                "--rounds", str(rounds)
-            ], check=True, capture_output=True, text=True)
+    if target in ["label", "margin", "outcome_category"]:
+        run_step(["python", "-m", "scripts.build_features", "--rounds", str(rounds), "--training"],
+                 "Building training features")
+    else:
+        run_step(["python", "-m", "scripts.build_features", "--rounds", str(rounds)],
+                 "Building new game features")
 
-        # Step 3: Train model
-        subprocess.run([
-            "python", "-m", "scripts.train_model",
-            "--target", target,
-            "--model_type", model_type
-        ], check=True, capture_output=True, text=True)
+    run_step(["python", "-m", "scripts.train_model", "--target", target, "--model_type", model_type],
+             "Training model")
 
-        # Step 4: Generate predictions
-        subprocess.run([
-            "python", "-m", "scripts.generate_today_predictions",
-            "--threshold", str(threshold),
-            "--strategy", strategy,
-            "--max_fraction", str(max_fraction)
-        ], check=True, capture_output=True, text=True)
+    run_step(["python", "-m", "scripts.generate_today_predictions",
+              "--threshold", str(threshold), "--strategy", strategy, "--max_fraction", str(max_fraction)],
+             "Generating predictions")
 
-        # Step 5: Generate picks
-        subprocess.run(["python", "-m", "scripts.generate_picks"], check=True, capture_output=True, text=True)
-
-    except subprocess.CalledProcessError as e:
-        logger.error(f"❌ Pipeline step failed: {e.stderr}")
-        raise PipelineError(f"Pipeline execution failed: {e.stderr}")
+    run_step(["python", "-m", "scripts.generate_picks"], "Generating picks")
 
     # Step 6: Collect summaries
     try:
-        n_games = len(pd.read_csv(os.path.join(BASE_DATA_DIR, "training_features.csv")))
+        n_games = len(pd.read_csv(BASE_DATA_DIR / "training_features.csv"))
     except Exception:
         n_games = 0
 
     try:
-        metrics_df = pd.read_csv(os.path.join(RESULTS_DIR, "training_metrics.csv"))
+        metrics_df = pd.read_csv(RESULTS_DIR / "training_metrics.csv")
         last_metrics = metrics_df.iloc[-1].to_dict()
         acc = last_metrics.get("accuracy")
         auc = last_metrics.get("auc")
@@ -118,7 +100,7 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         acc, auc, logloss, brier, rmse = None, None, None, None, None
 
     try:
-        preds_df = pd.read_csv(os.path.join(RESULTS_DIR, "today_predictions.csv"))
+        preds_df = pd.read_csv(RESULTS_DIR / "today_predictions.csv")
         n_preds = len(preds_df)
         n_bets = int(preds_df.get("bet_recommendation", pd.Series([0])).sum())
         avg_prob = preds_df.get("win_prob", pd.Series([0.0])).mean()
@@ -126,7 +108,7 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         n_preds, n_bets, avg_prob = 0, 0, 0.0
 
     try:
-        picks_df = pd.read_csv(os.path.join(RESULTS_DIR, "picks.csv"))
+        picks_df = pd.read_csv(RESULTS_DIR / "picks.csv")
         home_picks = (picks_df["pick"] == "HOME").sum() if "pick" in picks_df.columns else 0
         away_picks = (picks_df["pick"] == "AWAY").sum() if "pick" in picks_df.columns else 0
         avg_ev = picks_df["ev"].mean() if "ev" in picks_df.columns else None
@@ -135,26 +117,21 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
     except Exception:
         home_picks, away_picks, avg_ev, total_stake, expected_profit = 0, 0, None, 0.0, 0.0
 
-    # Log summaries with safe formatting
-    feature_summary = f"FEATURE SUMMARY: Games built={n_games}"
-    training_summary = "TRAINING SUMMARY: " + " ".join([
+    # Log summaries
+    logger.info(f"FEATURE SUMMARY: Games built={n_games}")
+    logger.info("TRAINING SUMMARY: " + " ".join([
         format_metric("Accuracy", acc),
         format_metric("LogLoss", logloss),
         format_metric("Brier", brier),
         format_metric("AUC", auc),
         format_metric("RMSE", rmse)
-    ])
-    prediction_summary = (f"PREDICTION SUMMARY: Predictions={n_preds}, Bets recommended={n_bets}, "
-                          f"Avg win_prob={avg_prob:.3f}, Threshold={threshold}, Strategy={strategy}, "
-                          f"MaxFraction={max_fraction}, Target={target}, ModelType={model_type}")
-    picks_summary = (f"PICKS SUMMARY: HOME={home_picks}, AWAY={away_picks}, "
-                     f"Avg EV={avg_ev:.3f}" if avg_ev is not None else "Avg EV=N/A" +
-                     f", Total Stake={total_stake:.2f}, Expected Profit={expected_profit:.2f}")
-
-    logger.info(feature_summary)
-    logger.info(training_summary)
-    logger.info(prediction_summary)
-    logger.info(picks_summary)
+    ]))
+    logger.info(f"PREDICTION SUMMARY: Predictions={n_preds}, Bets recommended={n_bets}, "
+                f"Avg win_prob={avg_prob:.3f}, Threshold={threshold}, Strategy={strategy}, "
+                f"MaxFraction={max_fraction}, Target={target}, ModelType={model_type}")
+    logger.info(f"PICKS SUMMARY: HOME={home_picks}, AWAY={away_picks}, "
+                f"Avg EV={avg_ev:.3f if avg_ev is not None else 'N/A'}, "
+                f"Total Stake={total_stake:.2f}, Expected Profit={expected_profit:.2f}")
     logger.info("Pipeline completed successfully")
 
     # Append to rolling CSV summary
@@ -183,12 +160,16 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         "model_type": model_type
     }])
 
-    if os.path.exists(SUMMARY_FILE):
-        summary_entry.to_csv(SUMMARY_FILE, mode="a", header=False, index=False)
-    else:
-        summary_entry.to_csv(SUMMARY_FILE, index=False)
+    try:
+        if Path(SUMMARY_FILE).exists():
+            summary_entry.to_csv(SUMMARY_FILE, mode="a", header=False, index=False)
+        else:
+            summary_entry.to_csv(SUMMARY_FILE, index=False)
+        logger.info(f"Pipeline summary appended to {SUMMARY_FILE}")
+    except Exception as e:
+        raise PipelineError(f"Failed to append pipeline summary: {e}")
 
-    logger.info(f"Pipeline summary appended to {SUMMARY_FILE}")
+    return summary_entry
 
 
 if __name__ == "__main__":
@@ -207,10 +188,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     main(threshold=args.threshold,
-         strategy=args.strategy,
-         max_fraction=args.max_fraction,
-         season=args.season,
-         force_refresh=args.force_refresh,
-         rounds=args.rounds,
-         target=args.target,
-         model_type=args.model_type)
+            strategy=args.strategy,
+            max_fraction=args.max_fraction,
+            season=args.season,
+            force_refresh=args.force_refresh,
+            rounds=args.rounds,
+            target=args.target,
+            model_type=args.model_type)

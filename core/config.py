@@ -28,9 +28,14 @@ else:
 RESULTS_DIR = BASE_RESULTS_DIR
 MODELS_DIR = BASE_MODELS_DIR
 
+# Extra pipeline paths
+ARCHIVE_DIR = BASE_DATA_DIR / "archive"
+LOG_FILE = BASE_LOGS_DIR / "pipeline.log"
+PICKS_BANKROLL_FILE = BASE_RESULTS_DIR / "picks_bankroll_xgb.csv"
+
 def ensure_dirs():
-    """Ensure all required directories exist, including NN_Models subfolder."""
-    for d in [BASE_DATA_DIR, BASE_MODELS_DIR, BASE_RESULTS_DIR, BASE_LOGS_DIR]:
+    """Ensure all required directories exist, including NN_Models and archive subfolder."""
+    for d in [BASE_DATA_DIR, BASE_MODELS_DIR, BASE_RESULTS_DIR, BASE_LOGS_DIR, ARCHIVE_DIR]:
         d.mkdir(parents=True, exist_ok=True)
     (BASE_MODELS_DIR / "NN_Models").mkdir(parents=True, exist_ok=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -43,6 +48,9 @@ def dump_config():
         "BASE_RESULTS_DIR": str(BASE_RESULTS_DIR),
         "BASE_LOGS_DIR": str(BASE_LOGS_DIR),
         "DB_PATH": str(DB_PATH),
+        "ARCHIVE_DIR": str(ARCHIVE_DIR),
+        "LOG_FILE": str(LOG_FILE),
+        "PICKS_BANKROLL_FILE": str(PICKS_BANKROLL_FILE),
         "SEED": SEED,
         "DEFAULT_THRESHOLD": DEFAULT_THRESHOLD,
         "DEFAULT_BANKROLL": DEFAULT_BANKROLL,
@@ -58,6 +66,10 @@ def validate_config():
         issues.append(f"Missing models directory: {BASE_MODELS_DIR}")
     if not (BASE_MODELS_DIR / "NN_Models").exists():
         issues.append(f"Missing NN_Models subfolder: {BASE_MODELS_DIR / 'NN_Models'}")
+    if not ARCHIVE_DIR.exists():
+        issues.append(f"Missing archive directory: {ARCHIVE_DIR}")
+    if not LOG_FILE.parent.exists():
+        issues.append(f"Missing logs directory: {LOG_FILE.parent}")
     if not ML_MODEL_FILE_H5.exists():
         issues.append(f"Missing ML model file: {ML_MODEL_FILE_H5}")
     if not OU_MODEL_FILE_H5.exists():
@@ -71,7 +83,7 @@ def validate_config():
 
 # Logging setup
 logging.basicConfig(
-    filename=BASE_LOGS_DIR / "pipeline.log",
+    filename=LOG_FILE,
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )

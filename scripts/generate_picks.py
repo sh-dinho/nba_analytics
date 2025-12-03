@@ -5,6 +5,7 @@
 
 import pandas as pd
 import datetime
+from pathlib import Path
 from core.log_config import setup_logger
 from core.exceptions import DataError, PipelineError
 from core.utils import ensure_columns
@@ -29,22 +30,34 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
 
     df = pd.read_csv(preds_file)
 
-    # Validate required columns
-    required_cols = {"pred_home_win_prob"}
+    # Validate required probability column
     if "win_prob" in df.columns:
-        required_cols = {"win_prob"}
+        prob_col = "win_prob"
+    elif "pred_home_win_prob" in df.columns:
+        prob_col = "pred_home_win_prob"
+    else:
+        raise DataError("Predictions file missing required probability column")
+
     try:
-        ensure_columns(df, required_cols, "predictions")
+        ensure_columns(df, [prob_col], "predictions")
     except ValueError as e:
         raise DataError(str(e))
 
-    # Simple strategy: pick HOME if prob > 0.5, else AWAY
-    prob_col = "win_prob" if "win_prob" in df.columns else "pred_home_win_prob"
-    df["pick"] = df.apply(lambda row: "HOME" if row[prob_col] > 0.5 else "AWAY", axis=1)
+    # Strategy: pick HOME if prob > 0.5 (and EV > 0 if available)
+    if "ev" in df.columns:
+        df["pick"] = df.apply(
+            lambda row: "HOME" if row[prob_col] > 0.5 and row["ev"] > 0 else "AWAY",
+            axis=1,
+        )
+    else:
+        df["pick"] = df.apply(lambda row: "HOME" if row[prob_col] > 0.5 else "AWAY", axis=1)
 
     # Save picks
-    df.to_csv(out_file, index=False)
-    logger.info(f"✅ Picks saved to {out_file} | Total picks: {len(df)}")
+    try:
+        df.to_csv(out_file, index=False)
+        logger.info(f"✅ Picks saved to {out_file} | Total picks: {len(df)}")
+    except Exception as e:
+        raise PipelineError(f"Failed to save picks: {e}")
 
     # Summary stats
     home_picks = (df["pick"] == "HOME").sum()
@@ -77,5 +90,4 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
 
 
 if __name__ == "__main__":
-    from pathlib import Path
     main()
