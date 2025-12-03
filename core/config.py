@@ -38,22 +38,15 @@ MODEL_FILE_H5 = BASE_MODELS_DIR / "game_predictor.h5"
 
 # Data files
 TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
-PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
-GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
-
-# Data files
-TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
-PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
-GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
-
 NEW_GAMES_FILE = BASE_DATA_DIR / "new_games.csv"
+NEW_GAMES_FEATURES_FILE = BASE_DATA_DIR / "new_games_features.csv"  # ✅ added
 HISTORICAL_GAMES_FILE = BASE_DATA_DIR / "historical_games.csv"
-NEW_GAMES_FILE = BASE_DATA_DIR / "new_games.csv"
+PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
+GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
 
 # Results files
 PREDICTIONS_FILE = BASE_RESULTS_DIR / "today_predictions.csv"
 BANKROLL_FILE_TEMPLATE = BASE_RESULTS_DIR / "picks_bankroll_{model_type}.csv"
-TODAY_PREDICTIONS_FILE = BASE_RESULTS_DIR / "predictions.csv"
 PICKS_FILE = BASE_RESULTS_DIR / "picks.csv"
 PICKS_LOG = BASE_LOGS_DIR / "picks.log"
 

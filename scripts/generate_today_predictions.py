@@ -42,8 +42,14 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
 
     logger.info(f"✅ Loaded model from {MODEL_FILE_PKL}")
 
-    # Ensure required columns exist
-    ensure_columns(df, feature_cols + ["game_id", "decimal_odds"], "game features")
+    # ✅ Make decimal_odds optional
+    required = feature_cols + ["game_id", "home_team", "away_team"]
+    if "decimal_odds" in df.columns:
+        required.append("decimal_odds")
+    else:
+        logger.warning("⚠️ 'decimal_odds' column missing — skipping EV calculations.")
+
+    ensure_columns(df, required, "game features")
 
     # Predict probabilities
     X = df[feature_cols]
