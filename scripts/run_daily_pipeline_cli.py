@@ -23,7 +23,19 @@ LOG_FILE = os.path.join(RESULTS_DIR, f"pipeline_run_{today}.log")
 logger = setup_logger("pipeline")
 
 
-def ensure_player_stats(season="2024-25", force_refresh=False):
+def get_current_season():
+    """Return current NBA season string like '2025-26' based on today's date."""
+    today = datetime.date.today()
+    year = today.year
+    month = today.month
+
+    if month >= 10:  # October or later → season starts this year
+        return f"{year}-{str(year+1)[-2:]}"
+    else:  # Before October → season started last year
+        return f"{year-1}-{str(year)[-2:]}"
+
+
+def ensure_player_stats(season="2025-26", force_refresh=False):
     args = ["python", "-m", "scripts.fetch_player_stats", "--season", season]
     if force_refresh:
         args.append("--force_refresh")
@@ -32,8 +44,13 @@ def ensure_player_stats(season="2024-25", force_refresh=False):
 
 
 def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
-         season="2024-25", force_refresh=False, rounds=10,
+         season=None, force_refresh=False, rounds=10,
          target="label", model_type="logistic"):
+
+    # Auto-detect season if not provided
+    season = season or get_current_season()
+    logger.info(f"📅 Auto-detected NBA season: {season}")
+
     logger.info(f"Starting pipeline | threshold={threshold}, strategy={strategy}, "
                 f"max_fraction={max_fraction}, season={season}, force_refresh={force_refresh}, "
                 f"rounds={rounds}, target={target}, model_type={model_type}")
@@ -43,8 +60,6 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         ensure_player_stats(season=season, force_refresh=force_refresh)
 
         # Step 2: Build features
-        # Automatically choose training mode if we're training a model (target provided),
-        # otherwise build new game features for prediction.
         if target in ["label", "margin", "outcome_category"]:
             logger.info("Building training features (labels included)...")
             subprocess.run([
@@ -140,6 +155,7 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
     run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary_entry = pd.DataFrame([{
         "timestamp": run_time,
+        "season": season,
         "games_built": n_games,
         "accuracy": acc,
         "log_loss": logloss,
@@ -174,7 +190,8 @@ if __name__ == "__main__":
     parser.add_argument("--threshold", type=float, default=0.6)
     parser.add_argument("--strategy", type=str, default="kelly")
     parser.add_argument("--max_fraction", type=float, default=0.05)
-    parser.add_argument("--season", type=str, default="2024-25")
+    parser.add_argument("--season", type=str, default=get_current_season(),
+                        help="NBA season, auto-detected by default")
     parser.add_argument("--force_refresh", action="store_true")
     parser.add_argument("--rounds", type=int, default=10)
     parser.add_argument("--target", type=str, default="label",
