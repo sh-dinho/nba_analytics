@@ -6,7 +6,7 @@
 import argparse
 import os
 import pandas as pd
-from core.config import HISTORICAL_GAMES_FILE, NEW_GAMES_FILE, BASE_DATA_DIR
+from core.config import HISTORICAL_GAMES_FILE, NEW_GAMES_FILE, BASE_DATA_DIR, ensure_dirs
 from core.log_config import setup_logger
 
 logger = setup_logger("build_features")
@@ -31,61 +31,53 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = [col.strip().lower().replace(" ", "").replace("_", "") for col in df.columns]
     normalized_map = {k.lower().replace(" ", "").replace("_", ""): v for k, v in COLUMN_MAP.items()}
     df = df.rename(columns={col: normalized_map[col] for col in df.columns if col in normalized_map})
+
+    unmapped = [col for col in df.columns if col not in normalized_map.values()]
+    if unmapped:
+        logger.warning(f"Unmapped columns: {unmapped}")
+
     logger.info(f"Normalized columns: {list(df.columns)}")
     return df
 
 def build_features(rounds=10, training=False):
+    ensure_dirs()
+
     if training:
         logger.info("Loading historical games...")
-        df = pd.read_csv(HISTORICAL_GAMES_FILE)
+        try:
+            df = pd.read_csv(HISTORICAL_GAMES_FILE)
+        except FileNotFoundError:
+            logger.error(f"File not found: {HISTORICAL_GAMES_FILE}")
+            return
+
         df = normalize_columns(df)
-
-        # Aggregate player-level stats into game-level totals
-        if {"home_team", "away_team", "pts", "teamabbreviation"} <= set(df.columns):
-            logger.info("Aggregating player stats into team totals...")
-
-            group_cols = ["home_team", "away_team"]
-            if "date" in df.columns:
-                group_cols.append("date")
-
-            # Home totals
-            home_totals = df[df["teamabbreviation"] == df["home_team"]].groupby(group_cols).agg({
-                "pts": "sum",
-                "reb": "sum" if "reb" in df.columns else "mean",
-                "ast": "sum" if "ast" in df.columns else "mean"
-            }).reset_index()
-            home_totals = home_totals.rename(columns={"pts": "home_pts", "reb": "home_reb", "ast": "home_ast"})
-
-            # Away totals
-            away_totals = df[df["teamabbreviation"] == df["away_team"]].groupby(group_cols).agg({
-                "pts": "sum",
-                "reb": "sum" if "reb" in df.columns else "mean",
-                "ast": "sum" if "ast" in df.columns else "mean"
-            }).reset_index()
-            away_totals = away_totals.rename(columns={"pts": "away_pts", "reb": "away_reb", "ast": "away_ast"})
-
-            # Merge
-            df = pd.merge(home_totals, away_totals, on=group_cols)
 
         required = ["home_team", "away_team"]
         for col in required:
             if col not in df.columns:
                 raise ValueError(f"Missing required column: {col}")
 
-        # Build features with rolling averages
+        # Build features with per-team rolling averages
         features = pd.DataFrame({
             "game_id": df.index,
             "home_team": df["home_team"],
             "away_team": df["away_team"],
-            "home_avg_pts": df["home_pts"].rolling(rounds, min_periods=1).mean() if "home_pts" in df else None,
-            "away_avg_pts": df["away_pts"].rolling(rounds, min_periods=1).mean() if "away_pts" in df else None,
-            "home_avg_reb": df["home_reb"].rolling(rounds, min_periods=1).mean() if "home_reb" in df else None,
-            "away_avg_reb": df["away_reb"].rolling(rounds, min_periods=1).mean() if "away_reb" in df else None,
-            "home_avg_ast": df["home_ast"].rolling(rounds, min_periods=1).mean() if "home_ast" in df else None,
-            "away_avg_ast": df["away_ast"].rolling(rounds, min_periods=1).mean() if "away_ast" in df else None,
         })
 
-        # Labels: prefer homewin if available
+        if "home_pts" in df:
+            features["home_avg_pts"] = df.groupby("home_team")["home_pts"].transform(lambda x: x.rolling(rounds, min_periods=1).mean())
+        if "away_pts" in df:
+            features["away_avg_pts"] = df.groupby("away_team")["away_pts"].transform(lambda x: x.rolling(rounds, min_periods=1).mean())
+        if "home_reb" in df:
+            features["home_avg_reb"] = df.groupby("home_team")["home_reb"].transform(lambda x: x.rolling(rounds, min_periods=1).mean())
+        if "away_reb" in df:
+            features["away_avg_reb"] = df.groupby("away_team")["away_reb"].transform(lambda x: x.rolling(rounds, min_periods=1).mean())
+        if "home_ast" in df:
+            features["home_avg_ast"] = df.groupby("home_team")["home_ast"].transform(lambda x: x.rolling(rounds, min_periods=1).mean())
+        if "away_ast" in df:
+            features["away_avg_ast"] = df.groupby("away_team")["away_ast"].transform(lambda x: x.rolling(rounds, min_periods=1).mean())
+
+        # Labels
         if "homewin" in df.columns:
             features["label"] = df["homewin"].astype(int)
         elif "home_pts" in df and "away_pts" in df:
@@ -93,7 +85,7 @@ def build_features(rounds=10, training=False):
         else:
             raise ValueError("No valid label source found (homewin or points).")
 
-        # Margin and outcome category if points available
+        # Margin and outcome category
         if "home_pts" in df and "away_pts" in df:
             features["margin"] = (df["home_pts"] - df["away_pts"]).astype(int)
             features["outcome_category"] = features["margin"].apply(
@@ -103,7 +95,7 @@ def build_features(rounds=10, training=False):
                           "away_blowout"
             )
 
-        # Diagnostic check: label distribution
+        # Diagnostics
         label_counts = features["label"].value_counts()
         logger.info(f"📊 Label distribution: {label_counts.to_dict()}")
         if features["label"].nunique() < 2:
@@ -115,7 +107,12 @@ def build_features(rounds=10, training=False):
 
     else:
         logger.info("Loading new games...")
-        df = pd.read_csv(NEW_GAMES_FILE)
+        try:
+            df = pd.read_csv(NEW_GAMES_FILE)
+        except FileNotFoundError:
+            logger.error(f"File not found: {NEW_GAMES_FILE}")
+            return
+
         df = normalize_columns(df)
 
         required = ["home_team", "away_team"]

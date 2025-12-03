@@ -29,8 +29,10 @@ RESULTS_DIR = BASE_RESULTS_DIR
 MODELS_DIR = BASE_MODELS_DIR
 
 def ensure_dirs():
+    """Ensure all required directories exist, including NN_Models subfolder."""
     for d in [BASE_DATA_DIR, BASE_MODELS_DIR, BASE_RESULTS_DIR, BASE_LOGS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
+    (BASE_MODELS_DIR / "NN_Models").mkdir(parents=True, exist_ok=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 def dump_config():
@@ -47,6 +49,26 @@ def dump_config():
         "MAX_KELLY_FRACTION": MAX_KELLY_FRACTION,
     }
 
+def validate_config():
+    """Check if critical files and directories exist, log warnings if missing."""
+    issues = []
+    if not BASE_DATA_DIR.exists():
+        issues.append(f"Missing data directory: {BASE_DATA_DIR}")
+    if not BASE_MODELS_DIR.exists():
+        issues.append(f"Missing models directory: {BASE_MODELS_DIR}")
+    if not (BASE_MODELS_DIR / "NN_Models").exists():
+        issues.append(f"Missing NN_Models subfolder: {BASE_MODELS_DIR / 'NN_Models'}")
+    if not ML_MODEL_FILE_H5.exists():
+        issues.append(f"Missing ML model file: {ML_MODEL_FILE_H5}")
+    if not OU_MODEL_FILE_H5.exists():
+        issues.append(f"Missing OU model file: {OU_MODEL_FILE_H5}")
+
+    if issues:
+        for issue in issues:
+            logging.warning(issue)
+    else:
+        logging.info("✅ Config validation passed — all critical files and directories exist.")
+
 # Logging setup
 logging.basicConfig(
     filename=BASE_LOGS_DIR / "pipeline.log",
@@ -57,6 +79,10 @@ logging.basicConfig(
 # Model artifacts
 MODEL_FILE_PKL = BASE_MODELS_DIR / "game_predictor.pkl"
 MODEL_FILE_H5 = BASE_MODELS_DIR / "game_predictor.h5"
+
+# Neural Network models (centralized paths)
+ML_MODEL_FILE_H5 = BASE_MODELS_DIR / "NN_Models" / "Trained-Model-ML.h5"
+OU_MODEL_FILE_H5 = BASE_MODELS_DIR / "NN_Models" / "Trained-Model-OU.h5"
 
 # Data files
 TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
