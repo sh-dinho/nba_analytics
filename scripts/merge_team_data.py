@@ -3,46 +3,59 @@
 # Purpose: Merge all season-level team tables into one master table (teamdata_all)
 # ============================================================
 
+import os
 import sqlite3
 import pandas as pd
+from core.config import DB_PATH
+from core.log_config import setup_logger
+from core.exceptions import PipelineError
 
-# Path to your TeamData database
-db_path = "../../Data/TeamData.sqlite"
+logger = setup_logger("merge_team_data")
 
-# Connect to DB
-con = sqlite3.connect(db_path)
-cursor = con.cursor()
 
-# Get list of all season tables
-cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'teamdata_%'")
-season_tables = [row[0] for row in cursor.fetchall()]
+def merge_team_data():
+    """Merge all season-level team tables into one master table (teamdata_all)."""
+    if not os.path.exists(DB_PATH):
+        raise PipelineError(f"Database not found at {DB_PATH}")
 
-print(f"Found {len(season_tables)} season tables: {season_tables}")
+    try:
+        con = sqlite3.connect(DB_PATH)
+        cursor = con.cursor()
 
-frames = []
-for table in season_tables:
-    df = pd.read_sql_query(f"SELECT * FROM {table}", con)
+        # Get list of all season tables
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'teamdata_%'")
+        season_tables = [row[0] for row in cursor.fetchall()]
+        logger.info(f"Found {len(season_tables)} season tables: {season_tables}")
 
-    # Normalize season name (strip prefixes/suffixes)
-    season_name = table.replace("teamdata_", "").replace("_new", "")
-    df["Season"] = season_name
+        if not season_tables:
+            raise PipelineError("No season tables found in database.")
 
-    frames.append(df)
-    print(f"{table}: {len(df)} rows")
+        # Merge all season tables into one DataFrame
+        frames = []
+        for table in season_tables:
+            try:
+                df = pd.read_sql_query(f"SELECT * FROM {table}", con)
+                df["Season"] = table.replace("teamdata_", "")
+                frames.append(df)
+                logger.info(f"Loaded {len(df)} rows from {table}")
+            except Exception as e:
+                logger.warning(f"Skipping {table} due to error: {e}")
 
-# Ensure consistent schema across all frames
-base_cols = frames[0].columns
-frames = [f.reindex(columns=base_cols, fill_value=None) for f in frames]
+        if not frames:
+            raise PipelineError("No valid season data frames to merge.")
 
-# Merge into one master DataFrame
-master_df = pd.concat(frames, ignore_index=True)
+        master_df = pd.concat(frames, ignore_index=True)
 
-# Save to master table
-master_df.to_sql("teamdata_all", con, if_exists="replace", index=False)
+        # Save to master table
+        master_df.to_sql("teamdata_all", con, if_exists="replace", index=False)
+        logger.info(f"✅ Merged {len(season_tables)} tables into teamdata_all with {len(master_df)} rows")
 
-# Add index for performance
-cursor.execute("CREATE INDEX IF NOT EXISTS idx_team_date ON teamdata_all (Date, TEAM_ID)")
+    except Exception as e:
+        logger.error(f"❌ Failed to merge team data: {e}")
+        raise PipelineError(f"Merge failed: {e}")
+    finally:
+        con.close()
 
-print(f"✅ Merged {len(season_tables)} tables into teamdata_all with {len(master_df)} rows")
 
-con.close()
+if __name__ == "__main__":
+    merge_team_data()

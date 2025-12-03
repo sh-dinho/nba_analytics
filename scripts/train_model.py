@@ -10,6 +10,9 @@ import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
+from core.config import MODELS_DIR, MODEL_FILE_PKL, MODEL_FILE_H5
+from core.log_config import setup_logger
+from core.exceptions import PipelineError
 
 # Optional imports for other models
 try:
@@ -24,12 +27,13 @@ try:
 except ImportError:
     tf = None
 
+logger = setup_logger("train_model")
 
 # Ensure models directory exists
-os.makedirs("models", exist_ok=True)
+os.makedirs(MODELS_DIR, exist_ok=True)
 
 
-def load_data():
+def load_data() -> pd.DataFrame:
     """
     Load training data. Replace with your actual dataset.
     For now, we use a synthetic example.
@@ -76,40 +80,46 @@ def main():
                         help="Type of model to train")
     args = parser.parse_args()
 
-    # Load data
-    data = load_data()
-    X = data[["feature1", "feature2"]]
-    y = data["label"]
+    try:
+        # Load data
+        data = load_data()
+        X = data[["feature1", "feature2"]]
+        y = data["label"]
 
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.3, random_state=42
-    )
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.3, random_state=42
+        )
 
-    # Train selected model
-    if args.model_type == "logistic":
-        model = train_logistic(X_train, y_train)
-        y_pred = model.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
-        print(f"✅ Logistic Regression Accuracy: {acc:.2f}")
-        joblib.dump(model, "models/game_predictor.pkl")
+        # Train selected model
+        if args.model_type == "logistic":
+            model = train_logistic(X_train, y_train)
+            y_pred = model.predict(X_test)
+            acc = accuracy_score(y_test, y_pred)
+            logger.info(f"✅ Logistic Regression Accuracy: {acc:.2f}")
+            joblib.dump(model, MODEL_FILE_PKL)
+            logger.info(f"📦 Logistic model saved to {MODEL_FILE_PKL}")
 
-    elif args.model_type == "xgb":
-        model = train_xgb(X_train, y_train)
-        y_pred = model.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
-        print(f"✅ XGBoost Accuracy: {acc:.2f}")
-        joblib.dump(model, "models/game_predictor.pkl")
+        elif args.model_type == "xgb":
+            model = train_xgb(X_train, y_train)
+            y_pred = model.predict(X_test)
+            acc = accuracy_score(y_test, y_pred)
+            logger.info(f"✅ XGBoost Accuracy: {acc:.2f}")
+            joblib.dump(model, MODEL_FILE_PKL)
+            logger.info(f"📦 XGBoost model saved to {MODEL_FILE_PKL}")
 
-    elif args.model_type == "nn":
-        model = train_nn(X_train, y_train, input_dim=X_train.shape[1])
-        _, acc = model.evaluate(X_test, y_test, verbose=0)
-        print(f"✅ Neural Network Accuracy: {acc:.2f}")
-        # Save NN model in HDF5 format
-        model.save("models/game_predictor.h5")
-        print("📦 NN model saved to models/game_predictor.h5")
+        elif args.model_type == "nn":
+            model = train_nn(X_train, y_train, input_dim=X_train.shape[1])
+            _, acc = model.evaluate(X_test, y_test, verbose=0)
+            logger.info(f"✅ Neural Network Accuracy: {acc:.2f}")
+            model.save(MODEL_FILE_H5)
+            logger.info(f"📦 NN model saved to {MODEL_FILE_H5}")
 
-    print("📦 Training complete. Model artifact saved.")
+        logger.info("📦 Training complete. Model artifact saved.")
+
+    except Exception as e:
+        logger.error(f"❌ Training failed: {e}")
+        raise PipelineError(f"Model training failed: {e}")
 
 
 if __name__ == "__main__":

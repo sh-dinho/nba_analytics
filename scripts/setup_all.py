@@ -1,4 +1,7 @@
+# ============================================================
 # File: scripts/setup_all.py
+# Purpose: Full NBA analytics pipeline orchestration with safe execution, logging, and notifications
+# ============================================================
 
 import os
 import json
@@ -15,6 +18,10 @@ from nba_analytics_core.notifications import send_telegram_message, send_ev_summ
 logger = setup_logger("setup_all")
 REQUIRED_PRED_COLS = {"game_id", "win_prob", "decimal_odds", "ev"}  # aligned with generate_today_predictions
 
+# Track duplicate files for cleanup
+duplicate_files = []
+
+
 # ----------------------
 # Safe execution helper
 # ----------------------
@@ -27,6 +34,29 @@ def _safe_run(step_name: str, func, *args, **kwargs):
     except Exception as e:
         logger.error(f"{step_name} failed: {e}")
         return None, False
+
+
+def _track_duplicates(file_path: str):
+    """Track duplicate files for later cleanup."""
+    if os.path.exists(file_path):
+        base, ext = os.path.splitext(file_path)
+        timestamped = f"{base}_{get_timestamp()}{ext}"
+        if os.path.exists(timestamped):
+            duplicate_files.append(timestamped)
+            logger.warning(f"⚠️ Duplicate file detected: {timestamped}")
+        return timestamped
+    return file_path
+
+
+def _cleanup_duplicates():
+    """Delete tracked duplicate files at the end of pipeline."""
+    for fpath in duplicate_files:
+        try:
+            os.remove(fpath)
+            logger.info(f"🗑️ Deleted duplicate file: {fpath}")
+        except Exception as e:
+            logger.error(f"❌ Failed to delete {fpath}: {e}")
+
 
 # ----------------------
 # Main pipeline
@@ -76,7 +106,7 @@ def main(skip_train=False, skip_fetch=True, notify=False, threshold=0.6):
     # Save predictions
     preds_file = "results/predictions.csv"
     preds.to_csv(preds_file, index=False)
-    preds_ts = preds_file.replace(".csv", f"_{get_timestamp()}.csv")
+    preds_ts = _track_duplicates(preds_file)
     preds.to_csv(preds_ts, index=False)
     logger.info(f"Predictions saved to {preds_file} ({len(preds)} rows)")
     logger.info(f"Timestamped backup saved to {preds_ts}")
@@ -100,7 +130,7 @@ def main(skip_train=False, skip_fetch=True, notify=False, threshold=0.6):
         summary.columns = ["side", "count"]
         summary_file = "results/picks_summary.csv"
         summary.to_csv(summary_file, index=False)
-        summary_ts = f"results/picks_summary_{get_timestamp()}.csv"
+        summary_ts = _track_duplicates(summary_file)
         summary.to_csv(summary_ts, index=False)
         logger.info(f"Picks summary saved to {summary_file}")
         logger.info(f"Timestamped backup saved to {summary_ts}")
@@ -135,7 +165,11 @@ def main(skip_train=False, skip_fetch=True, notify=False, threshold=0.6):
     logger.info(f"Pipeline metadata saved to {meta_path}")
     logger.info("Pipeline completed successfully")
 
+    # Final cleanup of duplicates
+    _cleanup_duplicates()
+
     return metrics
+
 
 # ----------------------
 # CLI entry
@@ -145,5 +179,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run full NBA analytics pipeline")
     parser.add_argument("--skip-train", action="store_true", help="Skip model training")
     parser.add_argument("--skip-fetch", action="store_true", help="Skip live data fetch")
+    parser.add_argument("--notify", action="store_true", help="Send Telegram notifications")
+    parser.add_argument("--threshold", type=float, default=0.6, help="Prediction threshold")
     args = parser.parse_args()
-    main(skip_train=args.skip_train, skip_fetch=args.skip_fetch)
+
+    main(skip_train=args.skip_train, skip_fetch=args.skip_fetch, notify=args.notify, threshold=args.threshold)

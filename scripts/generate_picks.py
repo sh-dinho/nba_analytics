@@ -1,23 +1,22 @@
+# ============================================================
 # File: scripts/generate_picks.py
+# Purpose: Generate picks from predictions using a simple EV strategy
+# ============================================================
 
-import pandas as pd
 import os
-import logging
+import pandas as pd
 import datetime
+from core.config import RESULTS_DIR, PICKS_LOG, TODAY_PREDICTIONS_FILE, PICKS_FILE
+from core.log_config import setup_logger
+from core.exceptions import DataError, PipelineError
+from core.utils import ensure_columns
 
-RESULTS_DIR = "results"
+logger = setup_logger("generate_picks")
+
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-PICKS_LOG = os.path.join(RESULTS_DIR, "picks_summary.csv")
 
-# Logging setup
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler()]
-)
-
-def main(preds_file=f"{RESULTS_DIR}/today_predictions.csv", out_file=f"{RESULTS_DIR}/picks.csv"):
+def main(preds_file: str = TODAY_PREDICTIONS_FILE, out_file: str = PICKS_FILE) -> pd.DataFrame:
     """
     Generate picks from predictions using a simple EV strategy.
     Adds a rolling summary log for tracking.
@@ -27,23 +26,30 @@ def main(preds_file=f"{RESULTS_DIR}/today_predictions.csv", out_file=f"{RESULTS_
 
     df = pd.read_csv(preds_file)
 
-    # Use win_prob column if present, else fallback
-    prob_col = "win_prob" if "win_prob" in df.columns else "pred_home_win_prob"
+    # Validate required columns
+    required_cols = {"pred_home_win_prob"}
+    if "win_prob" in df.columns:
+        required_cols = {"win_prob"}
+    try:
+        ensure_columns(df, required_cols, "predictions")
+    except ValueError as e:
+        raise DataError(str(e))
 
     # Simple strategy: pick HOME if prob > 0.5, else AWAY
+    prob_col = "win_prob" if "win_prob" in df.columns else "pred_home_win_prob"
     df["pick"] = df.apply(lambda row: "HOME" if row[prob_col] > 0.5 else "AWAY", axis=1)
 
     # Save picks
     df.to_csv(out_file, index=False)
-    logging.info(f"Picks saved to {out_file} | Total picks: {len(df)}")
+    logger.info(f"✅ Picks saved to {out_file} | Total picks: {len(df)}")
 
     # Summary stats
     home_picks = (df["pick"] == "HOME").sum()
     away_picks = (df["pick"] == "AWAY").sum()
     avg_ev = df["ev"].mean() if "ev" in df.columns else None
-
     avg_ev_str = f"{avg_ev:.3f}" if avg_ev is not None else "N/A"
-    logging.info(f"Picks summary: HOME={home_picks}, AWAY={away_picks}, Avg EV={avg_ev_str}")
+
+    logger.info(f"Picks summary: HOME={home_picks}, AWAY={away_picks}, Avg EV={avg_ev_str}")
 
     # Append to rolling log
     run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -55,13 +61,17 @@ def main(preds_file=f"{RESULTS_DIR}/today_predictions.csv", out_file=f"{RESULTS_
         "avg_ev": avg_ev
     }])
 
-    if os.path.exists(PICKS_LOG):
-        summary_entry.to_csv(PICKS_LOG, mode="a", header=False, index=False)
-    else:
-        summary_entry.to_csv(PICKS_LOG, index=False)
+    try:
+        if os.path.exists(PICKS_LOG):
+            summary_entry.to_csv(PICKS_LOG, mode="a", header=False, index=False)
+        else:
+            summary_entry.to_csv(PICKS_LOG, index=False)
+        logger.info(f"📈 Picks summary appended to {PICKS_LOG}")
+    except Exception as e:
+        raise PipelineError(f"Failed to append picks summary: {e}")
 
-    logging.info(f"Picks summary appended to {PICKS_LOG}")
     return df
+
 
 if __name__ == "__main__":
     main()

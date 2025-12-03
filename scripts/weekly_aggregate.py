@@ -7,6 +7,11 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import datetime
+from core.log_config import setup_logger
+from core.exceptions import PipelineError, DataError
+
+logger = setup_logger("weekly_aggregate")
+
 
 def main():
     model_types = ["logistic", "xgb", "nn"]
@@ -25,7 +30,16 @@ def main():
 
         for f in files:
             path = os.path.join("results", f)
-            df = pd.read_csv(path)
+            try:
+                df = pd.read_csv(path)
+            except Exception as e:
+                logger.warning(f"⚠️ Skipping {path}: {e}")
+                continue
+
+            if "won" not in df.columns or "bankroll" not in df.columns:
+                logger.warning(f"⚠️ Missing required columns in {path}. Skipping.")
+                continue
+
             total_bets += len(df)
             total_wins += sum(df["won"])
             final_bankrolls.append(df.iloc[-1]["bankroll"])
@@ -45,31 +59,47 @@ def main():
     if summaries:
         summary_df = pd.DataFrame(summaries)
         os.makedirs("results", exist_ok=True)
-        summary_df.to_csv("results/weekly_summary.csv", index=False)
-        print("📊 Weekly summary saved to results/weekly_summary.csv")
+        summary_path = "results/weekly_summary.csv"
+        summary_df.to_csv(summary_path, index=False)
+        logger.info(f"📊 Weekly summary saved to {summary_path}")
 
         # AI insight
-        best_model = summary_df.loc[summary_df["Avg_Final_Bankroll"].idxmax()]
-        if best_model["Win_Rate"] > 0.55:
-            ai_insight = f"🤖 Weekly AI Insight: {best_model['Model']} shows sustained edge with {best_model['Win_Rate']:.2%} win rate."
-        else:
-            ai_insight = f"🤖 Weekly AI Insight: No clear edge — performance varied across models."
+        try:
+            best_model = summary_df.loc[summary_df["Avg_Final_Bankroll"].idxmax()]
+            if best_model["Win_Rate"] > 0.55:
+                ai_insight = (
+                    f"🤖 Weekly AI Insight: {best_model['Model']} shows sustained edge "
+                    f"with {best_model['Win_Rate']:.2%} win rate."
+                )
+            else:
+                ai_insight = (
+                    "🤖 Weekly AI Insight: No clear edge — performance varied across models."
+                )
 
-        with open("results/weekly_ai_insight.txt", "w") as f:
-            f.write(ai_insight)
-        print(ai_insight)
+            insight_path = "results/weekly_ai_insight.txt"
+            with open(insight_path, "w") as f:
+                f.write(ai_insight)
+            logger.info(f"AI insight saved to {insight_path}")
+            logger.info(ai_insight)
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to generate AI insight: {e}")
 
         # Save chart
+        chart_path = "results/weekly_bankroll_trends.png"
         plt.title("Weekly Bankroll Trends by Model")
         plt.xlabel("Day Index")
         plt.ylabel("Final Bankroll")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig("results/weekly_bankroll_trends.png")
-        print("📈 Weekly bankroll chart saved to results/weekly_bankroll_trends.png")
+        try:
+            plt.savefig(chart_path)
+            logger.info(f"📈 Weekly bankroll chart saved to {chart_path}")
+        except Exception as e:
+            logger.error(f"❌ Failed to save chart: {e}")
     else:
-        print("❌ No weekly results found.")
+        logger.warning("❌ No weekly results found.")
+
 
 if __name__ == "__main__":
     main()

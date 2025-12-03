@@ -1,18 +1,25 @@
+# ============================================================
+# File: scripts/fetch_player_stats.py
+# Purpose: Fetch player stats or generate synthetic data for CI/testing
+# ============================================================
+
 import os
-import logging
 import pandas as pd
+from core.config import PLAYER_STATS_FILE, BASE_DATA_DIR
+from core.log_config import setup_logger
+from core.exceptions import PipelineError, DataError
+from core.utils import ensure_columns
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logger.addHandler(logging.StreamHandler())
+logger = setup_logger("fetch_player_stats")
 
-def main(use_synthetic: bool = False):
+
+def main(use_synthetic: bool = False) -> None:
     """
     Fetch player stats. If use_synthetic=True, generate synthetic data
     for CI/CD or testing environments.
+    Saves to PLAYER_STATS_FILE.
     """
-    os.makedirs("data", exist_ok=True)
-    out_file = "data/player_stats.csv"
+    os.makedirs(BASE_DATA_DIR, exist_ok=True)
 
     if use_synthetic:
         logger.info("⚙️ Using synthetic player stats for CI/testing...")
@@ -26,8 +33,12 @@ def main(use_synthetic: bool = False):
             "AST": [5, 7],
             "REB": [4, 6],
         })
-        df.to_csv(out_file, index=False)
-        logger.info(f"✅ Synthetic player stats saved to {out_file}")
+
+        # Validate required columns
+        ensure_columns(df, {"PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB"}, "synthetic player stats")
+
+        df.to_csv(PLAYER_STATS_FILE, index=False)
+        logger.info(f"✅ Synthetic player stats saved to {PLAYER_STATS_FILE}")
         return
 
     # --- Real scraping logic (example placeholder) ---
@@ -44,12 +55,16 @@ def main(use_synthetic: bool = False):
             "AST": [7.2, 6.5],
             "REB": [8.1, 5.2],
         })
-        df.to_csv(out_file, index=False)
-        logger.info(f"✅ Real player stats saved to {out_file}")
+
+        ensure_columns(df, {"PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB"}, "real player stats")
+
+        df.to_csv(PLAYER_STATS_FILE, index=False)
+        logger.info(f"✅ Real player stats saved to {PLAYER_STATS_FILE}")
     except Exception as e:
         logger.error(f"❌ Failed to fetch real stats: {e}")
         logger.info("Falling back to synthetic data...")
         main(use_synthetic=True)
+
 
 if __name__ == "__main__":
     import argparse

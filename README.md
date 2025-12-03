@@ -1,54 +1,88 @@
-# 🏀 NBA Analytics Pipeline
-
-A fully automated NBA analytics pipeline that fetches team stats, merges data, runs predictions, simulates bankroll with EV + Kelly criterion, and sends daily reports to Telegram.
-
----
-
-## 🚀 Features
-- **Data ingestion**: Fetches NBA team stats from [stats.nba.com](https://stats.nba.com) using season ranges in `config.toml`.
-- **Database merge**: Consolidates season CSVs into `teamdata_all.sqlite`.
-- **Prediction models**: Logistic regression, neural networks, and XGBoost.
-- **Bankroll simulation**: Calculates Expected Value (EV), Kelly bet sizes, and bankroll trajectory.
-- **Telegram reporting**: Sends formatted daily reports with emojis (EV 🟢🔴, bankroll 📈📉).
-- **Automation**: One command (`scripts/run_pipeline.py`) or scheduled GitHub Action runs the entire pipeline.
-- **Archiving & logging**: Season CSVs archived automatically, logs written to `logs/pipeline.log`.
+# NBA Analytics Pipeline Roadmap
+A structured plan for short-term and long-term improvements across the pipeline.
 
 ---
 
-## 📂 Project Structure
-nba_analytics/ 
-app/ prediction_pipeline.py   # Main prediction pipeline scripts/ fetch_season_data.py  # Fetch season stats merge_team_data       # Merge CSVs into SQLite run_pipeline.py        
-# Orchestration script telegram_report.py       
-# Send daily report to Telegram sbr_odds_provider.py     
-# Odds provider stub config.toml               
-# Season configuration results/                   
-# Predictions + bankroll CSVs data/seasons/              
-# Raw season CSVs archive/seasons/           
-# Archived CSVs logs/pipeline.log        
-# Rotating pipeline logs
+## 🎯 Short-Term (Next 1–2 Sprints)
 
+### Logging & Error Handling
+- Standardize logging across all scripts (`setup_all.py`, `run_daily_pipeline_cli.py`, `run_pipeline.py`, `cli/run_daily.py`).
+- Add file logging (rotating logs) everywhere, not just in `run_pipeline.py`.
+- Replace generic `Exception` with custom exceptions (`PipelineError`, `DataError`).
+- Add retry logic for subprocess calls (e.g., API fetch failures).
+
+### Configuration & Paths
+- Merge `core/config.py` and `core/paths.py` to avoid duplication.
+- Use `pathlib.Path` for cleaner path handling.
+- Move hardcoded values (thresholds, bankroll initial value) into config constants.
+
+### Data & Features
+- Validate feature columns before training/prediction (`ensure_columns`).
+- Add unit tests for `feature_builder.py` outputs.
+- Ensure `logger` is properly imported in `feature_builder.py`.
+
+### Modeling & Predictions
+- In `predict.py`, select only numeric feature columns before calling `predict_proba`.
+- Save predictions consistently to `results/predictions.csv`.
+- Add error handling if model doesn’t support `predict_proba`.
+
+### CI/CD Workflow
+- Fix artifact upload logic (already implemented).
+- Add logs upload for debugging.
+- Upload aggregated summary/chart artifacts.
+- Add conditional Telegram notification handling.
+
+---
+
+## 🚀 Medium-Term (Next 2–3 Months)
+
+### Data & Features
+- Replace synthetic matchups with actual schedule data.
+- Replace random target simulation (`home_win`) with real game outcomes.
+- Add richer features (shooting %, turnovers, defensive stats).
+
+### Modeling
+- Add support for multiple model types (XGBoost, TensorFlow, scikit-learn).
+- Add probability calibration (Platt scaling, isotonic regression).
+- Ensure reproducibility with random seed control.
+
+### Pipeline Scripts
+- Export training metrics to CSV/JSON for tracking.
+- Add CLI option for initial bankroll.
+- Add summary export (metrics JSON/CSV) alongside picks.
+
+### Odds Cache
+- Add timestamp column when saving odds.
+- Implement cache expiration (refresh if older than X hours).
+- Switch to Parquet for faster reads/writes.
 
 ---
 
-## ⚙️ Setup
+## 🌐 Long-Term (3–6 Months)
 
-1. **Clone repo**
-   ```bash
-   git clone https://github.com/yourname/nba_analytics.git
-   cd nba_analytics
-   pip install -r requirements.txt
-- Set environment variables
-- TELEGRAM_TOKEN → your bot token
-- TELEGRAM_CHAT_ID → your chat/group ID
-Run pipeline manually
-python scripts/run_pipeline.py
+### Notifications & Reporting
+- Standardize Telegram notifications across all scripts.
+- Add email or dashboard integration for daily summaries.
+- Export bankroll metrics to monthly summary file (`monthly_summary.csv`).
 
+### Aggregation & Dashboard
+- Build a web dashboard for visualizing bankroll trajectory, win rate, ROI.
+- Automate monthly aggregation with charts.
+
+### Testing & CI/CD
+- Add unit tests for:
+  - Feature builder
+  - Prediction function
+  - Backtest simulation
+  - Odds cache
+- Integrate with CI/CD pipeline (GitHub Actions) for automated testing.
+- Validate environment setup (DB, directories) before pipeline runs.
 
 ---
 
-## ✅ Outcome
-- **Workflow**: CI/CD automation runs daily, sends Telegram report.
-- **README**: Clear documentation for setup, usage, automation, and outputs.
-- Everything is now **self‑contained, automated, and documented**.
+## ✅ Summary
+- **Short-term**: Fix logging, error handling, config duplication, artifact uploads, and feature validation.  
+- **Medium-term**: Replace synthetic data, expand features, improve modeling, and enhance odds cache.  
+- **Long-term**: Build dashboards, expand notifications, and strengthen testing/CI/CD.  
 
----
+This roadmap ensures the pipeline evolves from a functional prototype into a robust, production-ready system.
