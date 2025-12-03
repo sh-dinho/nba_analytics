@@ -59,6 +59,8 @@ def dump_config():
         "ARCHIVE_RETENTION_DAYS": ARCHIVE_RETENTION_DAYS,
         "MAX_DASHBOARD_IMAGES": MAX_DASHBOARD_IMAGES,
         "MAX_LOG_FILES": MAX_LOG_FILES,
+        "USE_ROLLING_AVG": USE_ROLLING_AVG,
+        "ROLLING_WINDOW": ROLLING_WINDOW,
     }
 
 def validate_config():
@@ -84,6 +86,10 @@ def validate_config():
             logging.warning(issue)
     else:
         logging.info("✅ Config validation passed — all critical files and directories exist.")
+
+    # Explicitly log which averaging mode is active
+    mode = "rolling" if USE_ROLLING_AVG else "season"
+    logging.info(f"📊 Feature building mode: {mode} averages (window={ROLLING_WINDOW if USE_ROLLING_AVG else 'N/A'})")
 
 # Logging setup
 logging.basicConfig(
@@ -131,3 +137,7 @@ CLEANUP_MODE = os.getenv("CLEANUP_MODE", "archive").lower()  # "delete" or "arch
 ARCHIVE_RETENTION_DAYS = int(os.getenv("ARCHIVE_RETENTION_DAYS", "180"))  # default 6 months
 MAX_DASHBOARD_IMAGES = int(os.getenv("MAX_DASHBOARD_IMAGES", "10"))
 MAX_LOG_FILES = int(os.getenv("MAX_LOG_FILES", "20"))
+
+# Feature building settings
+USE_ROLLING_AVG = os.getenv("USE_ROLLING_AVG", "true").lower() in ("1", "true", "yes")
+ROLLING_WINDOW = int(os.getenv("ROLLING_WINDOW", "5"))
