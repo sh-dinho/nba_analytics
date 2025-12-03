@@ -3,6 +3,7 @@
 # Data Handling
 pandas
 numpy
+datasets   # Hugging Face datasets library
 
 # API/Config
 requests

@@ -11,7 +11,7 @@ def main():
     model_types = ["logistic", "xgb", "nn"]
     summaries = []
 
-    # Prepare plot
+    # Prepare plot for bankroll trajectories
     plt.figure(figsize=(10, 6))
 
     for m in model_types:
@@ -21,24 +21,39 @@ def main():
             continue
 
         df = pd.read_csv(path)
-        final_bankroll = df.iloc[-1]["bankroll"]
+        df = df.rename(columns=str.lower)  # normalize headers
+
+        if df.empty:
+            print(f"⚠️ Skipping {m}, file is empty.")
+            continue
+
+        # Safe extraction of metrics
+        final_bankroll = df["bankroll"].iloc[-1] if "bankroll" in df else 0
         total_bets = len(df)
-        wins = sum(df["won"])
+        wins = df["won"].sum() if "won" in df else 0
         win_rate = wins / total_bets if total_bets > 0 else 0
-        avg_ev = df["EV"].mean()
-        avg_stake = df["stake"].mean()
+        avg_ev = df["ev"].mean() if "ev" in df else 0
+        avg_stake = df["stake"].mean() if "stake" in df else 0
 
         summaries.append({
             "Model": m,
-            "Final_Bankroll": final_bankroll,
+            "Final_Bankroll": round(final_bankroll, 2),
             "Total_Bets": total_bets,
-            "Win_Rate": win_rate,
-            "Avg_EV": avg_ev,
-            "Avg_Stake": avg_stake
+            "Win_Rate": round(win_rate, 3),
+            "Avg_EV": round(avg_ev, 3),
+            "Avg_Stake": round(avg_stake, 2)
         })
 
         # Plot bankroll trajectory
-        plt.plot(df.index, df["bankroll"], label=m)
+        if "bankroll" in df:
+            plt.plot(df.index, df["bankroll"], label=f"{m} bankroll")
+
+        # Optional: overlay cumulative win rate trend
+        if "won" in df:
+            cum_wins = df["won"].cumsum()
+            cum_win_rate = cum_wins / (df.index + 1)
+            plt.plot(df.index, cum_win_rate * final_bankroll, linestyle="--", alpha=0.6,
+                     label=f"{m} win-rate trend (scaled)")
 
     if summaries:
         summary_df = pd.DataFrame(summaries)
@@ -48,8 +63,8 @@ def main():
 
         # Save chart
         plt.title("Bankroll Trajectories by Model")
-        plt.xlabel("Bet Index")
-        plt.ylabel("Bankroll")
+        plt.xlabel("Bet Number")
+        plt.ylabel("Bankroll ($)")
         plt.legend()
         plt.grid(True)
         plt.tight_layout()

@@ -8,18 +8,17 @@ import os
 import subprocess
 import datetime
 import pandas as pd
-from core.config import BASE_DATA_DIR, MODELS_DIR, RESULTS_DIR, SUMMARY_FILE
+from core.config import ensure_dirs, BASE_DATA_DIR, MODELS_DIR, RESULTS_DIR, SUMMARY_FILE
 from core.log_config import setup_logger
 from core.exceptions import PipelineError
 
-# Ensure directories exist
-os.makedirs(BASE_DATA_DIR, exist_ok=True)
-os.makedirs(MODELS_DIR, exist_ok=True)
-os.makedirs(RESULTS_DIR, exist_ok=True)
+# Ensure directories exist using centralized config
+ensure_dirs()
 
 today = datetime.datetime.now().strftime("%Y%m%d")
 LOG_FILE = os.path.join(RESULTS_DIR, f"pipeline_run_{today}.log")
 
+# Configure logger (optionally add file handler if desired)
 logger = setup_logger("pipeline")
 
 
@@ -40,7 +39,12 @@ def ensure_player_stats(season="2025-26", force_refresh=False):
     if force_refresh:
         args.append("--force_refresh")
     logger.info(f"Ensuring player stats for season {season} (force_refresh={force_refresh})...")
-    subprocess.run(args, check=True)
+    subprocess.run(args, check=True, capture_output=True, text=True)
+
+
+def format_metric(name, value, fmt=".4f"):
+    """Helper to safely format metrics that may be None."""
+    return f"{name}={format(value, fmt)}" if value is not None else f"{name}=N/A"
 
 
 def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
@@ -66,20 +70,20 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
                 "python", "-m", "scripts.build_features",
                 "--rounds", str(rounds),
                 "--training"
-            ], check=True)
+            ], check=True, capture_output=True, text=True)
         else:
             logger.info("Building new game features (no labels)...")
             subprocess.run([
                 "python", "-m", "scripts.build_features",
                 "--rounds", str(rounds)
-            ], check=True)
+            ], check=True, capture_output=True, text=True)
 
         # Step 3: Train model
         subprocess.run([
             "python", "-m", "scripts.train_model",
             "--target", target,
             "--model_type", model_type
-        ], check=True)
+        ], check=True, capture_output=True, text=True)
 
         # Step 4: Generate predictions
         subprocess.run([
@@ -87,14 +91,14 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
             "--threshold", str(threshold),
             "--strategy", strategy,
             "--max_fraction", str(max_fraction)
-        ], check=True)
+        ], check=True, capture_output=True, text=True)
 
         # Step 5: Generate picks
-        subprocess.run(["python", "-m", "scripts.generate_picks"], check=True)
+        subprocess.run(["python", "-m", "scripts.generate_picks"], check=True, capture_output=True, text=True)
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"❌ Pipeline step failed: {e}")
-        raise PipelineError(f"Pipeline execution failed: {e}")
+        logger.error(f"❌ Pipeline step failed: {e.stderr}")
+        raise PipelineError(f"Pipeline execution failed: {e.stderr}")
 
     # Step 6: Collect summaries
     try:
@@ -131,19 +135,21 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
     except Exception:
         home_picks, away_picks, avg_ev, total_stake, expected_profit = 0, 0, None, 0.0, 0.0
 
-    # Log summaries
+    # Log summaries with safe formatting
     feature_summary = f"FEATURE SUMMARY: Games built={n_games}"
-    training_summary = (f"TRAINING SUMMARY: Accuracy={acc:.4f if acc is not None else 'N/A'} "
-                        f"LogLoss={logloss:.4f if logloss is not None else 'N/A'} "
-                        f"Brier={brier:.4f if brier is not None else 'N/A'} "
-                        f"AUC={auc:.4f if auc is not None else 'N/A'} "
-                        f"RMSE={rmse:.4f if rmse is not None else 'N/A'}")
+    training_summary = "TRAINING SUMMARY: " + " ".join([
+        format_metric("Accuracy", acc),
+        format_metric("LogLoss", logloss),
+        format_metric("Brier", brier),
+        format_metric("AUC", auc),
+        format_metric("RMSE", rmse)
+    ])
     prediction_summary = (f"PREDICTION SUMMARY: Predictions={n_preds}, Bets recommended={n_bets}, "
                           f"Avg win_prob={avg_prob:.3f}, Threshold={threshold}, Strategy={strategy}, "
                           f"MaxFraction={max_fraction}, Target={target}, ModelType={model_type}")
     picks_summary = (f"PICKS SUMMARY: HOME={home_picks}, AWAY={away_picks}, "
-                     f"Avg EV={avg_ev:.3f if avg_ev is not None else 'N/A'}, "
-                     f"Total Stake={total_stake:.2f}, Expected Profit={expected_profit:.2f}")
+                     f"Avg EV={avg_ev:.3f}" if avg_ev is not None else "Avg EV=N/A" +
+                     f", Total Stake={total_stake:.2f}, Expected Profit={expected_profit:.2f}")
 
     logger.info(feature_summary)
     logger.info(training_summary)
@@ -200,7 +206,11 @@ if __name__ == "__main__":
                         help="Model type: logistic, rf, linear")
     args = parser.parse_args()
 
-    main(threshold=args.threshold, strategy=args.strategy,
-         max_fraction=args.max_fraction, season=args.season,
-         force_refresh=args.force_refresh, rounds=args.rounds,
-         target=args.target, model_type=args.model_type)
+    main(threshold=args.threshold,
+         strategy=args.strategy,
+         max_fraction=args.max_fraction,
+         season=args.season,
+         force_refresh=args.force_refresh,
+         rounds=args.rounds,
+         target=args.target,
+         model_type=args.model_type)
