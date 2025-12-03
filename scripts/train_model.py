@@ -1,28 +1,31 @@
 # ============================================================
 # File: scripts/train_model.py
-# Purpose: Train predictive models on NBA features
+# Purpose: Train predictive models on NBA features with optional hyperparameter tuning
 # ============================================================
 
 import argparse
 import os
 import pandas as pd
 import joblib
-from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.model_selection import train_test_split, cross_val_score, RandomizedSearchCV
 from sklearn.metrics import (
     accuracy_score, log_loss, roc_auc_score, brier_score_loss,
     mean_squared_error
 )
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from xgboost import XGBClassifier
 from core.config import TRAINING_FEATURES_FILE, MODEL_FILE_PKL, RESULTS_DIR
 from core.log_config import setup_logger
 from core.exceptions import DataError
 
 logger = setup_logger("train_model")
 
-def main(target: str = "label", model_type: str = "logistic"):
+
+def main(target: str = "label", model_type: str = "logistic", tune: bool = False):
     if not os.path.exists(TRAINING_FEATURES_FILE):
         raise DataError(f"Training features file not found: {TRAINING_FEATURES_FILE}")
 
@@ -40,8 +43,24 @@ def main(target: str = "label", model_type: str = "logistic"):
         if c not in ["game_id", "home_team", "away_team",
                      "label", "margin", "overtime", "outcome_category"]
     ]
-    X = df[feature_cols].select_dtypes(include=["number"])
+    X = df[feature_cols]
     y = df[target]
+
+    # Encode target if necessary
+    if target == "label" and y.dtype == "object":
+        y = y.map({"HOME": 1, "AWAY": 0})
+
+    # For XGBoost, ensure all features are numeric
+    if model_type == "xgb":
+        X = pd.get_dummies(X, drop_first=True)
+        X = X.fillna(0)
+
+    if X.shape[1] == 0:
+        raise DataError("No usable features after preprocessing.")
+
+    # Split features into numeric and categorical (for non-XGB models)
+    numeric_features = X.select_dtypes(include=["number"]).columns
+    categorical_features = X.select_dtypes(exclude=["number"]).columns
 
     # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
@@ -56,15 +75,75 @@ def main(target: str = "label", model_type: str = "logistic"):
     else:  # default binary label
         if model_type == "rf":
             model = RandomForestClassifier(n_estimators=200, random_state=42)
+        elif model_type == "xgb":
+            base_model = XGBClassifier(
+                n_estimators=1000,
+                learning_rate=0.05,
+                max_depth=5,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+                use_label_encoder=False,
+                eval_metric="logloss"
+            )
+
+            if tune:
+                # Hyperparameter search space
+                param_dist = {
+                    "n_estimators": [200, 500, 1000],
+                    "learning_rate": [0.01, 0.05, 0.1],
+                    "max_depth": [3, 5, 7],
+                    "subsample": [0.6, 0.8, 1.0],
+                    "colsample_bytree": [0.6, 0.8, 1.0]
+                }
+
+                search = RandomizedSearchCV(
+                    base_model,
+                    param_distributions=param_dist,
+                    n_iter=10,
+                    scoring="roc_auc",
+                    cv=3,
+                    verbose=1,
+                    random_state=42,
+                    n_jobs=-1
+                )
+
+                # Run search WITHOUT early stopping
+                search.fit(X_train, y_train)
+
+                # Get best model and refit WITH early stopping
+                best_model = search.best_estimator_
+                logger.info(f"✅ Best XGBoost params: {search.best_params_}")
+
+                best_model.fit(
+                    X_train, y_train,
+                    eval_set=[(X_test, y_test)],
+                    early_stopping_rounds=50,
+                    verbose=False
+                )
+                model = best_model
+            else:
+                # Normal fit with early stopping
+                base_model.fit(
+                    X_train, y_train,
+                    eval_set=[(X_test, y_test)],
+                    early_stopping_rounds=50,
+                    verbose=False
+                )
+                model = base_model
         else:
-            # Logistic regression with scaling pipeline
+            # Logistic regression with preprocessing
+            preprocessor = ColumnTransformer(
+                transformers=[
+                    ("num", StandardScaler(), numeric_features),
+                    ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features)
+                ]
+            )
             model = Pipeline([
-                ("scaler", StandardScaler()),
+                ("preprocessor", preprocessor),
                 ("logreg", LogisticRegression(max_iter=1000))
             ])
-
-    # Fit model
-    model.fit(X_train, y_train)
+            model.fit(X_train, y_train)
 
     # Evaluate
     metrics = {}
@@ -135,12 +214,15 @@ def main(target: str = "label", model_type: str = "logistic"):
         coef_df.to_csv(coef_file, index=False)
         logger.info(f"📉 Logistic regression coefficients saved to {coef_file}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train NBA prediction model")
     parser.add_argument("--target", type=str, default="label",
                         help="Target column: label, margin, outcome_category")
     parser.add_argument("--model_type", type=str, default="logistic",
-                        help="Model type: logistic, rf, linear")
+                        help="Model type: logistic, rf, xgb, linear")
+    parser.add_argument("--tune", action="store_true",
+                        help="Enable hyperparameter tuning for XGBoost")
     args = parser.parse_args()
 
-    main(target=args.target, model_type=args.model_type)
+    main(target=args.target, model_type=args.model_type, tune=args.tune)
