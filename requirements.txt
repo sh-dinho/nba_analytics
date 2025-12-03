@@ -1,20 +1,32 @@
-# File: requirements.txt
 # Core dependencies for the NBA analytics pipeline
 
 # Data Handling
 pandas
 numpy
+
 # API/Config
 requests
 toml
+python-dotenv
+
 # Model Artifacts
 joblib
+
 # Machine Learning
 scikit-learn
 xgboost
+lightgbm
+
 # Neural Network (NN) model
 tensorflow
+
 # Plotting
 matplotlib
+seaborn
+
 # Console Output
 colorama
+rich
+
+# Testing
+pytest
