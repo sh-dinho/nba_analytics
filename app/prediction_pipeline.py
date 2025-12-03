@@ -42,6 +42,36 @@ def load_model(model_type: str):
     else:
         raise ValueError(f"Unsupported model_type: {model_type}")
 
+def generate_today_predictions(threshold: float = 0.6,
+                               strategy: str = "kelly",
+                               max_fraction: float = 0.05,
+                               model_type: str = "logistic"):
+    """
+    Wrapper to run today's prediction pipeline programmatically.
+    """
+    # Load trained model if needed
+    # model = load_model(model_type)
+
+    if not os.path.exists(PREDICTIONS_FILE):
+        raise FileNotFoundError(f"{PREDICTIONS_FILE} not found. Run generate_today_predictions.py first.")
+
+    df = pd.read_csv(PREDICTIONS_FILE)
+
+    bankroll_df, metrics = run_backtest(
+        df,
+        initial=1000.0,
+        strategy=strategy,
+        max_fraction=max_fraction
+    )
+
+    bankroll_file = BANKROLL_FILE_TEMPLATE.format(model_type=model_type)
+    bankroll_df.to_csv(bankroll_file, index=False)
+
+    print(f"✅ Bankroll trajectory saved to {bankroll_file}")
+    print(f"📊 Final Bankroll: ${metrics['final_bankroll']:.2f} | ROI: {metrics['roi']:.2%} | Wins: {metrics['wins']}/{metrics['total_bets']}")
+
+    return bankroll_df, metrics
+
 def main():
     # ... (parser setup remains the same) ...
     parser = argparse.ArgumentParser()

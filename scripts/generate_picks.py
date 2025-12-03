@@ -3,25 +3,28 @@
 # Purpose: Generate picks from predictions using a simple EV strategy
 # ============================================================
 
-import os
 import pandas as pd
 import datetime
-from core.config import RESULTS_DIR, PICKS_LOG, TODAY_PREDICTIONS_FILE, PICKS_FILE
 from core.log_config import setup_logger
 from core.exceptions import DataError, PipelineError
 from core.utils import ensure_columns
+from core.config import BASE_RESULTS_DIR, PICKS_LOG, TODAY_PREDICTIONS_FILE, PICKS_FILE
 
 logger = setup_logger("generate_picks")
 
-os.makedirs(RESULTS_DIR, exist_ok=True)
+# Ensure results directory exists
+BASE_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def main(preds_file: str = TODAY_PREDICTIONS_FILE, out_file: str = PICKS_FILE) -> pd.DataFrame:
+def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame:
     """
     Generate picks from predictions using a simple EV strategy.
     Adds a rolling summary log for tracking.
     """
-    if not os.path.exists(preds_file):
+    preds_file = Path(preds_file)
+    out_file = Path(out_file)
+
+    if not preds_file.exists():
         raise FileNotFoundError(f"{preds_file} not found.")
 
     df = pd.read_csv(preds_file)
@@ -62,7 +65,7 @@ def main(preds_file: str = TODAY_PREDICTIONS_FILE, out_file: str = PICKS_FILE) -
     }])
 
     try:
-        if os.path.exists(PICKS_LOG):
+        if PICKS_LOG.exists():
             summary_entry.to_csv(PICKS_LOG, mode="a", header=False, index=False)
         else:
             summary_entry.to_csv(PICKS_LOG, index=False)
@@ -74,4 +77,5 @@ def main(preds_file: str = TODAY_PREDICTIONS_FILE, out_file: str = PICKS_FILE) -
 
 
 if __name__ == "__main__":
+    from pathlib import Path
     main()

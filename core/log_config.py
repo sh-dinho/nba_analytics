@@ -3,11 +3,16 @@
 # Purpose: Standardized logging with console + rotating file
 # ============================================================
 
+import os
 import logging
 from logging.handlers import RotatingFileHandler
-from core.config import BASE_LOGS_DIR
 
-def setup_logger(name: str, level=logging.INFO):
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOG_DIR = os.path.join(BASE_DIR, "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+
+def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
     """
     Create a logger with both console and rotating file handlers.
     Ensures consistent logging across all pipeline scripts.
@@ -16,19 +21,18 @@ def setup_logger(name: str, level=logging.INFO):
     logger.setLevel(level)
 
     if not logger.handlers:
-        formatter = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s")
+        # File handler
+        log_file = os.path.join(LOG_DIR, f"{name}.log")
+        fh = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=5)
+        fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
+        fh.setLevel(level)
 
         # Console handler
         ch = logging.StreamHandler()
+        ch.setFormatter(logging.Formatter("%(name)s - %(levelname)s - %(message)s"))
         ch.setLevel(level)
-        ch.setFormatter(formatter)
-        logger.addHandler(ch)
 
-        # Rotating file handler
-        log_file = BASE_LOGS_DIR / f"{name}.log"
-        fh = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=5)
-        fh.setLevel(level)
-        fh.setFormatter(formatter)
         logger.addHandler(fh)
+        logger.addHandler(ch)
 
     return logger

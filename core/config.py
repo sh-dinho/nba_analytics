@@ -6,10 +6,7 @@
 from pathlib import Path
 import os
 
-# Environment detection
 ENV = os.getenv("PIPELINE_ENV", "local")
-
-# Project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 if ENV == "ci":
@@ -26,6 +23,10 @@ else:
     BASE_LOGS_DIR = BASE_DIR / "logs"
     DB_PATH = BASE_DIR / "Data" / "TeamData.sqlite"
 
+# Backward compatibility aliases
+RESULTS_DIR = BASE_RESULTS_DIR
+MODELS_DIR = BASE_MODELS_DIR
+
 def ensure_dirs():
     for d in [BASE_DATA_DIR, BASE_MODELS_DIR, BASE_RESULTS_DIR, BASE_LOGS_DIR]:
         d.mkdir(parents=True, exist_ok=True)
@@ -37,10 +38,15 @@ MODEL_FILE_H5 = BASE_MODELS_DIR / "game_predictor.h5"
 
 # Data files
 TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
+PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
+GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
 
 # Results files
 PREDICTIONS_FILE = BASE_RESULTS_DIR / "today_predictions.csv"
 BANKROLL_FILE_TEMPLATE = BASE_RESULTS_DIR / "picks_bankroll_{model_type}.csv"
+TODAY_PREDICTIONS_FILE = BASE_RESULTS_DIR / "predictions.csv"
+PICKS_FILE = BASE_RESULTS_DIR / "picks.csv"
+PICKS_LOG = BASE_LOGS_DIR / "picks.log"
 
 # General settings
 SEED = 42

@@ -7,22 +7,43 @@ from typing import List, Dict
 from core.log_config import setup_logger
 from core.exceptions import DataError
 import os
+import datetime
+import pandas as pd
+
 logger = setup_logger("utils")
 
+# -----------------------------
+# General Helpers
+# -----------------------------
+
+def get_timestamp() -> str:
+    """Return current timestamp string for filenames/logs."""
+    return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+def ensure_columns(df: pd.DataFrame, required_cols: list) -> pd.DataFrame:
+    """Ensure DataFrame has required columns, add if missing."""
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = None
+    return df
+
+def append_pipeline_summary(summary_file: str, metrics: dict):
+    """Append metrics dict to pipeline summary CSV."""
+    row = pd.DataFrame([metrics])
+    if os.path.exists(summary_file):
+        df = pd.read_csv(summary_file)
+        df = pd.concat([df, row], ignore_index=True)
+    else:
+        df = row
+    df.to_csv(summary_file, index=False)
+    logger.info(f"📊 Pipeline summary updated at {summary_file}")
+
+# -----------------------------
+# Betting Math
+# -----------------------------
 
 def expected_value(prob_win: float, odds: float, stake: float = 1.0) -> float:
-    """
-    Calculate expected value (EV) of a bet.
-    EV = (prob_win * profit) - (prob_loss * stake)
-
-    Args:
-        prob_win (float): Probability of winning (0–1).
-        odds (float): Decimal odds.
-        stake (float): Stake size.
-
-    Returns:
-        float: Expected value of the bet.
-    """
+    """Calculate expected value (EV) of a bet."""
     if prob_win < 0 or prob_win > 1:
         raise DataError("Probability must be between 0 and 1")
     if odds <= 0:
@@ -34,19 +55,8 @@ def expected_value(prob_win: float, odds: float, stake: float = 1.0) -> float:
     logger.debug(f"EV calculated: prob_win={prob_win}, odds={odds}, stake={stake}, EV={ev:.3f}")
     return ev
 
-
 def kelly_fraction(prob_win: float, odds: float) -> float:
-    """
-    Calculate Kelly fraction for bet sizing.
-    f* = (bp - q) / b
-
-    Args:
-        prob_win (float): Probability of winning (0–1).
-        odds (float): Decimal odds.
-
-    Returns:
-        float: Kelly fraction (0–1).
-    """
+    """Calculate Kelly fraction for bet sizing."""
     if prob_win < 0 or prob_win > 1:
         raise DataError("Probability must be between 0 and 1")
     if odds <= 1:
@@ -56,55 +66,34 @@ def kelly_fraction(prob_win: float, odds: float) -> float:
     p = prob_win
     q = 1 - p
     kelly = (b * p - q) / b
-    fraction = max(0, kelly)  # never negative
+    fraction = max(0, kelly)
     logger.debug(f"Kelly fraction: prob_win={prob_win}, odds={odds}, fraction={fraction:.4f}")
     return fraction
 
-
 def update_bankroll(bankroll: float, stake: float, won: bool, odds: float) -> float:
-    """
-    Update bankroll after a bet.
-
-    Args:
-        bankroll (float): Current bankroll.
-        stake (float): Stake size.
-        won (bool): Outcome of bet.
-        odds (float): Decimal odds.
-
-    Returns:
-        float: Updated bankroll.
-    """
+    """Update bankroll after a bet."""
     if won:
         profit = (odds * stake) - stake
         new_bankroll = bankroll + profit
     else:
         new_bankroll = bankroll - stake
-
     logger.debug(f"Bankroll updated: stake={stake}, won={won}, odds={odds}, new_bankroll={new_bankroll:.2f}")
     return new_bankroll
 
-
 def implied_probability(odds: float) -> float:
-    """
-    Convert decimal odds to implied probability.
-
-    Args:
-        odds (float): Decimal odds.
-
-    Returns:
-        float: Implied probability.
-    """
+    """Convert decimal odds to implied probability."""
     if odds <= 0:
         raise DataError("Odds must be positive")
     prob = 1 / odds
     logger.debug(f"Implied probability: odds={odds}, prob={prob:.3f}")
     return prob
 
+# -----------------------------
+# Simulation Class
+# -----------------------------
 
 class Simulation:
-    """
-    Run bankroll simulations across multiple bets.
-    """
+    """Run bankroll simulations across multiple bets."""
 
     def __init__(self, initial_bankroll: float = 1000.0):
         self.bankroll = initial_bankroll
@@ -113,25 +102,13 @@ class Simulation:
     def place_bet(self, prob_win: float, odds: float,
                   strategy: str = "kelly", max_fraction: float = 0.05,
                   outcome: bool = None):
-        """
-        Place a bet using a given strategy.
-
-        Args:
-            prob_win (float): Probability of winning (0–1).
-            odds (float): Decimal odds.
-            strategy (str): "kelly" or "flat".
-            max_fraction (float): Max fraction of bankroll to wager.
-            outcome (bool): Optional explicit outcome (True=win, False=loss).
-        """
         if strategy == "kelly":
             fraction = min(kelly_fraction(prob_win, odds), max_fraction)
-        else:  # flat betting
+        else:
             fraction = max_fraction
 
         stake = self.bankroll * fraction
         ev = expected_value(prob_win, odds, stake)
-
-        # If outcome not provided, simulate win if prob_win > 0.5
         won = outcome if outcome is not None else (prob_win > 0.5)
         self.bankroll = update_bankroll(self.bankroll, stake, won, odds)
 
@@ -147,26 +124,17 @@ class Simulation:
         logger.info(f"Bet placed: {record}")
 
     def run(self, bets: List[Dict], strategy: str = "kelly", max_fraction: float = 0.05):
-        """
-        Run simulation across a list of bets.
-
-        Args:
-            bets (list): List of dicts with {"prob_win": float, "odds": float}.
-        """
         for bet in bets:
             self.place_bet(
                 prob_win=bet["prob_win"],
                 odds=bet["odds"],
                 strategy=strategy,
                 max_fraction=max_fraction,
-                outcome=bet.get("won")  # allow explicit outcomes
+                outcome=bet.get("won")
             )
         return self.history
 
     def summary(self) -> Dict:
-        """
-        Return final bankroll and stats.
-        """
         total_bets = len(self.history)
         wins = sum(1 for h in self.history if h["won"])
         win_rate = wins / total_bets if total_bets > 0 else 0
@@ -182,20 +150,24 @@ class Simulation:
         }
         logger.info(f"Simulation summary: {summary}")
         return summary
-    
-    duplicate_files = []
 
-    def track_duplicate(file_path: str, timestamp: str) -> str:
-        base, ext = os.path.splitext(file_path)
-        ts_file = f"{base}_{timestamp}{ext}"
-        if os.path.exists(ts_file):
-            duplicate_files.append(ts_file)
-        return ts_file
+# -----------------------------
+# Duplicate File Handling
+# -----------------------------
 
-    def cleanup_duplicates():
-        for f in duplicate_files:
-            try:
-                os.remove(f)
-                logger.info(f"🗑️ Deleted duplicate file: {f}")
-            except Exception as e:
-                logger.error(f"❌ Failed to delete {f}: {e}")
+duplicate_files: List[str] = []
+
+def track_duplicate(file_path: str, timestamp: str) -> str:
+    base, ext = os.path.splitext(file_path)
+    ts_file = f"{base}_{timestamp}{ext}"
+    if os.path.exists(ts_file):
+        duplicate_files.append(ts_file)
+    return ts_file
+
+def cleanup_duplicates():
+    for f in duplicate_files:
+        try:
+            os.remove(f)
+            logger.info(f"🗑️ Deleted duplicate file: {f}")
+        except Exception as e:
+            logger.error(f"❌ Failed to delete {f}: {e}")
