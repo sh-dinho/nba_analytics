@@ -1,79 +1,88 @@
 # ============================================================
 # File: app/train_model.py
-# Purpose: Train NBA game prediction model and save artifacts
+# Purpose: Train NBA game prediction model with numeric + categorical features
 # ============================================================
 
 import os
 import pandas as pd
 import joblib
 from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
 from sklearn.metrics import accuracy_score, log_loss, brier_score_loss, roc_auc_score
 
 from core.config import TRAINING_FEATURES_FILE, MODEL_FILE_PKL
 from core.log_config import setup_logger
-from core.exceptions import PipelineError, DataError
 from core.utils import ensure_columns
 
 logger = setup_logger("train_model")
 
 
 def main() -> dict:
-    """Train a logistic regression model on training features and save model + feature order."""
+    """
+    Train a logistic regression model on historical training features.
+    Handles both numeric and categorical features.
+    Saves model + feature names in a consistent dict structure.
+    Returns training metrics.
+    """
     if not os.path.exists(TRAINING_FEATURES_FILE):
-        raise FileNotFoundError(f"{TRAINING_FEATURES_FILE} not found. Run build_features first.")
+        raise FileNotFoundError(f"{TRAINING_FEATURES_FILE} not found. Run build_features_for_training first.")
 
-    try:
-        df = pd.read_csv(TRAINING_FEATURES_FILE)
-    except Exception as e:
-        raise PipelineError(f"Failed to load training data: {e}")
+    df = pd.read_csv(TRAINING_FEATURES_FILE)
 
-    # Ensure label column exists
-    if "label" not in df.columns:
-        raise DataError("Training data missing 'label' column")
+    # Define feature sets
+    numeric_features = [
+        "home_avg_pts", "home_avg_ast", "home_avg_reb", "home_avg_games_played",
+        "away_avg_pts", "away_avg_ast", "away_avg_reb", "away_avg_games_played"
+    ]
+    categorical_features = ["home_team", "away_team"]
 
-    # Separate features and target
+    ensure_columns(df, numeric_features + categorical_features + ["label"], "training features")
+
+    X = df[numeric_features + categorical_features]
     y = df["label"]
-    X = df.drop(columns=["label"])
-    feature_order = list(X.columns)
 
-    # Train logistic regression
-    model = LogisticRegression(max_iter=1000)
-    model.fit(X, y)
+    # Preprocessor: scale numeric, one-hot encode categorical
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", StandardScaler(), numeric_features),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features)
+        ]
+    )
+
+    # Build pipeline
+    pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("clf", LogisticRegression(max_iter=1000))
+    ])
+
+    pipeline.fit(X, y)
 
     # Predictions for metrics
-    y_pred = model.predict(X)
-    y_proba = model.predict_proba(X)[:, 1]
+    y_pred = pipeline.predict(X)
+    y_prob = pipeline.predict_proba(X)[:, 1]
 
-    metrics = {}
-    try:
-        metrics["accuracy"] = accuracy_score(y, y_pred)
-    except Exception:
-        metrics["accuracy"] = None
-    try:
-        metrics["log_loss"] = log_loss(y, y_proba)
-    except Exception:
-        metrics["log_loss"] = None
-    try:
-        metrics["brier"] = brier_score_loss(y, y_proba)
-    except Exception:
-        metrics["brier"] = None
-    try:
-        metrics["auc"] = roc_auc_score(y, y_proba)
-    except Exception:
-        metrics["auc"] = None
+    metrics = {
+        "accuracy": accuracy_score(y, y_pred),
+        "log_loss": log_loss(y, y_prob),
+        "brier": brier_score_loss(y, y_prob),
+        "auc": roc_auc_score(y, y_prob)
+    }
 
-    # ✅ Save both model and feature order in a dict
-    os.makedirs(os.path.dirname(MODEL_FILE_PKL), exist_ok=True)
-    joblib.dump({"model": model, "features": feature_order}, MODEL_FILE_PKL)
-    logger.info(f"📦 Logistic model + features saved to {MODEL_FILE_PKL}")
+    # ✅ Save as dict with model + feature lists
+    artifact = {
+        "model": pipeline,
+        "features": numeric_features + categorical_features,
+        "numeric_features": numeric_features,
+        "categorical_features": categorical_features
+    }
+    joblib.dump(artifact, MODEL_FILE_PKL)
 
-    # Log headline metrics
+    logger.info(f"📦 Logistic model (numeric + categorical) saved to {MODEL_FILE_PKL}")
     logger.info("=== TRAINING METRICS ===")
     for k, v in metrics.items():
-        if v is not None:
-            logger.info(f"{k.capitalize()}: {v:.3f}")
-        else:
-            logger.info(f"{k.capitalize()}: unavailable")
+        logger.info(f"{k.capitalize()}: {v:.3f}")
 
     return metrics
 

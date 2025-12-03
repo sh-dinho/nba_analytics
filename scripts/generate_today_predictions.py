@@ -1,100 +1,80 @@
 # ============================================================
 # File: scripts/generate_today_predictions.py
-# Purpose: Generate predictions for today's games
+# Purpose: Generate today's predictions from trained model
 # ============================================================
 
 import os
 import pandas as pd
 import joblib
-import datetime
-from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score
-
-from core.config import MODEL_FILE_PKL, PREDICTIONS_FILE, NEW_GAMES_FILE
+from core.config import MODEL_FILE_PKL, PREDICTIONS_FILE
 from core.log_config import setup_logger
-from core.exceptions import PipelineError, DataError
 from core.utils import ensure_columns
-from scripts.build_features import build_features_for_new_games
 
 logger = setup_logger("generate_today_predictions")
 
 
-def generate_today_predictions(features_file: str | None = None, threshold: float = 0.6) -> pd.DataFrame:
-    """Generate predictions for today's games and log headline metrics."""
-    if not os.path.exists(MODEL_FILE_PKL):
-        logger.error("❌ No trained model found. Train a model first.")
-        raise FileNotFoundError(MODEL_FILE_PKL)
-
-    try:
-        saved = joblib.load(MODEL_FILE_PKL)
-        model = saved["model"]
-        feature_order = saved["features"]
-        logger.info(f"✅ Loaded model and feature order from {MODEL_FILE_PKL}")
-    except Exception as e:
-        raise PipelineError(f"Failed to load model from {MODEL_FILE_PKL}: {e}")
-
-    # Default to NEW_GAMES_FILE if no features_file provided
-    if features_file is None:
-        features_file = NEW_GAMES_FILE
-
+def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd.DataFrame:
+    """
+    Generate predictions for today's games using the trained model.
+    Handles both numeric and categorical features.
+    Saves predictions to PREDICTIONS_FILE and returns DataFrame.
+    """
     if not os.path.exists(features_file):
-        raise FileNotFoundError(f"{features_file} not found. Run fetch_new_games.py first.")
+        raise FileNotFoundError(f"{features_file} not found. Run build_features_for_new_games first.")
 
-    df = build_features_for_new_games(features_file)
+    df = pd.read_csv(features_file)
 
-    # Validate required features
-    try:
-        ensure_columns(df, set(feature_order), "new game features")
-    except ValueError as e:
-        raise DataError(str(e))
+    # Load trained model artifact
+    if not os.path.exists(MODEL_FILE_PKL):
+        raise FileNotFoundError(f"{MODEL_FILE_PKL} not found. Run train_model first.")
 
-    X_num = df[feature_order]
-    X_num = X_num.fillna(0).replace([float("inf"), -float("inf")], 0)
-    logger.warning("⚠️ Using simple fillna(0) for missing/inf values. Implement trained Imputer/Scaler for production.")
+    artifact = joblib.load(MODEL_FILE_PKL)
+    if isinstance(artifact, dict) and "model" in artifact:
+        pipeline = artifact["model"]
+        feature_cols = artifact["features"]
+    else:
+        pipeline = artifact
+        feature_cols = [
+            "home_avg_pts", "home_avg_ast", "home_avg_reb", "home_avg_games_played",
+            "away_avg_pts", "away_avg_ast", "away_avg_reb", "away_avg_games_played",
+            "home_team", "away_team"
+        ]
 
-    try:
-        probs = model.predict_proba(X_num)[:, 1]
-    except Exception as e:
-        raise PipelineError(f"Prediction failed: {e}")
+    logger.info(f"✅ Loaded model from {MODEL_FILE_PKL}")
 
+    # ✅ Make decimal_odds optional
+    required = feature_cols + ["game_id", "home_team", "away_team"]
+    if "decimal_odds" in df.columns:
+        required.append("decimal_odds")
+    else:
+        logger.warning("⚠️ 'decimal_odds' column missing — skipping EV calculations.")
+
+    ensure_columns(df, required, "game features")
+
+    # Predict probabilities
+    X = df[feature_cols]
+    probs = pipeline.predict_proba(X)[:, 1]  # probability home team wins
+    preds = (probs >= threshold).astype(int)
+
+    # Build prediction DataFrame
     df["pred_home_win_prob"] = probs
-    df["predicted_home_win"] = (probs >= threshold).astype(int)
-    df["Date"] = datetime.datetime.now().strftime("%Y-%m-%d")
+    df["predicted_home_win"] = preds
 
-    os.makedirs(os.path.dirname(PREDICTIONS_FILE), exist_ok=True)
+    # Save predictions
     df.to_csv(PREDICTIONS_FILE, index=False)
     logger.info(f"📊 Predictions saved to {PREDICTIONS_FILE} ({len(df)} rows)")
 
-    # --- Headline metrics ---
-    if "label" in df.columns and not df["label"].isnull().all():
-        y_true = df["label"].dropna()
-        y_pred = df.loc[y_true.index, "predicted_home_win"]
-        y_proba = df.loc[y_true.index, "pred_home_win_prob"]
-
-        metrics = {}
-        try:
-            metrics["accuracy"] = accuracy_score(y_true, y_pred)
-        except Exception:
-            metrics["accuracy"] = None
-        try:
-            metrics["brier"] = brier_score_loss(y_true, y_proba)
-        except Exception:
-            metrics["brier"] = None
-        try:
-            metrics["auc"] = roc_auc_score(y_true, y_proba)
-        except Exception:
-            metrics["auc"] = None
-
-        logger.info("=== PREDICTION METRICS ===")
-        for k, v in metrics.items():
-            if v is not None:
-                logger.info(f"{k.capitalize()}: {v:.3f}")
-            else:
-                logger.info(f"{k.capitalize()}: unavailable")
-    else:
-        logger.info("⚠️ No ground-truth labels available for metrics (new games only).")
+    # Log game-level predictions
+    logger.info("=== GAME-LEVEL PREDICTIONS ===")
+    for _, row in df.iterrows():
+        logger.info(
+            f"{row['home_team']} vs {row['away_team']} → "
+            f"Home win prob: {row['pred_home_win_prob']:.2f} | "
+            f"Predicted: {'Home Win' if row['predicted_home_win'] else 'Away Win'}"
+        )
 
     return df
 
 
 if __name__ == "__main__":
-    generate_today_predictions()
+    generate_today_predictions(PREDICTIONS_FILE)
