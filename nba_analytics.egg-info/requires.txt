@@ -1,0 +1,15 @@
+pandas
+numpy
+requests
+toml
+joblib
+scikit-learn
+xgboost
+tensorflow
+matplotlib
+colorama
+
+[dev]
+pytest
+black
+flake8

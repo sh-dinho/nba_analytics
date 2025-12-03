@@ -7,10 +7,29 @@ name = "nba-analytics"
 version = "0.1.0"
 description = "NBA analytics pipeline"
 authors = [{ name = "Your Name" }]
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.12"
 dependencies = [
-    # put runtime dependencies here if you want pip to install them automatically
+    "pandas",
+    "numpy",
+    "requests",
+    "toml",
+    "joblib",
+    "scikit-learn",
+    "xgboost",
+    "tensorflow",
+    "matplotlib",
+    "colorama"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "flake8"
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app", "scripts"]
+include = ["app", "scripts", "core"]

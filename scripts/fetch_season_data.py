@@ -7,6 +7,7 @@ import os
 import toml
 import requests
 import pandas as pd
+from datetime import datetime
 from core.config import BASE_DATA_DIR
 from core.log_config import setup_logger
 from core.exceptions import PipelineError, DataError
@@ -20,24 +21,18 @@ logger = setup_logger("fetch_season_data")
 
 def build_url(template: str, start_date: str, end_date: str,
               start_year: str, end_year: str, season_label: str) -> str:
-    """
-    Fill placeholders in data_url template:
-    {0} = end month
-    {1} = end day
-    {2} = start year
-    {3} = end year
-    {4} = season_label
-    """
+    """Fill placeholders in data_url template."""
     try:
-        end_year_str, end_month, end_day = end_date.split("-")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        end_year_str, end_month, end_day = end_dt.strftime("%Y-%m-%d").split("-")
     except ValueError:
         raise DataError(f"Invalid end_date format: {end_date}. Expected YYYY-MM-DD.")
 
     return template.format(end_month, end_day, start_year, end_year, season_label)
 
 
-def fetch_season_data() -> None:
-    """Fetch NBA season data based on config.toml settings."""
+def fetch_season_data() -> dict[str, pd.DataFrame]:
+    """Fetch NBA season data based on config.toml settings. Returns dict of DataFrames."""
     try:
         config = toml.load(CONFIG_PATH)
     except Exception as e:
@@ -47,9 +42,15 @@ def fetch_season_data() -> None:
     if not url_template:
         raise DataError("Missing 'data_url' in config.toml")
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    seasons = config.get("get-data", {})
+    if not seasons:
+        logger.warning("No seasons defined in config.toml")
+        return {}
 
-    for season, params in config.get("get-data", {}).items():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    results = {}
+
+    for season, params in seasons.items():
         season_label = params.get("season_label")
         start_date = params.get("start_date")
         end_date = params.get("end_date")
@@ -84,11 +85,16 @@ def fetch_season_data() -> None:
 
             ensure_columns(df, {"TEAM_ID", "TEAM_NAME"}, f"{season_label} season data")
 
-            out_path = os.path.join(OUTPUT_DIR, f"teamdata_{season_label}.csv")
+            safe_label = season_label.replace(" ", "_")
+            out_path = os.path.join(OUTPUT_DIR, f"teamdata_{safe_label}.csv")
             df.to_csv(out_path, index=False)
             logger.info(f"✅ Saved {season_label} data to {out_path} ({len(df)} rows)")
+
+            results[season_label] = df
         except Exception as e:
             logger.error(f"❌ Error processing {season_label} data: {e}")
+
+    return results
 
 
 if __name__ == "__main__":
