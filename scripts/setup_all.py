@@ -22,14 +22,13 @@ from core.log_config import setup_logger
 # Pipeline steps
 from scripts.build_features import main as build_features
 from app.train_model import main as train_model
-from app.prediction_pipeline import generate_today_predictions
+from scripts.generate_today_predictions import generate_today_predictions   # ✅ corrected import
 from scripts.generate_picks import main as generate_picks
 
-# Optional utilities (if you have them)
+# Optional utilities
 try:
     from scripts.utils import ensure_columns, get_timestamp
 except ImportError:
-    # Minimal fallback
     def ensure_columns(df, required, label):
         missing = set(required) - set(df.columns)
         if missing:
@@ -62,10 +61,6 @@ def _safe_run(step_name: str, func, *args, **kwargs):
 
 
 def _timestamped_copy(path: Path) -> Path:
-    """
-    If a file exists at `path`, create a timestamped copy alongside it.
-    Track copies for later cleanup.
-    """
     if path.exists():
         ts = get_timestamp()
         stamped = path.with_name(f"{path.stem}_{ts}{path.suffix}")
@@ -86,7 +81,6 @@ def _cleanup_duplicates():
 
 def main(skip_train: bool = False, skip_fetch: bool = True, notify: bool = False, threshold: float = 0.6):
     try:
-        # Ensure expected directories exist according to core/config.py
         ensure_dirs()
         BASE_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
         BASE_DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -98,7 +92,7 @@ def main(skip_train: bool = False, skip_fetch: bool = True, notify: bool = False
         # 1) Build features
         _safe_run("Build Features", build_features)
 
-        # 2) Train model (expects train_model.main to return a metrics dict)
+        # 2) Train model
         metrics = {}
         if not skip_train:
             metrics = _safe_run("Train Model", train_model) or {}
@@ -113,9 +107,7 @@ def main(skip_train: bool = False, skip_fetch: bool = True, notify: bool = False
             "Generate Today's Predictions",
             generate_today_predictions,
             features_file=str(TRAINING_FEATURES_FILE),
-            model_file=str(MODEL_FILE_PKL),
             threshold=threshold,
-            outdir=str(BASE_RESULTS_DIR),
         )
         if preds is None or not isinstance(preds, pd.DataFrame):
             raise DataError("Predictions step returned no data")
@@ -128,6 +120,97 @@ def main(skip_train: bool = False, skip_fetch: bool = True, notify: bool = False
         if stamped_preds != preds_path:
             preds.to_csv(stamped_preds, index=False)
 
+        # --- Prediction metrics block ---
+        logger.info("=== PREDICTION METRICS ===")
+        if "label" in preds.columns and not preds["label"].isnull().all():
+            logger.info("Metrics (accuracy, brier, auc) were logged above by generate_today_predictions.")
+        else:
+            avg_prob = preds["pred_home_win_prob"].mean()
+            win_rate = preds["predicted_home_win"].mean()
+            logger.info(f"Average predicted home win probability: {avg_prob:.3f}")
+            logger.info(f"Predicted home win rate: {win_rate:.3f}")
+
+        # --- Prediction summary table (Matchups) ---
+        if {"game_id", "home_team", "away_team", "pred_home_win_prob", "predicted_home_win"} <= set(preds.columns):
+            logger.info("=== PREDICTION SUMMARY (Matchups) ===")
+            for _, row in preds.iterrows():
+                gid = row["game_id"]
+                home = row["home_team"]
+                away = row["away_team"]
+                prob = row["pred_home_win_prob"]
+                pred = "Home Win" if row["predicted_home_win"] == 1 else "Home Loss"
+                logger.info(f"Game {gid}: {home} vs {away} → {prob:.3f} ({pred})")
+
+        # --- Highest-confidence pick ---
+        if "pred_home_win_prob" in preds.columns and len(preds) > 0:
+            best_row = preds.loc[preds["pred_home_win_prob"].idxmax()]
+            gid = best_row.get("game_id", "N/A")
+            home = best_row.get("home_team", "N/A")
+            away = best_row.get("away_team", "N/A")
+            prob = best_row["pred_home_win_prob"]
+            pred = "Home Win" if best_row["predicted_home_win"] == 1 else "Home Loss"
+            logger.info("=== HIGHEST-CONFIDENCE PICK ===")
+            logger.info(f"Game {gid}: {home} vs {away} → {prob:.3f} ({pred})")
+
+        # --- Lowest-confidence game (closest to 50/50) ---
+        if "pred_home_win_prob" in preds.columns and len(preds) > 0:
+            closest_idx = (preds["pred_home_win_prob"] - 0.5).abs().idxmin()
+            low_row = preds.loc[closest_idx]
+            gid = low_row.get("game_id", "N/A")
+            home = low_row.get("home_team", "N/A")
+            away = low_row.get("away_team", "N/A")
+            prob = low_row["pred_home_win_prob"]
+            pred = "Home Win" if low_row["predicted_home_win"] == 1 else "Home Loss"
+            logger.info("=== LOWEST-CONFIDENCE GAME ===")
+            logger.info(f"Game {gid}: {home} vs {away} → {prob:.3f} ({pred})")
+
+        # --- Export predictions summary CSV ---
+        summary_rows = []
+        if {"game_id", "home_team", "away_team", "pred_home_win_prob", "predicted_home_win"} <= set(preds.columns):
+            for _, row in preds.iterrows():
+                summary_rows.append({
+                    "game_id": row["game_id"],
+                    "home_team": row["home_team"],
+                    "away_team": row["away_team"],
+                    "pred_home_win_prob": row["pred_home_win_prob"],
+                    "predicted_home_win": row["predicted_home_win"],
+                    "highlight": ""
+                })
+        if "pred_home_win_prob" in preds.columns and len(preds) > 0:
+            best_row = preds.loc[preds["pred_home_win_prob"].idxmax()]
+            summary_rows.append({
+                "game_id": best_row.get("game_id", "N/A"),
+                "home_team": best_row.get("home_team", "N/A"),
+                "away_team": best_row.get("away_team", "N/A"),
+                "pred_home_win_prob": best_row["pred_home_win_prob"],
+                "predicted_home_win": best_row["predicted_home_win"],
+                "highlight": "Highest-confidence"
+            })
+            closest_idx = (preds["pred_home_win_prob"] - 0.5).abs().idxmin()
+            low_row = preds.loc[closest_idx]
+            summary_rows.append({
+                "game_id": low_row.get("game_id", "N/A"),
+                "home_team": low_row.get("home_team", "N/A"),
+                "away_team": low_row.get("away_team", "N/A"),
+                "pred_home_win_prob": low_row["pred_home_win_prob"],
+                "predicted_home_win": low_row["predicted_home_win"],
+                "highlight": "Lowest-confidence"
+            })
+
+        summary_df = pd.DataFrame(summary_rows)
+        summary_path = BASE_RESULTS_DIR / "predictions_summary.csv"
+        summary_df.to_csv(summary_path, index=False)
+        stamped_summary = _timestamped_copy(summary_path)
+        if stamped_summary != summary_path:
+                    summary_df = pd.DataFrame(summary_rows)
+        summary_path = BASE_RESULTS_DIR / "predictions_summary.csv"
+        summary_df.to_csv(summary_path, index=False)
+        stamped_summary = _timestamped_copy(summary_path)
+        if stamped_summary != summary_path:
+            summary_df.to_csv(stamped_summary, index=False)
+
+        logger.info(f"📊 Predictions summary saved to {summary_path}")
+
         # 4) Generate Picks
         _safe_run("Generate Picks", generate_picks)
         picks_path = BASE_RESULTS_DIR / "picks.csv"
@@ -136,7 +219,6 @@ def main(skip_train: bool = False, skip_fetch: bool = True, notify: bool = False
 
         picks = pd.read_csv(picks_path)
 
-        # Picks summary
         if "pick" in picks.columns:
             summary = picks["pick"].value_counts().rename_axis("side").reset_index(name="count")
             summary_path = BASE_RESULTS_DIR / "picks_summary.csv"
@@ -145,7 +227,7 @@ def main(skip_train: bool = False, skip_fetch: bool = True, notify: bool = False
             if stamped_summary != summary_path:
                 summary.to_csv(stamped_summary, index=False)
 
-        # 5) Notifications (optional)
+        # 5) Notifications
         if notify and HAS_NOTIFICATIONS:
             try:
                 msg = (

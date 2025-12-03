@@ -41,6 +41,9 @@ TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
 PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
 GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
 
+# ✅ Added constant for new games file
+NEW_GAMES_FILE = BASE_DATA_DIR / "new_games.csv"
+
 # Results files
 PREDICTIONS_FILE = BASE_RESULTS_DIR / "today_predictions.csv"
 BANKROLL_FILE_TEMPLATE = BASE_RESULTS_DIR / "picks_bankroll_{model_type}.csv"
