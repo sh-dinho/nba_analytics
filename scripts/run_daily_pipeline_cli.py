@@ -24,7 +24,7 @@ logger = setup_logger("pipeline")
 
 
 def ensure_player_stats(season="2024-25", force_refresh=False):
-    args = ["python", "scripts/fetch_player_stats.py", "--season", season]
+    args = ["python", "-m", "scripts.fetch_player_stats", "--season", season]
     if force_refresh:
         args.append("--force_refresh")
     logger.info(f"Ensuring player stats for season {season} (force_refresh={force_refresh})...")
@@ -32,30 +32,50 @@ def ensure_player_stats(season="2024-25", force_refresh=False):
 
 
 def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
-         season="2024-25", force_refresh=False, rounds=10):
+         season="2024-25", force_refresh=False, rounds=10,
+         target="label", model_type="logistic"):
     logger.info(f"Starting pipeline | threshold={threshold}, strategy={strategy}, "
-                f"max_fraction={max_fraction}, season={season}, force_refresh={force_refresh}, rounds={rounds}")
+                f"max_fraction={max_fraction}, season={season}, force_refresh={force_refresh}, "
+                f"rounds={rounds}, target={target}, model_type={model_type}")
 
     try:
         # Step 1: Ensure stats
         ensure_player_stats(season=season, force_refresh=force_refresh)
 
         # Step 2: Build features
-        subprocess.run(["python", "scripts/build_features.py", "--rounds", str(rounds)], check=True)
+        # Automatically choose training mode if we're training a model (target provided),
+        # otherwise build new game features for prediction.
+        if target in ["label", "margin", "outcome_category"]:
+            logger.info("Building training features (labels included)...")
+            subprocess.run([
+                "python", "-m", "scripts.build_features",
+                "--rounds", str(rounds),
+                "--training"
+            ], check=True)
+        else:
+            logger.info("Building new game features (no labels)...")
+            subprocess.run([
+                "python", "-m", "scripts.build_features",
+                "--rounds", str(rounds)
+            ], check=True)
 
         # Step 3: Train model
-        subprocess.run(["python", "scripts/train_model.py"], check=True)
+        subprocess.run([
+            "python", "-m", "scripts.train_model",
+            "--target", target,
+            "--model_type", model_type
+        ], check=True)
 
         # Step 4: Generate predictions
         subprocess.run([
-            "python", "scripts/generate_today_predictions.py",
+            "python", "-m", "scripts.generate_today_predictions",
             "--threshold", str(threshold),
             "--strategy", strategy,
             "--max_fraction", str(max_fraction)
         ], check=True)
 
         # Step 5: Generate picks
-        subprocess.run(["python", "scripts/generate_picks.py"], check=True)
+        subprocess.run(["python", "-m", "scripts.generate_picks"], check=True)
 
     except subprocess.CalledProcessError as e:
         logger.error(f"❌ Pipeline step failed: {e}")
@@ -74,8 +94,9 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         auc = last_metrics.get("auc")
         logloss = last_metrics.get("log_loss")
         brier = last_metrics.get("brier")
+        rmse = last_metrics.get("rmse")
     except Exception:
-        acc, auc, logloss, brier = None, None, None, None
+        acc, auc, logloss, brier, rmse = None, None, None, None, None
 
     try:
         preds_df = pd.read_csv(os.path.join(RESULTS_DIR, "today_predictions.csv"))
@@ -87,19 +108,27 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
 
     try:
         picks_df = pd.read_csv(os.path.join(RESULTS_DIR, "picks.csv"))
-        home_picks = (picks_df["pick"] == "HOME").sum()
-        away_picks = (picks_df["pick"] == "AWAY").sum()
+        home_picks = (picks_df["pick"] == "HOME").sum() if "pick" in picks_df.columns else 0
+        away_picks = (picks_df["pick"] == "AWAY").sum() if "pick" in picks_df.columns else 0
         avg_ev = picks_df["ev"].mean() if "ev" in picks_df.columns else None
+        total_stake = picks_df["stake_amount"].sum() if "stake_amount" in picks_df.columns else 0.0
+        expected_profit = (picks_df["ev"] * picks_df["stake_amount"]).sum() if "ev" in picks_df.columns else 0.0
     except Exception:
-        home_picks, away_picks, avg_ev = 0, 0, None
+        home_picks, away_picks, avg_ev, total_stake, expected_profit = 0, 0, None, 0.0, 0.0
 
     # Log summaries
     feature_summary = f"FEATURE SUMMARY: Games built={n_games}"
-    training_summary = (f"TRAINING SUMMARY: Accuracy={acc:.4f} LogLoss={logloss:.4f} "
-                        f"Brier={brier:.4f} AUC={auc:.4f}" if acc is not None else "TRAINING SUMMARY: unavailable")
+    training_summary = (f"TRAINING SUMMARY: Accuracy={acc:.4f if acc is not None else 'N/A'} "
+                        f"LogLoss={logloss:.4f if logloss is not None else 'N/A'} "
+                        f"Brier={brier:.4f if brier is not None else 'N/A'} "
+                        f"AUC={auc:.4f if auc is not None else 'N/A'} "
+                        f"RMSE={rmse:.4f if rmse is not None else 'N/A'}")
     prediction_summary = (f"PREDICTION SUMMARY: Predictions={n_preds}, Bets recommended={n_bets}, "
-                          f"Avg win_prob={avg_prob:.3f}, Threshold={threshold}, Strategy={strategy}, MaxFraction={max_fraction}")
-    picks_summary = (f"PICKS SUMMARY: HOME={home_picks}, AWAY={away_picks}, Avg EV={avg_ev:.3f if avg_ev is not None else 'N/A'}")
+                          f"Avg win_prob={avg_prob:.3f}, Threshold={threshold}, Strategy={strategy}, "
+                          f"MaxFraction={max_fraction}, Target={target}, ModelType={model_type}")
+    picks_summary = (f"PICKS SUMMARY: HOME={home_picks}, AWAY={away_picks}, "
+                     f"Avg EV={avg_ev:.3f if avg_ev is not None else 'N/A'}, "
+                     f"Total Stake={total_stake:.2f}, Expected Profit={expected_profit:.2f}")
 
     logger.info(feature_summary)
     logger.info(training_summary)
@@ -116,15 +145,20 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         "log_loss": logloss,
         "brier": brier,
         "auc": auc,
+        "rmse": rmse,
         "predictions": n_preds,
         "bets_recommended": n_bets,
         "avg_win_prob": avg_prob,
         "home_picks": home_picks,
         "away_picks": away_picks,
         "avg_ev": avg_ev,
+        "total_stake": total_stake,
+        "expected_profit": expected_profit,
         "threshold": threshold,
         "strategy": strategy,
-        "max_fraction": max_fraction
+        "max_fraction": max_fraction,
+        "target": target,
+        "model_type": model_type
     }])
 
     if os.path.exists(SUMMARY_FILE):
@@ -143,8 +177,13 @@ if __name__ == "__main__":
     parser.add_argument("--season", type=str, default="2024-25")
     parser.add_argument("--force_refresh", action="store_true")
     parser.add_argument("--rounds", type=int, default=10)
+    parser.add_argument("--target", type=str, default="label",
+                        help="Target column: label, margin, outcome_category")
+    parser.add_argument("--model_type", type=str, default="logistic",
+                        help="Model type: logistic, rf, linear")
     args = parser.parse_args()
 
     main(threshold=args.threshold, strategy=args.strategy,
          max_fraction=args.max_fraction, season=args.season,
-         force_refresh=args.force_refresh, rounds=args.rounds)
+         force_refresh=args.force_refresh, rounds=args.rounds,
+         target=args.target, model_type=args.model_type)

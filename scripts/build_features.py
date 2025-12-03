@@ -1,56 +1,104 @@
 # ============================================================
 # File: scripts/build_features.py
-# Purpose: Build features for new games (aggregate player stats to team level)
+# Purpose: Build features for training and prediction
 # ============================================================
 
-import os
+import argparse
 import pandas as pd
-from core.config import TRAINING_FEATURES_FILE, NEW_GAMES_FILE
+from core.config import (
+    HISTORICAL_GAMES_FILE,
+    TRAINING_FEATURES_FILE,
+    NEW_GAMES_FILE,
+    NEW_GAMES_FEATURES_FILE,
+)
 from core.log_config import setup_logger
-from core.utils import ensure_columns
 
 logger = setup_logger("build_features")
 
 
-def build_features_for_new_games(new_games_file: str = NEW_GAMES_FILE) -> str:
+def build_features(rounds: int = 10, training: bool = True) -> str:
     """
-    Build team-level features from player-level new_games.csv.
-    Aggregates player stats into team averages/sums.
-    Saves to TRAINING_FEATURES_FILE and returns path.
+    Build features for training or new games.
+    Adds labels (label, margin, outcome_category) for training data.
+    Generates synthetic game_id if missing in new games.
     """
-    if not os.path.exists(new_games_file):
-        raise FileNotFoundError(f"{new_games_file} not found. Run fetch_new_games.py first.")
+    if training:
+        logger.info("Loading historical games...")
+        df = pd.read_csv(HISTORICAL_GAMES_FILE)
 
-    df = pd.read_csv(new_games_file)
+        # Example rolling averages
+        features = pd.DataFrame({
+            "game_id": df.get("game_id", pd.Series(range(len(df)))),
+            "home_team": df["home_team"],
+            "away_team": df["away_team"],
+            "home_avg_pts": df["home_pts"].rolling(rounds, min_periods=1).mean(),
+            "away_avg_pts": df["away_pts"].rolling(rounds, min_periods=1).mean(),
+            "home_avg_ast": df["home_ast"].rolling(rounds, min_periods=1).mean(),
+            "away_avg_ast": df["away_ast"].rolling(rounds, min_periods=1).mean(),
+            "home_avg_reb": df["home_reb"].rolling(rounds, min_periods=1).mean(),
+            "away_avg_reb": df["away_reb"].rolling(rounds, min_periods=1).mean(),
+            "home_games_played": df.groupby("home_team").cumcount() + 1,
+            "away_games_played": df.groupby("away_team").cumcount() + 1,
+        })
 
-    # Ensure required columns exist
-    ensure_columns(df, {"PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB", "GAMES_PLAYED"}, "new game features")
+        # ✅ Labels
+        features["label"] = (df["home_pts"] > df["away_pts"]).astype(int)
+        features["margin"] = (df["home_pts"] - df["away_pts"]).astype(int)
 
-    # --- Aggregate player stats into team-level features ---
-    team_features = df.groupby("TEAM_ABBREVIATION").agg({
-        "PTS": "mean",          # average points per player
-        "AST": "mean",          # average assists
-        "REB": "mean",          # average rebounds
-        "GAMES_PLAYED": "mean"  # average games played
-    }).reset_index()
+        def categorize(row):
+            if row["margin"] >= 10 and row["label"] == 1:
+                return "home_blowout"
+            elif row["margin"] < 10 and row["label"] == 1:
+                return "home_close"
+            elif row["margin"] <= -10 and row["label"] == 0:
+                return "away_blowout"
+            else:
+                return "away_close"
 
-    # Rename columns for clarity
-    team_features.rename(columns={
-        "TEAM_ABBREVIATION": "team",
-        "PTS": "avg_pts",
-        "AST": "avg_ast",
-        "REB": "avg_reb",
-        "GAMES_PLAYED": "avg_games_played"
-    }, inplace=True)
+        features["outcome_category"] = features.apply(categorize, axis=1)
 
-    # --- Save features ---
-    os.makedirs(os.path.dirname(TRAINING_FEATURES_FILE), exist_ok=True)
-    team_features.to_csv(TRAINING_FEATURES_FILE, index=False)
-    logger.info(f"✅ Features saved to {TRAINING_FEATURES_FILE} ({len(team_features)} rows)")
+        # Save
+        features.to_csv(TRAINING_FEATURES_FILE, index=False)
+        logger.info(f"✅ Training features built ({len(features)} rows) → {TRAINING_FEATURES_FILE}")
+        return str(TRAINING_FEATURES_FILE)
 
-    # ✅ Return the path, not the DataFrame
-    return TRAINING_FEATURES_FILE
+    else:
+        logger.info("Loading new games...")
+        df = pd.read_csv(NEW_GAMES_FILE)
+
+        # Generate synthetic game_id if missing
+        if "game_id" in df.columns:
+            game_ids = df["game_id"]
+        else:
+            game_ids = (
+                df.get("date", pd.Series(range(len(df)))).astype(str)
+                + "_" + df["home_team"] + "_" + df["away_team"]
+            )
+
+        features = pd.DataFrame({
+            "game_id": game_ids,
+            "home_team": df["home_team"],
+            "away_team": df["away_team"],
+            "home_avg_pts": df["home_pts"].rolling(rounds, min_periods=1).mean(),
+            "away_avg_pts": df["away_pts"].rolling(rounds, min_periods=1).mean(),
+            "home_avg_ast": df["home_ast"].rolling(rounds, min_periods=1).mean(),
+            "away_avg_ast": df["away_ast"].rolling(rounds, min_periods=1).mean(),
+            "home_avg_reb": df["home_reb"].rolling(rounds, min_periods=1).mean(),
+            "away_avg_reb": df["away_reb"].rolling(rounds, min_periods=1).mean(),
+            "home_games_played": df.groupby("home_team").cumcount() + 1,
+            "away_games_played": df.groupby("away_team").cumcount() + 1,
+        })
+
+        # Save
+        features.to_csv(NEW_GAMES_FEATURES_FILE, index=False)
+        logger.info(f"✅ New game features built ({len(features)} rows) → {NEW_GAMES_FEATURES_FILE}")
+        return str(NEW_GAMES_FEATURES_FILE)
 
 
 if __name__ == "__main__":
-    build_features_for_new_games()
+    parser = argparse.ArgumentParser(description="Build features for training or new games")
+    parser.add_argument("--rounds", type=int, default=10, help="Rolling window size")
+    parser.add_argument("--training", action="store_true", help="Build training features")
+    args = parser.parse_args()
+
+    build_features(rounds=args.rounds, training=args.training)

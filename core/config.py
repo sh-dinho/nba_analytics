@@ -39,7 +39,7 @@ MODEL_FILE_H5 = BASE_MODELS_DIR / "game_predictor.h5"
 # Data files
 TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
 NEW_GAMES_FILE = BASE_DATA_DIR / "new_games.csv"
-NEW_GAMES_FEATURES_FILE = BASE_DATA_DIR / "new_games_features.csv"  # ✅ added
+NEW_GAMES_FEATURES_FILE = BASE_DATA_DIR / "new_games_features.csv"
 HISTORICAL_GAMES_FILE = BASE_DATA_DIR / "historical_games.csv"
 PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
 GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
@@ -49,6 +49,7 @@ PREDICTIONS_FILE = BASE_RESULTS_DIR / "today_predictions.csv"
 BANKROLL_FILE_TEMPLATE = BASE_RESULTS_DIR / "picks_bankroll_{model_type}.csv"
 PICKS_FILE = BASE_RESULTS_DIR / "picks.csv"
 PICKS_LOG = BASE_LOGS_DIR / "picks.log"
+SUMMARY_FILE = BASE_RESULTS_DIR / "summary.csv"   # ✅ added
 
 # General settings
 SEED = 42

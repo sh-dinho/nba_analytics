@@ -1,102 +1,106 @@
 # ============================================================
-# File: app/train_model.py
-# Purpose: Train NBA game prediction model and save artifacts
+# File: scripts/train_model.py
+# Purpose: Train predictive models on NBA features
 # ============================================================
 
-import os
+import argparse
 import pandas as pd
 import joblib
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, log_loss, brier_score_loss, roc_auc_score
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-
-from core.config import TRAINING_FEATURES_FILE, MODEL_FILE_PKL
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, log_loss, roc_auc_score, brier_score_loss, mean_squared_error
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.ensemble import RandomForestClassifier
+from core.config import TRAINING_FEATURES_FILE, MODEL_FILE_PKL, RESULTS_DIR
 from core.log_config import setup_logger
-from core.exceptions import PipelineError, DataError
+from core.exceptions import DataError
+import os
 
 logger = setup_logger("train_model")
 
 
-def main() -> dict:
-    """Train a logistic regression model with numeric + categorical features."""
+def main(target: str = "label", model_type: str = "logistic"):
+    """
+    Train a model on training features.
+    target options:
+      - 'label' (binary win/loss)
+      - 'margin' (point differential regression)
+      - 'outcome_category' (multi-class classification)
+    model_type options:
+      - 'logistic' (LogisticRegression for binary classification)
+      - 'rf' (RandomForestClassifier for classification)
+      - 'linear' (LinearRegression for regression)
+    """
     if not os.path.exists(TRAINING_FEATURES_FILE):
-        raise FileNotFoundError(f"{TRAINING_FEATURES_FILE} not found. Run build_features first.")
+        raise DataError(f"Training features file not found: {TRAINING_FEATURES_FILE}")
 
-    try:
-        df = pd.read_csv(TRAINING_FEATURES_FILE)
-    except Exception as e:
-        raise PipelineError(f"Failed to load training data: {e}")
+    df = pd.read_csv(TRAINING_FEATURES_FILE)
 
-    # Ensure label column exists
-    if "label" not in df.columns:
-        raise DataError("Training data missing 'label' column")
+    if target not in df.columns:
+        raise DataError(f"Training data missing '{target}' column")
 
-    # Separate features and target
-    y = df["label"]
-    X = df.drop(columns=["label"])
+    # Features: drop non-numeric/categorical identifiers
+    feature_cols = [
+        c for c in df.columns
+        if c not in ["game_id", "home_team", "away_team", "label", "margin", "overtime", "outcome_category"]
+    ]
+    X = df[feature_cols]
+    y = df[target]
 
-    # Identify numeric and categorical columns
-    numeric_cols = X.select_dtypes(include=["number"]).columns.tolist()
-    categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    logger.info(f"📊 Training with {len(numeric_cols)} numeric and {len(categorical_cols)} categorical features")
-
-    # Preprocessor: passthrough numeric, one-hot encode categorical
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", "passthrough", numeric_cols),
-            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
-        ]
-    )
-
-    # Pipeline: preprocessing + logistic regression
-    model = Pipeline(steps=[
-        ("preprocessor", preprocessor),
-        ("classifier", LogisticRegression(max_iter=1000))
-    ])
+    # Select model
+    if target == "margin":
+        model = LinearRegression()
+    elif target == "outcome_category":
+        model = RandomForestClassifier(n_estimators=200, random_state=42)
+    else:  # default binary label
+        if model_type == "rf":
+            model = RandomForestClassifier(n_estimators=200, random_state=42)
+        else:
+            model = LogisticRegression(max_iter=1000)
 
     # Fit model
-    model.fit(X, y)
+    model.fit(X_train, y_train)
 
-    # Predictions for metrics
-    y_pred = model.predict(X)
-    y_proba = model.predict_proba(X)[:, 1]
-
+    # Evaluate
     metrics = {}
-    try:
-        metrics["accuracy"] = accuracy_score(y, y_pred)
-    except Exception:
-        metrics["accuracy"] = None
-    try:
-        metrics["log_loss"] = log_loss(y, y_proba)
-    except Exception:
-        metrics["log_loss"] = None
-    try:
-        metrics["brier"] = brier_score_loss(y, y_proba)
-    except Exception:
-        metrics["brier"] = None
-    try:
-        metrics["auc"] = roc_auc_score(y, y_proba)
-    except Exception:
-        metrics["auc"] = None
+    if target == "label":
+        y_pred = model.predict(X_test)
+        y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else y_pred
+        metrics["accuracy"] = accuracy_score(y_test, y_pred)
+        metrics["log_loss"] = log_loss(y_test, y_prob)
+        metrics["brier"] = brier_score_loss(y_test, y_prob)
+        metrics["auc"] = roc_auc_score(y_test, y_prob)
+    elif target == "margin":
+        y_pred = model.predict(X_test)
+        metrics["rmse"] = mean_squared_error(y_test, y_pred, squared=False)
+    elif target == "outcome_category":
+        y_pred = model.predict(X_test)
+        metrics["accuracy"] = accuracy_score(y_test, y_pred)
 
-    # ✅ Save both model and feature order in a dict
-    os.makedirs(os.path.dirname(MODEL_FILE_PKL), exist_ok=True)
-    joblib.dump({"model": model, "features": numeric_cols + categorical_cols}, MODEL_FILE_PKL)
-    logger.info(f"📦 Logistic model + features saved to {MODEL_FILE_PKL}")
+    # Save model artifact
+    artifact = {"model": model, "features": feature_cols, "target": target}
+    joblib.dump(artifact, MODEL_FILE_PKL)
+    logger.info(f"✅ Model trained on target='{target}' and saved to {MODEL_FILE_PKL}")
 
-    # Log headline metrics
-    logger.info("=== TRAINING METRICS ===")
-    for k, v in metrics.items():
-        if v is not None:
-            logger.info(f"{k.capitalize()}: {v:.3f}")
-        else:
-            logger.info(f"{k.capitalize()}: unavailable")
-
-    return metrics
+    # Save metrics
+    os.makedirs(RESULTS_DIR, exist_ok=True)
+    metrics_df = pd.DataFrame([metrics])
+    metrics_file = os.path.join(RESULTS_DIR, "training_metrics.csv")
+    if os.path.exists(metrics_file):
+        metrics_df.to_csv(metrics_file, mode="a", header=False, index=False)
+    else:
+        metrics_df.to_csv(metrics_file, index=False)
+    logger.info(f"📊 Metrics saved to {metrics_file}: {metrics}")
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Train NBA prediction model")
+    parser.add_argument("--target", type=str, default="label",
+                        help="Target column: label, margin, outcome_category")
+    parser.add_argument("--model_type", type=str, default="logistic",
+                        help="Model type: logistic, rf, linear")
+    args = parser.parse_args()
+
+    main(target=args.target, model_type=args.model_type)
