@@ -1,38 +1,45 @@
 # ============================================================
 # File: core/log_config.py
-# Purpose: Standardized logging with console + rotating file
+# Purpose: Centralized logger setup with UTF-8 encoding
 # ============================================================
 
-import os
 import logging
-from logging.handlers import RotatingFileHandler
+import sys
+import io
+from pathlib import Path
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-LOG_DIR = os.path.join(BASE_DIR, "logs")
-os.makedirs(LOG_DIR, exist_ok=True)
+# Force stdout/stderr to UTF-8 so emojis and Unicode characters work on Windows
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
 
 
-def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
+def setup_logger(name: str,
+                 log_file: Path | None = None,
+                 level: int = logging.INFO) -> logging.Logger:
     """
-    Create a logger with both console and rotating file handlers.
-    Ensures consistent logging across all pipeline scripts.
+    Configure and return a logger with UTF-8 encoding.
+    Logs to console and optionally to a file.
     """
     logger = logging.getLogger(name)
     logger.setLevel(level)
 
+    # Avoid duplicate handlers if setup_logger is called multiple times
     if not logger.handlers:
-        # File handler
-        log_file = os.path.join(LOG_DIR, f"{name}.log")
-        fh = RotatingFileHandler(log_file, maxBytes=5 * 1024 * 1024, backupCount=5)
-        fh.setFormatter(logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s"))
-        fh.setLevel(level)
+        # Console handler (UTF-8)
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(level)
+        console_handler.setFormatter(logging.Formatter(
+            "%(name)s - %(levelname)s - %(message)s"
+        ))
+        logger.addHandler(console_handler)
 
-        # Console handler
-        ch = logging.StreamHandler()
-        ch.setFormatter(logging.Formatter("%(name)s - %(levelname)s - %(message)s"))
-        ch.setLevel(level)
-
-        logger.addHandler(fh)
-        logger.addHandler(ch)
+        # Optional file handler
+        if log_file:
+            fh = logging.FileHandler(log_file, encoding="utf-8")
+            fh.setLevel(level)
+            fh.setFormatter(logging.Formatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            ))
+            logger.addHandler(fh)
 
     return logger

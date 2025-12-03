@@ -4,7 +4,8 @@
 # ============================================================
 
 import pandas as pd
-from scripts.betting_utils import expected_value, calculate_kelly_criterion
+import random
+from scripts.betting_utils import expected_value, calculate_kelly_criterion, american_to_decimal
 from core.log_config import setup_logger
 from core.exceptions import DataError
 
@@ -17,7 +18,7 @@ def simulate_bankroll(preds_df: pd.DataFrame,
                       bankroll: float = 1000.0):
     """
     Simulates bankroll evolution given predictions and odds.
-    Adds EV and Kelly bet size columns to preds_df.
+    Adds EV, Kelly bet size, bankroll trajectory, and outcome columns to preds_df.
 
     Args:
         preds_df: DataFrame containing predictions with 'prob' and 'american_odds' columns.
@@ -26,6 +27,7 @@ def simulate_bankroll(preds_df: pd.DataFrame,
         bankroll: Starting bankroll.
 
     Returns:
+        preds_df: Enriched DataFrame with EV, Kelly_Bet, bankroll, outcome columns.
         history: List of bankroll values after each bet.
         metrics: Dict with final bankroll, average EV, and average Kelly bet size.
     """
@@ -36,12 +38,13 @@ def simulate_bankroll(preds_df: pd.DataFrame,
     current_bankroll = bankroll
 
     for idx, row in preds_df.iterrows():
-        prob = row.get("prob")
-        odds = row.get("american_odds")
+        prob, odds = row["prob"], row["american_odds"]
 
-        if prob is None or odds is None:
+        if pd.isna(prob) or pd.isna(odds):
             preds_df.at[idx, "EV"] = None
             preds_df.at[idx, "Kelly_Bet"] = None
+            preds_df.at[idx, "bankroll"] = current_bankroll
+            preds_df.at[idx, "outcome"] = None
             continue
 
         # Expected value for $100 stake
@@ -55,24 +58,29 @@ def simulate_bankroll(preds_df: pd.DataFrame,
         # Apply strategy
         if strategy == "kelly":
             bet_size = min(kelly_bet, current_bankroll * max_fraction)
-        else:
+        else:  # flat betting
             bet_size = current_bankroll * max_fraction
 
-        # Simulate outcome (placeholder: assume win if prob > 0.5)
-        if prob > 0.5:
-            profit = (ev / 100.0) * bet_size
-            current_bankroll += profit
-            outcome = "WIN"
+        # Simulate outcome realistically (Bernoulli trial)
+        outcome = "WIN" if random.random() < prob else "LOSS"
+
+        # Profit calculation using decimal odds
+        dec_odds = american_to_decimal(odds)
+        if outcome == "WIN":
+            profit = bet_size * (dec_odds - 1)
         else:
-            current_bankroll -= bet_size
-            outcome = "LOSS"
+            profit = -bet_size
+
+        current_bankroll += profit
 
         preds_df.at[idx, "bankroll"] = current_bankroll
         preds_df.at[idx, "outcome"] = outcome
         history.append(current_bankroll)
 
-        logger.info(f"Game {idx}: prob={prob:.3f}, odds={odds}, EV={ev:.2f}, "
-                    f"bet={bet_size:.2f}, outcome={outcome}, bankroll={current_bankroll:.2f}")
+        logger.info(
+            f"Game {idx}: prob={prob:.3f}, odds={odds}, EV={ev:.2f}, "
+            f"bet={bet_size:.2f}, outcome={outcome}, bankroll={current_bankroll:.2f}"
+        )
 
     metrics = {
         "final_bankroll": current_bankroll,
@@ -80,7 +88,9 @@ def simulate_bankroll(preds_df: pd.DataFrame,
         "avg_Kelly_Bet": preds_df["Kelly_Bet"].mean(skipna=True),
     }
 
-    logger.info(f"Simulation completed | Final bankroll={metrics['final_bankroll']:.2f}, "
-                f"Avg EV={metrics['avg_EV']:.3f}, Avg Kelly Bet={metrics['avg_Kelly_Bet']:.2f}")
+    logger.info(
+        f"Simulation completed | Final bankroll={metrics['final_bankroll']:.2f}, "
+        f"Avg EV={metrics['avg_EV']:.3f}, Avg Kelly Bet={metrics['avg_Kelly_Bet']:.2f}"
+    )
 
-    return history, metrics
+    return preds_df, history, metrics
