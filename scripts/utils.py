@@ -20,11 +20,27 @@ def get_timestamp() -> str:
     """Return current timestamp string for filenames/logs."""
     return datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
-def ensure_columns(df: pd.DataFrame, required_cols: list) -> pd.DataFrame:
-    """Ensure DataFrame has required columns, add if missing."""
+def ensure_columns(df: pd.DataFrame, required_cols: list, label: str = "dataframe") -> pd.DataFrame:
+    """
+    Ensure DataFrame has required columns, add if missing.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+    required_cols : list
+        Required column names.
+    label : str, optional
+        Label for error messages.
+
+    Returns
+    -------
+    pandas.DataFrame
+        DataFrame with missing columns added as None.
+    """
     for col in required_cols:
         if col not in df.columns:
             df[col] = None
+            logger.warning(f"⚠️ Added missing column '{col}' to {label}")
     return df
 
 def append_pipeline_summary(summary_file: str, metrics: dict):
@@ -87,6 +103,37 @@ def implied_probability(odds: float) -> float:
     prob = 1 / odds
     logger.debug(f"Implied probability: odds={odds}, prob={prob:.3f}")
     return prob
+
+# -----------------------------
+# EV Highlight Helper
+# -----------------------------
+
+def log_positive_ev(df: pd.DataFrame, ev_col: str = "ev", prob_col: str = "pred_home_win_prob",
+                    odds_col: str = "decimal_odds", home_col: str = "home_team", away_col: str = "away_team"):
+    """
+    Log all rows with positive expected value (EV > 0).
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Predictions DataFrame with EV column.
+    ev_col : str
+        Column name for expected value.
+    """
+    if ev_col not in df.columns:
+        logger.warning("⚠️ No EV column found in predictions DataFrame")
+        return
+
+    positive_ev = df[df[ev_col] > 0]
+    if positive_ev.empty:
+        logger.info("No positive EV picks found.")
+    else:
+        logger.info("=== POSITIVE EV PICKS ===")
+        for _, row in positive_ev.iterrows():
+            logger.info(
+                f"{row.get(home_col, 'Home')} vs {row.get(away_col, 'Away')} → "
+                f"Prob={row.get(prob_col, 0):.3f}, Odds={row.get(odds_col, 0)}, EV={row[ev_col]:.3f}"
+            )
 
 # -----------------------------
 # Simulation Class
@@ -171,3 +218,11 @@ def cleanup_duplicates():
             logger.info(f"🗑️ Deleted duplicate file: {f}")
         except Exception as e:
             logger.error(f"❌ Failed to delete {f}: {e}")
+            
+# ============================================================
+def ensure_columns(df: pd.DataFrame, required_cols: list, label: str = "dataframe") -> pd.DataFrame:
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = None
+            logger.warning(f"⚠️ Added missing column '{col}' to {label}")
+    return df

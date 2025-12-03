@@ -41,7 +41,13 @@ TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
 PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
 GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
 
-# ✅ Added constant for new games file
+# Data files
+TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
+PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
+GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
+
+NEW_GAMES_FILE = BASE_DATA_DIR / "new_games.csv"
+HISTORICAL_GAMES_FILE = BASE_DATA_DIR / "historical_games.csv"
 NEW_GAMES_FILE = BASE_DATA_DIR / "new_games.csv"
 
 # Results files

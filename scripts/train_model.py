@@ -8,17 +8,19 @@ import pandas as pd
 import joblib
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, log_loss, brier_score_loss, roc_auc_score
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 
 from core.config import TRAINING_FEATURES_FILE, MODEL_FILE_PKL
 from core.log_config import setup_logger
 from core.exceptions import PipelineError, DataError
-from core.utils import ensure_columns
 
 logger = setup_logger("train_model")
 
 
 def main() -> dict:
-    """Train a logistic regression model on training features and save model + feature order."""
+    """Train a logistic regression model with numeric + categorical features."""
     if not os.path.exists(TRAINING_FEATURES_FILE):
         raise FileNotFoundError(f"{TRAINING_FEATURES_FILE} not found. Run build_features first.")
 
@@ -34,10 +36,28 @@ def main() -> dict:
     # Separate features and target
     y = df["label"]
     X = df.drop(columns=["label"])
-    feature_order = list(X.columns)
 
-    # Train logistic regression
-    model = LogisticRegression(max_iter=1000)
+    # Identify numeric and categorical columns
+    numeric_cols = X.select_dtypes(include=["number"]).columns.tolist()
+    categorical_cols = X.select_dtypes(include=["object", "category"]).columns.tolist()
+
+    logger.info(f"📊 Training with {len(numeric_cols)} numeric and {len(categorical_cols)} categorical features")
+
+    # Preprocessor: passthrough numeric, one-hot encode categorical
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", "passthrough", numeric_cols),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_cols),
+        ]
+    )
+
+    # Pipeline: preprocessing + logistic regression
+    model = Pipeline(steps=[
+        ("preprocessor", preprocessor),
+        ("classifier", LogisticRegression(max_iter=1000))
+    ])
+
+    # Fit model
     model.fit(X, y)
 
     # Predictions for metrics
@@ -64,7 +84,7 @@ def main() -> dict:
 
     # ✅ Save both model and feature order in a dict
     os.makedirs(os.path.dirname(MODEL_FILE_PKL), exist_ok=True)
-    joblib.dump({"model": model, "features": feature_order}, MODEL_FILE_PKL)
+    joblib.dump({"model": model, "features": numeric_cols + categorical_cols}, MODEL_FILE_PKL)
     logger.info(f"📦 Logistic model + features saved to {MODEL_FILE_PKL}")
 
     # Log headline metrics
