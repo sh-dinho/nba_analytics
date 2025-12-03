@@ -1,6 +1,7 @@
 # ============================================================
 # File: scripts/run_pipeline.py
-# Purpose: Fully automated NBA data pipeline with cleanup, archiving, and logging
+# Purpose: Fully automated NBA data pipeline with cleanup, archiving,
+#          bankroll tracking, daily + weekly summaries, and logging
 # ============================================================
 
 import os
@@ -8,7 +9,11 @@ import subprocess
 import shutil
 import pandas as pd
 from datetime import datetime
-from core.config import BASE_DATA_DIR, ARCHIVE_DIR, BASE_RESULTS_DIR, LOG_FILE, PICKS_BANKROLL_FILE, ensure_dirs, validate_config
+from core.config import (
+    BASE_DATA_DIR, ARCHIVE_DIR, BASE_RESULTS_DIR, LOG_FILE,
+    PICKS_BANKROLL_FILE, ensure_dirs, validate_config,
+    DEFAULT_BANKROLL
+)
 from core.log_config import setup_logger
 from core.exceptions import PipelineError
 
@@ -35,8 +40,41 @@ def archive_csvs():
             logger.info(f"📦 Archived {file} → {dest}")
 
 
+def update_bankroll(picks_file: str):
+    """Append today's picks results into bankroll tracking file."""
+    if not os.path.exists(picks_file):
+        logger.warning("⚠️ No picks.csv found, skipping bankroll update.")
+        return
+
+    df = pd.read_csv(picks_file)
+    if df.empty:
+        logger.info("ℹ️ Picks file is empty, skipping bankroll update.")
+        return
+
+    today = datetime.today().date().isoformat()
+    total_stake = df["stake_amount"].sum()
+    avg_ev = df["expected_value"].mean()
+    bankroll_change = total_stake * avg_ev
+
+    record = {
+        "Date": today,
+        "Total_Stake": total_stake,
+        "Avg_EV": avg_ev,
+        "Bankroll_Change": bankroll_change,
+    }
+
+    if os.path.exists(PICKS_BANKROLL_FILE):
+        hist = pd.read_csv(PICKS_BANKROLL_FILE)
+        hist = pd.concat([hist, pd.DataFrame([record])], ignore_index=True)
+    else:
+        hist = pd.DataFrame([record])
+
+    hist.to_csv(PICKS_BANKROLL_FILE, index=False)
+    logger.info(f"💰 Bankroll updated → {PICKS_BANKROLL_FILE}")
+
+
 def log_daily_summary():
-    """Log final bankroll, win rate, EV, and Kelly metrics from picks_bankroll.csv."""
+    """Log final bankroll, EV, and stake metrics from picks_bankroll.csv."""
     if not os.path.exists(PICKS_BANKROLL_FILE):
         logger.warning("⚠️ No picks_bankroll.csv found for summary logging.")
         return
@@ -45,19 +83,53 @@ def log_daily_summary():
         df = pd.read_csv(PICKS_BANKROLL_FILE)
         summary = df.tail(1).to_dict(orient="records")[0]
 
+        # Compute cumulative bankroll
+        cumulative = DEFAULT_BANKROLL + df["Bankroll_Change"].sum()
+
         logger.info("📊 Daily Summary:")
-        logger.info(f"🏦 Final Bankroll: {summary.get('Final_Bankroll', 'N/A')}")
-        logger.info(f"✅ Win Rate: {summary.get('Win_Rate', 'N/A')}")
-        logger.info(f"💰 Avg EV: {summary.get('Avg_EV', 'N/A')}")
-        logger.info(f"🎯 Avg Kelly Bet: {summary.get('Avg_Kelly_Bet', 'N/A')}")
+        logger.info(f"🏦 Final Bankroll: {cumulative:.2f}")
+        logger.info(f"💰 Avg EV (today): {summary.get('Avg_EV', 'N/A')}")
+        logger.info(f"🎯 Total Stake (today): {summary.get('Total_Stake', 'N/A')}")
 
         # Export summary to CSV
         summary_file = BASE_RESULTS_DIR / "summary.csv"
-        df.tail(1).to_csv(summary_file, index=False)
+        pd.DataFrame([{
+            "Date": summary["Date"],
+            "Final_Bankroll": cumulative,
+            "Avg_EV": summary.get("Avg_EV"),
+            "Total_Stake": summary.get("Total_Stake"),
+        }]).to_csv(summary_file, index=False)
         logger.info(f"📑 Daily summary exported to {summary_file}")
 
     except Exception as e:
         logger.error(f"❌ Failed to log daily summary: {e}")
+
+
+def log_weekly_summary():
+    """Aggregate bankroll changes by week for trend analysis."""
+    if not os.path.exists(PICKS_BANKROLL_FILE):
+        logger.warning("⚠️ No picks_bankroll.csv found for weekly summary.")
+        return
+
+    try:
+        df = pd.read_csv(PICKS_BANKROLL_FILE)
+        df["Date"] = pd.to_datetime(df["Date"])
+        df["Week"] = df["Date"].dt.to_period("W").astype(str)
+
+        weekly = df.groupby("Week").agg({
+            "Total_Stake": "sum",
+            "Avg_EV": "mean",
+            "Bankroll_Change": "sum"
+        }).reset_index()
+
+        weekly["Cumulative_Bankroll"] = DEFAULT_BANKROLL + weekly["Bankroll_Change"].cumsum()
+
+        weekly_file = BASE_RESULTS_DIR / "weekly_summary.csv"
+        weekly.to_csv(weekly_file, index=False)
+        logger.info(f"📑 Weekly summary exported to {weekly_file}")
+
+    except Exception as e:
+        logger.error(f"❌ Failed to log weekly summary: {e}")
 
 
 def run_step(cmd, step_name):
@@ -90,14 +162,20 @@ def run_pipeline(skip_telegram: bool = False):
         run_step(["python", "app/prediction_pipeline.py", "--model_type", "xgb", "--strategy", "kelly"],
                  "Running prediction pipeline")
 
-        # 5️⃣ Send Telegram report (optional)
+        # 5️⃣ Update bankroll tracking
+        update_bankroll(BASE_RESULTS_DIR / "picks.csv")
+
+        # 6️⃣ Send Telegram report (optional)
         if not skip_telegram:
             run_step(["python", "scripts/telegram_report.py"], "Sending Telegram report")
         else:
             logger.info("📲 Skipping Telegram report (flag set)")
 
-        # 6️⃣ Log daily summary
+        # 7️⃣ Log daily summary
         log_daily_summary()
+
+        # 8️⃣ Log weekly summary
+        log_weekly_summary()
 
         logger.info("✅ Pipeline completed successfully")
 

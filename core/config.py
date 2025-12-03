@@ -55,6 +55,10 @@ def dump_config():
         "DEFAULT_THRESHOLD": DEFAULT_THRESHOLD,
         "DEFAULT_BANKROLL": DEFAULT_BANKROLL,
         "MAX_KELLY_FRACTION": MAX_KELLY_FRACTION,
+        "CLEANUP_MODE": CLEANUP_MODE,
+        "ARCHIVE_RETENTION_DAYS": ARCHIVE_RETENTION_DAYS,
+        "MAX_DASHBOARD_IMAGES": MAX_DASHBOARD_IMAGES,
+        "MAX_LOG_FILES": MAX_LOG_FILES,
     }
 
 def validate_config():
@@ -100,6 +104,11 @@ OU_MODEL_FILE_H5 = BASE_MODELS_DIR / "NN_Models" / "Trained-Model-OU.h5"
 TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
 NEW_GAMES_FILE = BASE_DATA_DIR / "new_games.csv"
 NEW_GAMES_FEATURES_FILE = BASE_DATA_DIR / "new_games_features.csv"
+
+# ✅ Aliases for consistency
+FEATURES_FILE = NEW_GAMES_FEATURES_FILE
+FEATURES_DIR = BASE_DATA_DIR
+
 HISTORICAL_GAMES_FILE = BASE_DATA_DIR / "historical_games.csv"
 PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
 GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
@@ -116,3 +125,9 @@ SEED = 42
 DEFAULT_THRESHOLD = 0.6
 DEFAULT_BANKROLL = 1000.0
 MAX_KELLY_FRACTION = 0.05
+
+# Cleanup / Rotation Settings
+CLEANUP_MODE = os.getenv("CLEANUP_MODE", "archive").lower()  # "delete" or "archive"
+ARCHIVE_RETENTION_DAYS = int(os.getenv("ARCHIVE_RETENTION_DAYS", "180"))  # default 6 months
+MAX_DASHBOARD_IMAGES = int(os.getenv("MAX_DASHBOARD_IMAGES", "10"))
+MAX_LOG_FILES = int(os.getenv("MAX_LOG_FILES", "20"))

@@ -7,6 +7,7 @@ import os
 import requests
 import pandas as pd
 import argparse
+import matplotlib.pyplot as plt
 from core.log_config import setup_logger
 from core.exceptions import PipelineError, DataError
 
@@ -79,9 +80,29 @@ def load_summary(summary_path: str) -> pd.DataFrame:
     return df
 
 
+def generate_chart(df: pd.DataFrame, chart_path: str):
+    """Generate bankroll trajectory chart if not already present."""
+    if "Final_Bankroll" in df.columns:
+        plt.figure(figsize=(8, 5))
+        if "Date" in df.columns:
+            x = df["Date"]
+        elif "timestamp" in df.columns:
+            x = df["timestamp"]
+        else:
+            x = range(len(df))
+        plt.plot(x, df["Final_Bankroll"], marker="o")
+        plt.title("Bankroll Trajectory")
+        plt.xlabel("Date")
+        plt.ylabel("Final Bankroll")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(chart_path)
+        logger.info(f"📊 Chart generated at {chart_path}")
+
+
 def format_message(df: pd.DataFrame) -> str:
     """Format the summary DataFrame into a Telegram message."""
-    message = "*🏀 NBA Daily Combined Report*\n\n"
+    message = "*🏀 NBA Bankroll Report*\n\n"
     for _, row in df.iterrows():
         message += (
             f"📌 Model: {row['Model']}\n"
@@ -96,9 +117,11 @@ def format_message(df: pd.DataFrame) -> str:
     try:
         best_model = df.loc[df["Final_Bankroll"].fillna(0).idxmax()]
         message += (
-            f"📈 *Trend Analysis:* {best_model['Model']} outperformed others today "
-            f"with a bankroll of {best_model['Final_Bankroll']:.2f}."
+            f"📈 *Trend Analysis:* {best_model['Model']} leads with bankroll {best_model['Final_Bankroll']:.2f}."
         )
+        if len(df) > 1:
+            delta = df["Final_Bankroll"].iloc[-1] - df["Final_Bankroll"].iloc[-2]
+            message += f"\n📉 Change since last run: {delta:+.2f}"
     except Exception as e:
         logger.warning(f"⚠️ Trend analysis failed: {e}")
 
@@ -115,6 +138,10 @@ def main(summary_path: str, chart_path: str):
     if df.empty:
         return
 
+    # Generate chart if missing
+    if not os.path.exists(chart_path):
+        generate_chart(df, chart_path)
+
     message = format_message(df)
     send_message(message)
     send_photo(chart_path, caption="📈 Bankroll Trajectories")
@@ -122,8 +149,10 @@ def main(summary_path: str, chart_path: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Send bankroll summary report to Telegram")
-    parser.add_argument("--summary", default="results/combined_summary.csv", help="Path to summary CSV")
-    parser.add_argument("--chart", default="results/bankroll_comparison.png", help="Path to bankroll chart")
+    parser.add_argument("--summary", default="results/summary.csv",
+                        help="Path to summary CSV (daily, weekly, or monthly)")
+    parser.add_argument("--chart", default="results/bankroll.png",
+                        help="Path to bankroll chart image")
     args = parser.parse_args()
 
     main(summary_path=args.summary, chart_path=args.chart)

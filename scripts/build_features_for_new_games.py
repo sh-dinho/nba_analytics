@@ -1,73 +1,99 @@
 # ============================================================
 # File: scripts/build_features_for_new_games.py
-# Purpose: Build team-level features for new games
+# Purpose: Build features for upcoming games, including team averages and odds
 # ============================================================
 
 import pandas as pd
-import os
-from core.config import NEW_GAMES_FILE, NEW_GAMES_FEATURES_FILE
+from pathlib import Path
+from core.config import NEW_GAMES_FILE, PLAYER_STATS_FILE, NEW_GAMES_FEATURES_FILE
 from core.log_config import setup_logger
-from core.utils import ensure_columns
+from core.exceptions import DataError, PipelineError
 
 logger = setup_logger("build_features_for_new_games")
 
 
-def build_features_for_new_games(new_games_file: str = NEW_GAMES_FILE) -> str:
+def compute_team_averages(player_stats: pd.DataFrame) -> pd.DataFrame:
     """
-    Build team-level features for new games from player-level stats.
-    Saves to NEW_GAMES_FEATURES_FILE and returns path.
+    Compute team-level averages from player stats.
+    Returns a DataFrame with team averages for pts, ast, reb, games played.
     """
-    if not os.path.exists(new_games_file):
-        raise FileNotFoundError(f"{new_games_file} not found. Run fetch_new_games first.")
+    required_cols = ["team", "pts", "ast", "reb", "games_played"]
+    missing = [c for c in required_cols if c not in player_stats.columns]
+    if missing:
+        raise DataError(f"Player stats missing required columns: {missing}")
 
-    df = pd.read_csv(new_games_file)
+    team_avgs = (
+        player_stats.groupby("team")[["pts", "ast", "reb", "games_played"]]
+        .mean()
+        .reset_index()
+        .rename(
+            columns={
+                "pts": "avg_pts",
+                "ast": "avg_ast",
+                "reb": "avg_reb",
+                "games_played": "avg_games_played",
+            }
+        )
+    )
+    return team_avgs
 
-    # Ensure required columns exist
-    required = ["PLAYER_NAME", "TEAM_ABBREVIATION", "TEAM_HOME", "TEAM_AWAY",
-                "PTS", "AST", "REB", "GAMES_PLAYED"]
-    if "decimal_odds" in df.columns:
-        required.append("decimal_odds")
-    ensure_columns(df, required, "new games")
 
-    # Aggregate team-level averages
-    features = []
-    games = df[["TEAM_HOME", "TEAM_AWAY"]].drop_duplicates()
+def main():
+    # Load new games
+    if not Path(NEW_GAMES_FILE).exists():
+        raise FileNotFoundError(f"{NEW_GAMES_FILE} not found.")
+    new_games = pd.read_csv(NEW_GAMES_FILE)
+    if new_games.empty:
+        raise DataError("No new games found.")
 
-    for _, row in games.iterrows():
-        home_team = row["TEAM_HOME"]
-        away_team = row["TEAM_AWAY"]
+    # Load player stats
+    if not Path(PLAYER_STATS_FILE).exists():
+        raise FileNotFoundError(f"{PLAYER_STATS_FILE} not found.")
+    player_stats = pd.read_csv(PLAYER_STATS_FILE)
+    if player_stats.empty:
+        raise DataError("Player stats file is empty.")
 
-        home_players = df[df["TEAM_ABBREVIATION"] == home_team]
-        away_players = df[df["TEAM_ABBREVIATION"] == away_team]
+    # Compute team averages
+    team_avgs = compute_team_averages(player_stats)
 
-        game_features = {
-            "game_id": f"{home_team}_vs_{away_team}",
-            "home_team": home_team,
-            "away_team": away_team,
-            "home_avg_pts": home_players["PTS"].mean(),
-            "home_avg_ast": home_players["AST"].mean(),
-            "home_avg_reb": home_players["REB"].mean(),
-            "home_avg_games_played": home_players["GAMES_PLAYED"].mean(),
-            "away_avg_pts": away_players["PTS"].mean(),
-            "away_avg_ast": away_players["AST"].mean(),
-            "away_avg_reb": away_players["REB"].mean(),
-            "away_avg_games_played": away_players["GAMES_PLAYED"].mean(),
-        }
+    # Merge averages into new games (home + away)
+    features = (
+        new_games.merge(team_avgs, left_on="home_team", right_on="team", how="left")
+        .rename(
+            columns={
+                "avg_pts": "home_avg_pts",
+                "avg_ast": "home_avg_ast",
+                "avg_reb": "home_avg_reb",
+                "avg_games_played": "home_avg_games_played",
+            }
+        )
+        .drop(columns=["team"])
+    )
 
-        # Carry forward odds if available
-        if "decimal_odds" in df.columns:
-            game_features["decimal_odds"] = df.loc[df["TEAM_HOME"] == home_team, "decimal_odds"].iloc[0]
+    features = (
+        features.merge(team_avgs, left_on="away_team", right_on="team", how="left")
+        .rename(
+            columns={
+                "avg_pts": "away_avg_pts",
+                "avg_ast": "away_avg_ast",
+                "avg_reb": "away_avg_reb",
+                "avg_games_played": "away_avg_games_played",
+            }
+        )
+        .drop(columns=["team"])
+    )
 
-        features.append(game_features)
+    # If odds are included in NEW_GAMES_FILE, keep them
+    if "decimal_odds" not in features.columns and "decimal_odds" in new_games.columns:
+        features["decimal_odds"] = new_games["decimal_odds"]
 
-    features_df = pd.DataFrame(features)
-
-    # ✅ Save to NEW_GAMES_FEATURES_FILE
-    features_df.to_csv(NEW_GAMES_FEATURES_FILE, index=False)
-    logger.info(f"✅ Features built for new games ({len(features_df)} rows) → {NEW_GAMES_FEATURES_FILE}")
-
-    return str(NEW_GAMES_FEATURES_FILE)
+    # Save features
+    try:
+        features.to_csv(NEW_GAMES_FEATURES_FILE, index=False)
+        logger.info(f"✅ Features saved to {NEW_GAMES_FEATURES_FILE} ({len(features)} rows)")
+    except Exception as e:
+        raise PipelineError(f"Failed to save features: {e}")
 
 
 if __name__ == "__main__":
-    build_features_for_new_games()
+    main()
