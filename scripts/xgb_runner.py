@@ -5,45 +5,81 @@
 # prints colored output, returns structured results
 # ============================================================
 
+from typing import List, Tuple, Any, Dict, Optional
 import copy
 import numpy as np
 import xgboost as xgb
 import random
-from colorama import Fore, Style
+from colorama import Fore, Style, init
 from scripts.utils import expected_value, kelly_fraction
 from core.log_config import setup_logger
 from core.exceptions import PipelineError
-from core.config import XGB_ML_MODEL_FILE, XGB_OU_MODEL_FILE
+from core.config import (
+    XGB_ML_MODEL_FILE,
+    XGB_OU_MODEL_FILE,
+    DEFAULT_BANKROLL,
+    MAX_KELLY_FRACTION,
+    PRINT_ONLY_ACTIONABLE,
+    EV_THRESHOLD,
+    MIN_KELLY_STAKE,
+)
 
 logger = setup_logger("xgb_runner")
+init(autoreset=True)
 
 # Load models once
 try:
     xgb_ml = xgb.Booster()
-    xgb_ml.load_model(XGB_ML_MODEL_FILE)
+    xgb_ml.load_model(str(XGB_ML_MODEL_FILE))
     logger.info("✅ Moneyline XGBoost model loaded")
 
-    xgb_uo = xgb.Booster()
-    xgb_uo.load_model(XGB_OU_MODEL_FILE)
+    xgb_ou = xgb.Booster()
+    xgb_ou.load_model(str(XGB_OU_MODEL_FILE))
     logger.info("✅ Over/Under XGBoost model loaded")
 except Exception as e:
     logger.error(f"❌ Failed to load XGBoost models: {e}")
     raise PipelineError(f"Model loading failed: {e}")
 
 
-def xgb_runner(data, todays_games_uo, frame_ml, games,
-               home_team_odds, away_team_odds,
-               use_kelly=True, bankroll=1000.0, max_fraction=0.05, seed=None):
+def _softmax_row(row: np.ndarray) -> np.ndarray:
+    """Convert logits or arbitrary scores to probabilities (2-class)."""
+    if row.ndim != 1 or row.size != 2:
+        raise PipelineError(f"Expected a 1D vector of size 2, got shape {row.shape}")
+    s = float(np.sum(row))
+    if np.min(row) >= 0.0 and np.max(row) <= 1.0 and 0.99 <= s <= 1.01:
+        return row.astype(float)
+    exps = np.exp(row - np.max(row))
+    probs = exps / np.sum(exps)
+    return probs.astype(float)
+
+
+def _clip_prob(p: float, eps: float = 1e-6) -> float:
+    """Avoid exact 0 or 1 for EV/Kelly stability."""
+    return float(np.clip(p, eps, 1.0 - eps))
+
+
+def xgb_runner(
+    data: np.ndarray,
+    todays_games_uo: List[float],
+    frame_ml,
+    games: List[Tuple[str, str]],
+    home_team_odds: List[float],
+    away_team_odds: List[float],
+    use_kelly: bool = True,
+    bankroll: float = DEFAULT_BANKROLL,
+    max_fraction: float = MAX_KELLY_FRACTION,
+    seed: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], List[float], Dict[str, float]]:
     """
     Run XGBoost models for moneyline and over/under predictions.
     Simulates bankroll trajectory using EV and Kelly bet sizes.
 
     Args:
-        data: Feature matrix for ML predictions.
-        todays_games_uo: List of OU lines.
-        frame_ml: DataFrame with team info.
+        data: Feature matrix for ML predictions (n_games, n_features).
+        todays_games_uo: List of OU lines (length n_games).
+        frame_ml: DataFrame with team info aligned to games.
         games: List of (home_team, away_team) tuples.
-        home_team_odds, away_team_odds: Lists of decimal odds.
+        home_team_odds, away_team_odds: Lists of decimal odds aligned to games.
         use_kelly: Whether to apply Kelly criterion.
         bankroll: Starting bankroll.
         max_fraction: Max fraction of bankroll to risk per bet.
@@ -51,101 +87,103 @@ def xgb_runner(data, todays_games_uo, frame_ml, games,
 
     Returns:
         results: List of dicts with predictions and betting metrics.
-        history: Bankroll trajectory after each bet.
-        metrics: Summary dict (final bankroll, avg EV, win rate).
+        history: Bankroll trajectory after each game.
+        metrics: Summary dict (final bankroll, avg EV, win rate, total bets).
     """
     if seed is not None:
         random.seed(seed)
 
     try:
-        ml_preds = np.array(xgb_ml.predict(xgb.DMatrix(np.array(data)))).reshape(len(games), -1)
+        ml_preds_raw = xgb_ml.predict(xgb.DMatrix(np.asarray(data, dtype=float)))
+        ml_preds = np.asarray(ml_preds_raw).reshape(len(games), -1)
+
         frame_uo = copy.deepcopy(frame_ml)
         frame_uo["OU"] = np.asarray(todays_games_uo)
         ou_data = frame_uo.values.astype(float)
-        ou_preds = np.array(xgb_uo.predict(xgb.DMatrix(ou_data))).reshape(len(games), -1)
+
+        ou_preds_raw = xgb_ou.predict(xgb.DMatrix(ou_data))
+        ou_preds = np.asarray(ou_preds_raw).reshape(len(games), -1)
     except Exception as e:
         raise PipelineError(f"Prediction failed: {e}")
 
-    results = []
-    history = []
-    current_bankroll = bankroll
+    results: List[Dict[str, Any]] = []
+    history: List[float] = []
+    current_bankroll = float(bankroll)
 
     for i, (home_team, away_team) in enumerate(games):
+        # Moneyline probs
+        ml_probs = _softmax_row(ml_preds[i])
+        home_prob = _clip_prob(float(ml_probs[1]))
+        away_prob = _clip_prob(float(ml_probs[0]))
+
         # Winner prediction
-        winner_idx = int(np.argmax(ml_preds[i]))
-        winner_conf = ml_preds[i][winner_idx] * 100
+        winner_idx = int(np.argmax(ml_probs))
+        winner_conf = float(ml_probs[winner_idx] * 100.0)
+        predicted_winner = home_team if winner_idx == 1 else away_team
 
-        # OU prediction
-        ou_idx = int(np.argmax(ou_preds[i]))
-        ou_conf = ou_preds[i][ou_idx] * 100
+        # OU probs
+        ou_probs = _softmax_row(ou_preds[i])
+        ou_idx = int(np.argmax(ou_probs))
+        ou_conf = float(ou_probs[ou_idx] * 100.0)
+        ou_prediction = "OVER" if ou_idx == 1 else "UNDER"
 
-        # EV and Kelly
-        ev_home = ev_away = None
-        kelly_home = kelly_away = None
-        if home_team_odds[i] and home_team_odds[i] > 0:
-            ev_home = expected_value(ml_preds[i][1], float(home_team_odds[i]))
-            if use_kelly:
-                kelly_home = kelly_fraction(ml_preds[i][1], float(home_team_odds[i]))
-        if away_team_odds[i] and away_team_odds[i] > 0:
-            ev_away = expected_value(ml_preds[i][0], float(away_team_odds[i]))
-            if use_kelly:
-                kelly_away = kelly_fraction(ml_preds[i][0], float(away_team_odds[i]))
+        # EV
+        ev_home = expected_value(home_prob, float(home_team_odds[i]))
+        ev_away = expected_value(away_prob, float(away_team_odds[i]))
 
-        # Bet sizing
-        bet_size_home = current_bankroll * min(kelly_home or max_fraction, max_fraction) if use_kelly else current_bankroll * max_fraction
-        bet_size_away = current_bankroll * min(kelly_away or max_fraction, max_fraction) if use_kelly else current_bankroll * max_fraction
+        # Kelly fractions
+        k_home = kelly_fraction(home_prob, float(home_team_odds[i])) if use_kelly else None
+        k_away = kelly_fraction(away_prob, float(away_team_odds[i])) if use_kelly else None
 
-        # Simulate outcome (Bernoulli trial)
-        outcome_home = "WIN" if random.random() < ml_preds[i][1] else "LOSS"
-        profit_home = bet_size_home * (home_team_odds[i] - 1) if outcome_home == "WIN" else -bet_size_home
-        current_bankroll += profit_home
-        history.append(current_bankroll)
+        # Bet sizes
+        frac_home = min(k_home if (k_home is not None and k_home > 0) else max_fraction, max_fraction) if use_kelly else max_fraction
+        frac_away = min(k_away if (k_away is not None and k_away > 0) else max_fraction, max_fraction) if use_kelly else max_fraction
+        bet_size_home = current_bankroll * frac_home
+        bet_size_away = current_bankroll * frac_away
+
+        # Actionable filter
+        actionable_home = (ev_home is not None and ev_home >= EV_THRESHOLD and bet_size_home >= MIN_KELLY_STAKE)
+        actionable_away = (ev_away is not None and ev_away >= EV_THRESHOLD and bet_size_away >= MIN_KELLY_STAKE)
+        is_actionable = actionable_home or actionable_away
+
+        # Simulate outcomes
+        outcome_home = "WIN" if random.random() < home_prob else "LOSS"
+        profit_home = bet_size_home * (float(home_team_odds[i]) - 1.0) if outcome_home == "WIN" else -bet_size_home
+
+        outcome_away = "WIN" if random.random() < away_prob else "LOSS"
+        profit_away = bet_size_away * (float(away_team_odds[i]) - 1.0) if outcome_away == "WIN" else -bet_size_away
+
+        current_bankroll += (profit_home + profit_away)
+        history.append(round(current_bankroll, 2))
 
         result = {
             "home_team": home_team,
             "away_team": away_team,
-            "winner": home_team if winner_idx == 1 else away_team,
-            "winner_confidence": round(winner_conf, 1),
-            "ou_prediction": "UNDER" if ou_idx == 0 else "OVER",
+            "winner": predicted_winner,
+            "winner_confidence_pct": round(winner_conf, 1),
+            "ou_prediction": ou_prediction,
             "ou_line": todays_games_uo[i],
-            "ou_confidence": round(ou_conf, 1),
+            "ou_confidence_pct": round(ou_conf, 1),
+            "home_prob": round(home_prob, 4),
+            "away_prob": round(away_prob, 4),
             "ev_home": round(ev_home, 3) if ev_home is not None else None,
             "ev_away": round(ev_away, 3) if ev_away is not None else None,
-            "kelly_home": round(kelly_home, 3) if kelly_home is not None else None,
-            "kelly_away": round(kelly_away, 3) if kelly_away is not None else None,
+            "kelly_home": round(k_home, 3) if k_home is not None else None,
+            "kelly_away": round(k_away, 3) if k_away is not None else None,
             "bet_size_home": round(bet_size_home, 2),
             "bet_size_away": round(bet_size_away, 2),
             "outcome_home": outcome_home,
+            "outcome_away": outcome_away,
+            "profit_home": round(profit_home, 2),
+            "profit_away": round(profit_away, 2),
             "bankroll_after": round(current_bankroll, 2),
+            "actionable_home": actionable_home,
+            "actionable_away": actionable_away,
+            "is_actionable": is_actionable,
         }
         results.append(result)
 
         # Console output
-        winner_color = Fore.GREEN if winner_idx == 1 else Fore.RED
-        ou_color = Fore.MAGENTA if ou_idx == 0 else Fore.BLUE
-        print(
-            f"{winner_color}{home_team}{Style.RESET_ALL} vs "
-            f"{Fore.RED if winner_idx == 1 else Fore.GREEN}{away_team}{Style.RESET_ALL} "
-            f"{Fore.CYAN}({winner_conf:.1f}%){Style.RESET_ALL}: "
-            f"{ou_color}{result['ou_prediction']}{Style.RESET_ALL} {todays_games_uo[i]} "
-            f"{Fore.CYAN}({ou_conf:.1f}%){Style.RESET_ALL}"
-        )
-        print(
-            f"{home_team} EV: {ev_home} | Kelly: {result['kelly_home']} | Outcome: {outcome_home} | Bankroll: {current_bankroll:.2f}"
-        )
-
-    # Metrics summary
-    wins = sum(1 for r in results if r["outcome_home"] == "WIN")
-    total_bets = len(results)
-    win_rate = wins / total_bets if total_bets > 0 else 0
-    metrics = {
-        "final_bankroll": current_bankroll,
-        "avg_EV": np.mean([r["ev_home"] for r in results if r["ev_home"] is not None]),
-        "avg_Kelly_Bet": np.mean([r["kelly_home"] for r in results if r["kelly_home"] is not None]),
-        "win_rate": win_rate,
-        "total_bets": total_bets,
-    }
-
-    logger.info(f"Simulation completed | Final bankroll={metrics['final_bankroll']:.2f}, Win rate={metrics['win_rate']:.2%}")
-
-    return results, history, metrics
+        if not PRINT_ONLY_ACTIONABLE or is_actionable:
+            winner_color = Fore.GREEN if winner_idx == 1 else Fore.RED
+            opp_color = Fore.RED if winner_idx == 1 else Fore.GREEN

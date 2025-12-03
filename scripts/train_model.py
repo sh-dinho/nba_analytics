@@ -1,6 +1,6 @@
 # ============================================================
 # File: scripts/train_model.py
-# Purpose: Train predictive models on NBA features with optional hyperparameter tuning
+# Purpose: Train predictive models on NBA features (team + player)
 # ============================================================
 
 import argparse
@@ -17,19 +17,55 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
-from xgboost import XGBClassifier
-from core.config import TRAINING_FEATURES_FILE, MODEL_FILE_PKL, RESULTS_DIR
+from xgboost import XGBClassifier, XGBRegressor
+from core.config import (
+    TRAINING_FEATURES_FILE,
+    MODEL_FILE_PKL,
+    RESULTS_DIR,
+    BASE_DATA_DIR
+)
 from core.log_config import setup_logger
 from core.exceptions import DataError
 
 logger = setup_logger("train_model")
 
+PLAYER_FEATURES_FILE = os.path.join(BASE_DATA_DIR, "player_features.csv")
 
-def main(target: str = "label", model_type: str = "logistic", tune: bool = False):
+
+def safe_fit(model, X_train, y_train, X_test, y_test):
+    """Try fitting with early stopping, fallback if unsupported."""
+    try:
+        model.fit(
+            X_train, y_train,
+            eval_set=[(X_test, y_test)],
+            early_stopping_rounds=50,
+            verbose=False
+        )
+    except TypeError:
+        logger.warning("⚠️ early_stopping_rounds not supported in this XGBoost version. Training without early stopping.")
+        model.fit(
+            X_train, y_train,
+            eval_set=[(X_test, y_test)],
+            verbose=False
+        )
+    return model
+
+
+def _safe_cross_val(model, X, y, scoring=None):
+    """Run CV only if dataset is large enough."""
+    if len(X) < 30:
+        logger.warning("⚠️ Not enough samples for cross-validation (n<30). Skipping CV metrics.")
+        return None
+    cv_scores = cross_val_score(model, X, y, cv=min(5, len(X)), scoring=scoring)
+    return cv_scores
+
+
+def train_team_model(target: str = "label", model_type: str = "logistic", tune: bool = False):
     if not os.path.exists(TRAINING_FEATURES_FILE):
         raise DataError(f"Training features file not found: {TRAINING_FEATURES_FILE}")
 
     df = pd.read_csv(TRAINING_FEATURES_FILE)
+    logger.info(f"📂 Loaded team dataset with shape {df.shape}")
 
     if target not in df.columns:
         raise DataError(f"Training data missing '{target}' column")
@@ -43,8 +79,10 @@ def main(target: str = "label", model_type: str = "logistic", tune: bool = False
         if c not in ["game_id", "home_team", "away_team",
                      "label", "margin", "overtime", "outcome_category"]
     ]
-    X = df[feature_cols]
+    X = df[feature_cols].fillna(0)
     y = df[target]
+
+    logger.info(f"🔧 Using {len(feature_cols)} features for training")
 
     # Encode target if necessary
     if target == "label" and y.dtype == "object":
@@ -52,8 +90,7 @@ def main(target: str = "label", model_type: str = "logistic", tune: bool = False
 
     # For XGBoost, ensure all features are numeric
     if model_type == "xgb":
-        X = pd.get_dummies(X, drop_first=True)
-        X = X.fillna(0)
+        X = pd.get_dummies(X, drop_first=True).fillna(0)
 
     if X.shape[1] == 0:
         raise DataError("No usable features after preprocessing.")
@@ -87,8 +124,7 @@ def main(target: str = "label", model_type: str = "logistic", tune: bool = False
                 eval_metric="logloss"
             )
 
-            if tune:
-                # Hyperparameter search space
+            if tune and len(X_train) > 30:
                 param_dist = {
                     "n_estimators": [200, 500, 1000],
                     "learning_rate": [0.01, 0.05, 0.1],
@@ -96,6 +132,8 @@ def main(target: str = "label", model_type: str = "logistic", tune: bool = False
                     "subsample": [0.6, 0.8, 1.0],
                     "colsample_bytree": [0.6, 0.8, 1.0]
                 }
+
+                logger.info(f"🔍 Running hyperparameter search (n_samples={len(X_train)})")
 
                 search = RandomizedSearchCV(
                     base_model,
@@ -107,32 +145,16 @@ def main(target: str = "label", model_type: str = "logistic", tune: bool = False
                     random_state=42,
                     n_jobs=-1
                 )
-
-                # Run search WITHOUT early stopping
                 search.fit(X_train, y_train)
-
-                # Get best model and refit WITH early stopping
                 best_model = search.best_estimator_
                 logger.info(f"✅ Best XGBoost params: {search.best_params_}")
 
-                best_model.fit(
-                    X_train, y_train,
-                    eval_set=[(X_test, y_test)],
-                    early_stopping_rounds=50,
-                    verbose=False
-                )
-                model = best_model
+                model = safe_fit(best_model, X_train, y_train, X_test, y_test)
             else:
-                # Normal fit with early stopping
-                base_model.fit(
-                    X_train, y_train,
-                    eval_set=[(X_test, y_test)],
-                    early_stopping_rounds=50,
-                    verbose=False
-                )
-                model = base_model
+                if tune:
+                    logger.warning("⚠️ Not enough samples for hyperparameter tuning. Skipping search.")
+                model = safe_fit(base_model, X_train, y_train, X_test, y_test)
         else:
-            # Logistic regression with preprocessing
             preprocessor = ColumnTransformer(
                 transformers=[
                     ("num", StandardScaler(), numeric_features),
@@ -149,80 +171,49 @@ def main(target: str = "label", model_type: str = "logistic", tune: bool = False
     metrics = {}
     if target == "label":
         y_pred = model.predict(X_test)
-        if hasattr(model, "predict_proba"):
-            y_prob = model.predict_proba(X_test)[:, 1]
-        else:
-            y_prob = y_pred
+        y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else y_pred
         metrics["accuracy"] = accuracy_score(y_test, y_pred)
         metrics["log_loss"] = log_loss(y_test, y_prob)
         metrics["brier"] = brier_score_loss(y_test, y_prob)
         metrics["auc"] = roc_auc_score(y_test, y_prob)
-
-        cv_scores = cross_val_score(model, X, y, cv=5, scoring="accuracy")
-        metrics["cv_accuracy_mean"] = cv_scores.mean()
-        metrics["cv_accuracy_std"] = cv_scores.std()
-
+        cv_scores = _safe_cross_val(model, X, y)
+        if cv_scores is not None:
+            metrics["cv_accuracy_mean"] = cv_scores.mean()
+            metrics["cv_accuracy_std"] = cv_scores.std()
     elif target == "margin":
         y_pred = model.predict(X_test)
         metrics["rmse"] = mean_squared_error(y_test, y_pred, squared=False)
-
-        cv_scores = cross_val_score(model, X, y, cv=5, scoring="neg_root_mean_squared_error")
-        metrics["cv_rmse_mean"] = -cv_scores.mean()
-        metrics["cv_rmse_std"] = cv_scores.std()
-
+        cv_scores = _safe_cross_val(model, X, y, scoring="neg_root_mean_squared_error")
+        if cv_scores is not None:
+            metrics["cv_rmse_mean"] = -cv_scores.mean()
+            metrics["cv_rmse_std"] = cv_scores.std()
     elif target == "outcome_category":
         y_pred = model.predict(X_test)
         metrics["accuracy"] = accuracy_score(y_test, y_pred)
-
-        cv_scores = cross_val_score(model, X, y, cv=5, scoring="accuracy")
-        metrics["cv_accuracy_mean"] = cv_scores.mean()
-        metrics["cv_accuracy_std"] = cv_scores.std()
+        cv_scores = _safe_cross_val(model, X, y, scoring="accuracy")
+        if cv_scores is not None:
+            metrics["cv_accuracy_mean"] = cv_scores.mean()
+            metrics["cv_accuracy_std"] = cv_scores.std()
 
     # Save model artifact
     artifact = {"model": model, "features": list(X.columns), "target": target}
     joblib.dump(artifact, MODEL_FILE_PKL)
-    logger.info(f"✅ Model trained on target='{target}' and saved to {MODEL_FILE_PKL}")
+    logger.info(f"✅ Team model trained on target='{target}' and saved to {MODEL_FILE_PKL}")
 
     # Save metrics
     os.makedirs(RESULTS_DIR, exist_ok=True)
     metrics_df = pd.DataFrame([metrics])
-    metrics_file = os.path.join(RESULTS_DIR, "training_metrics.csv")
-    if os.path.exists(metrics_file):
-        metrics_df.to_csv(metrics_file, mode="a", header=False, index=False)
-    else:
-        metrics_df.to_csv(metrics_file, index=False)
-    logger.info(f"📊 Metrics saved to {metrics_file}: {metrics}")
-
-    # Save feature importance if available
-    if hasattr(model, "feature_importances_"):
-        importance_df = pd.DataFrame({
-            "feature": list(X.columns),
-            "importance": model.feature_importances_
-        }).sort_values("importance", ascending=False)
-        importance_file = os.path.join(RESULTS_DIR, "feature_importance.csv")
-        importance_df.to_csv(importance_file, index=False)
-        logger.info(f"📈 Feature importances saved to {importance_file}")
-
-    # Save logistic regression coefficients if available
-    if isinstance(model, Pipeline) and "logreg" in model.named_steps:
-        logreg = model.named_steps["logreg"]
-        coef_df = pd.DataFrame({
-            "feature": list(X.columns),
-            "coefficient": logreg.coef_[0]
-        }).sort_values("coefficient", ascending=False)
-        coef_file = os.path.join(RESULTS_DIR, "logreg_coefficients.csv")
-        coef_df.to_csv(coef_file, index=False)
-        logger.info(f"📉 Logistic regression coefficients saved to {coef_file}")
+    metrics_file = os.path.join(RESULTS_DIR, f"metrics_team_{target}_{model_type}.csv")
+    metrics_df.to_csv(metrics_file, index=False)
+    logger.info(f"📊 Team metrics saved to {metrics_file}: {metrics}")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train NBA prediction model")
-    parser.add_argument("--target", type=str, default="label",
-                        help="Target column: label, margin, outcome_category")
-    parser.add_argument("--model_type", type=str, default="logistic",
-                        help="Model type: logistic, rf, xgb, linear")
-    parser.add_argument("--tune", action="store_true",
-                        help="Enable hyperparameter tuning for XGBoost")
-    args = parser.parse_args()
+def train_player_model(target="pts", model_type="linear"):
+    if not os.path.exists(PLAYER_FEATURES_FILE):
+        raise DataError(f"Player features file not found: {PLAYER_FEATURES_FILE}")
 
-    main(target=args.target, model_type=args.model_type, tune=args.tune)
+    df = pd.read_csv(PLAYER_FEATURES_FILE)
+    logger.info(f"📂 Loaded player dataset with shape {df.shape}")
+
+    if target not in df.columns:
+        raise DataError

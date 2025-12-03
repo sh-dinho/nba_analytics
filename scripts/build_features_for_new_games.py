@@ -1,6 +1,6 @@
 # ============================================================
 # File: scripts/build_features_for_new_games.py
-# Purpose: Build features for upcoming games, including rolling team averages and odds
+# Purpose: Build features for upcoming games, including rolling team averages, odds, and OU lines
 # ============================================================
 
 import pandas as pd
@@ -103,6 +103,10 @@ def main():
     # If odds are included in NEW_GAMES_FILE, keep them
     if "decimal_odds" not in features.columns and "decimal_odds" in new_games.columns:
         features["decimal_odds"] = new_games["decimal_odds"]
+
+    # If OU line is included in NEW_GAMES_FILE, keep it
+    if "ou_line" in new_games.columns and "ou_line" not in features.columns:
+        features["ou_line"] = new_games["ou_line"]
 
     # Save features
     try:

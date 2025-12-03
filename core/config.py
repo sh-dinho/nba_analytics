@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 import logging
 
+# Environment setup
 ENV = os.getenv("PIPELINE_ENV", "local").lower()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -33,11 +34,16 @@ ARCHIVE_DIR = BASE_DATA_DIR / "archive"
 LOG_FILE = BASE_LOGS_DIR / "pipeline.log"
 PICKS_BANKROLL_FILE = BASE_RESULTS_DIR / "picks_bankroll_xgb.csv"
 
+# NEW: Logs for downloads and training
+DOWNLOAD_SUMMARY_FILE = BASE_LOGS_DIR / "download_summary.log"
+TRAINING_METRICS_LOG = BASE_LOGS_DIR / "training_metrics.log"
+
 def ensure_dirs():
-    """Ensure all required directories exist, including NN_Models and archive subfolder."""
+    """Ensure all required directories exist, including NN_Models and XGBoost subfolders."""
     for d in [BASE_DATA_DIR, BASE_MODELS_DIR, BASE_RESULTS_DIR, BASE_LOGS_DIR, ARCHIVE_DIR]:
         d.mkdir(parents=True, exist_ok=True)
     (BASE_MODELS_DIR / "NN_Models").mkdir(parents=True, exist_ok=True)
+    (BASE_MODELS_DIR / "XGBoost").mkdir(parents=True, exist_ok=True)
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 def dump_config():
@@ -51,6 +57,8 @@ def dump_config():
         "ARCHIVE_DIR": str(ARCHIVE_DIR),
         "LOG_FILE": str(LOG_FILE),
         "PICKS_BANKROLL_FILE": str(PICKS_BANKROLL_FILE),
+        "DOWNLOAD_SUMMARY_FILE": str(DOWNLOAD_SUMMARY_FILE),
+        "TRAINING_METRICS_LOG": str(TRAINING_METRICS_LOG),
         "SEED": SEED,
         "DEFAULT_THRESHOLD": DEFAULT_THRESHOLD,
         "DEFAULT_BANKROLL": DEFAULT_BANKROLL,
@@ -61,6 +69,13 @@ def dump_config():
         "MAX_LOG_FILES": MAX_LOG_FILES,
         "USE_ROLLING_AVG": USE_ROLLING_AVG,
         "ROLLING_WINDOW": ROLLING_WINDOW,
+        "PRINT_ONLY_ACTIONABLE": PRINT_ONLY_ACTIONABLE,
+        "EV_THRESHOLD": EV_THRESHOLD,
+        "MIN_KELLY_STAKE": MIN_KELLY_STAKE,
+        "ML_MODEL_FILE_H5": str(ML_MODEL_FILE_H5),
+        "OU_MODEL_FILE_H5": str(OU_MODEL_FILE_H5),
+        "XGB_ML_MODEL_FILE": str(XGB_ML_MODEL_FILE),
+        "XGB_OU_MODEL_FILE": str(XGB_OU_MODEL_FILE),
     }
 
 def validate_config():
@@ -72,6 +87,8 @@ def validate_config():
         issues.append(f"Missing models directory: {BASE_MODELS_DIR}")
     if not (BASE_MODELS_DIR / "NN_Models").exists():
         issues.append(f"Missing NN_Models subfolder: {BASE_MODELS_DIR / 'NN_Models'}")
+    if not (BASE_MODELS_DIR / "XGBoost").exists():
+        issues.append(f"Missing XGBoost subfolder: {BASE_MODELS_DIR / 'XGBoost'}")
     if not ARCHIVE_DIR.exists():
         issues.append(f"Missing archive directory: {ARCHIVE_DIR}")
     if not LOG_FILE.parent.exists():
@@ -80,6 +97,10 @@ def validate_config():
         issues.append(f"Missing ML model file: {ML_MODEL_FILE_H5}")
     if not OU_MODEL_FILE_H5.exists():
         issues.append(f"Missing OU model file: {OU_MODEL_FILE_H5}")
+    if not XGB_ML_MODEL_FILE.exists():
+        issues.append(f"Missing XGB ML model file: {XGB_ML_MODEL_FILE}")
+    if not XGB_OU_MODEL_FILE.exists():
+        issues.append(f"Missing XGB OU model file: {XGB_OU_MODEL_FILE}")
 
     if issues:
         for issue in issues:
@@ -87,7 +108,6 @@ def validate_config():
     else:
         logging.info("✅ Config validation passed — all critical files and directories exist.")
 
-    # Explicitly log which averaging mode is active
     mode = "rolling" if USE_ROLLING_AVG else "season"
     logging.info(f"📊 Feature building mode: {mode} averages (window={ROLLING_WINDOW if USE_ROLLING_AVG else 'N/A'})")
 
@@ -102,22 +122,27 @@ logging.basicConfig(
 MODEL_FILE_PKL = BASE_MODELS_DIR / "game_predictor.pkl"
 MODEL_FILE_H5 = BASE_MODELS_DIR / "game_predictor.h5"
 
-# Neural Network models (centralized paths)
+# Neural Network models
 ML_MODEL_FILE_H5 = BASE_MODELS_DIR / "NN_Models" / "Trained-Model-ML.h5"
 OU_MODEL_FILE_H5 = BASE_MODELS_DIR / "NN_Models" / "Trained-Model-OU.h5"
 
+# XGBoost models
+XGB_MODELS_DIR = BASE_MODELS_DIR / "XGBoost"
+XGB_ML_MODEL_FILE = XGB_MODELS_DIR / "Trained-XGB-ML.json"
+XGB_OU_MODEL_FILE = XGB_MODELS_DIR / "Trained-XGB-OU.json"
+
 # Data files
 TRAINING_FEATURES_FILE = BASE_DATA_DIR / "training_features.csv"
+PLAYER_FEATURES_FILE = BASE_DATA_DIR / "player_features.csv"   # NEW
 NEW_GAMES_FILE = BASE_DATA_DIR / "new_games.csv"
 NEW_GAMES_FEATURES_FILE = BASE_DATA_DIR / "new_games_features.csv"
-
-# ✅ Aliases for consistency
-FEATURES_FILE = NEW_GAMES_FEATURES_FILE
-FEATURES_DIR = BASE_DATA_DIR
-
 HISTORICAL_GAMES_FILE = BASE_DATA_DIR / "historical_games.csv"
 PLAYER_STATS_FILE = BASE_DATA_DIR / "player_stats.csv"
 GAME_RESULTS_FILE = BASE_DATA_DIR / "game_results.csv"
+
+# Aliases
+FEATURES_FILE = NEW_GAMES_FEATURES_FILE
+FEATURES_DIR = BASE_DATA_DIR
 
 # Results files
 PREDICTIONS_FILE = BASE_RESULTS_DIR / "today_predictions.csv"
@@ -132,9 +157,14 @@ DEFAULT_THRESHOLD = 0.6
 DEFAULT_BANKROLL = 1000.0
 MAX_KELLY_FRACTION = 0.05
 
+# Actionable bet display filters
+PRINT_ONLY_ACTIONABLE = os.getenv("PRINT_ONLY_ACTIONABLE", "false").lower() in ("1", "true", "yes")
+EV_THRESHOLD = float(os.getenv("EV_THRESHOLD", "0.01"))
+MIN_KELLY_STAKE = float(os.getenv("MIN_KELLY_STAKE", "1.0"))
+
 # Cleanup / Rotation Settings
-CLEANUP_MODE = os.getenv("CLEANUP_MODE", "archive").lower()  # "delete" or "archive"
-ARCHIVE_RETENTION_DAYS = int(os.getenv("ARCHIVE_RETENTION_DAYS", "180"))  # default 6 months
+CLEANUP_MODE = os.getenv("CLEANUP_MODE", "archive").lower()
+ARCHIVE_RETENTION_DAYS = int(os.getenv("ARCHIVE_RETENTION_DAYS", "180"))
 MAX_DASHBOARD_IMAGES = int(os.getenv("MAX_DASHBOARD_IMAGES", "10"))
 MAX_LOG_FILES = int(os.getenv("MAX_LOG_FILES", "20"))
 
