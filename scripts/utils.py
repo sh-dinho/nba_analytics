@@ -6,7 +6,7 @@
 from typing import List, Dict
 from core.log_config import setup_logger
 from core.exceptions import DataError
-
+import os
 logger = setup_logger("utils")
 
 
@@ -182,3 +182,20 @@ class Simulation:
         }
         logger.info(f"Simulation summary: {summary}")
         return summary
+    
+    duplicate_files = []
+
+    def track_duplicate(file_path: str, timestamp: str) -> str:
+        base, ext = os.path.splitext(file_path)
+        ts_file = f"{base}_{timestamp}{ext}"
+        if os.path.exists(ts_file):
+            duplicate_files.append(ts_file)
+        return ts_file
+
+    def cleanup_duplicates():
+        for f in duplicate_files:
+            try:
+                os.remove(f)
+                logger.info(f"🗑️ Deleted duplicate file: {f}")
+            except Exception as e:
+                logger.error(f"❌ Failed to delete {f}: {e}")
