@@ -1,79 +1,53 @@
 # ============================================================
 # File: scripts/fetch_player_stats.py
-# Purpose: Fetch player stats or generate synthetic data for CI/testing
+# Purpose: Fetch player stats for the current NBA season (real data)
 # ============================================================
 
+import argparse
 import os
 import pandas as pd
-from core.config import PLAYER_STATS_FILE, BASE_DATA_DIR
+from nba_api.stats.endpoints import leaguedashplayerstats
+from core.config import PLAYER_STATS_FILE
 from core.log_config import setup_logger
-from core.exceptions import DataError
-from core.utils import ensure_columns
 
 logger = setup_logger("fetch_player_stats")
 
 
-def _synthetic_stats() -> pd.DataFrame:
-    """Generate synthetic player stats for CI/testing."""
-    df = pd.DataFrame({
-        "PLAYER_NAME": ["Synthetic Player A", "Synthetic Player B"],
-        "TEAM_ABBREVIATION": ["SYN", "SYN"],
-        "AGE": [25, 28],
-        "POSITION": ["G", "F"],
-        "GAMES_PLAYED": [10, 12],
-        "PTS": [15, 20],
-        "AST": [5, 7],
-        "REB": [4, 6],
-    })
-    ensure_columns(df, {"PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB", "GAMES_PLAYED"}, "synthetic player stats")
+def fetch_live_player_stats(season: str) -> pd.DataFrame:
+    """
+    Fetch real player stats from NBA.com using nba_api.
+    Season format must be 'YYYY-YY', e.g. '2025-26'.
+    """
+    logger.info(f"Fetching player stats for season {season} from NBA API...")
+
+    # Query NBA API for player stats
+    stats = leaguedashplayerstats.LeagueDashPlayerStats(season=season)
+    df = stats.get_data_frames()[0]  # returns a list of DataFrames
+
+    logger.info(f"Retrieved {len(df)} player rows from NBA API for season {season}")
     return df
 
 
-def _real_stats() -> pd.DataFrame:
-    """Placeholder for real scraping/API logic."""
-    df = pd.DataFrame({
-        "PLAYER_NAME": ["LeBron James", "Stephen Curry"],
-        "TEAM_ABBREVIATION": ["LAL", "GSW"],
-        "AGE": [40, 37],
-        "POSITION": ["F", "G"],
-        "GAMES_PLAYED": [20, 18],
-        "PTS": [25.3, 29.1],
-        "AST": [7.2, 6.5],
-        "REB": [8.1, 5.2],
-    })
-    ensure_columns(df, {"PLAYER_NAME", "TEAM_ABBREVIATION", "PTS", "AST", "REB", "GAMES_PLAYED"}, "real player stats")
-    return df
-
-
-def main(use_synthetic: bool = False) -> pd.DataFrame:
-    """Fetch player stats and save to PLAYER_STATS_FILE. Returns DataFrame."""
-    os.makedirs(BASE_DATA_DIR, exist_ok=True)
+def main(season: str, force_refresh: bool = False):
+    if os.path.exists(PLAYER_STATS_FILE) and not force_refresh:
+        logger.info(f"Player stats already exist at {PLAYER_STATS_FILE}. Skipping fetch.")
+        return
 
     try:
-        if use_synthetic:
-            logger.info("⚙️ Using synthetic player stats for CI/testing...")
-            df = _synthetic_stats()
-        else:
-            logger.info("Fetching real player stats...")
-            df = _real_stats()
-
+        df = fetch_live_player_stats(season)
         df.to_csv(PLAYER_STATS_FILE, index=False)
-        logger.info(f"✅ Player stats saved to {PLAYER_STATS_FILE}")
-        return df
-
+        logger.info(f"✅ Player stats saved to {PLAYER_STATS_FILE} ({len(df)} rows)")
     except Exception as e:
-        logger.error(f"Failed to fetch real stats: {e}")
-        logger.info("Falling back to synthetic data...")
-        df = _synthetic_stats()
-        df.to_csv(PLAYER_STATS_FILE, index=False)
-        logger.info(f"Synthetic player stats saved to {PLAYER_STATS_FILE}")
-        return df
+        logger.error(f"❌ Failed to fetch player stats: {e}")
+        raise
 
 
 if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Fetch player stats")
-    parser.add_argument("--use_synthetic", action="store_true",
-                        help="Generate synthetic stats instead of scraping")
+    parser = argparse.ArgumentParser(description="Fetch player stats for NBA season")
+    parser.add_argument("--season", type=str, required=True,
+                        help="NBA season string, e.g. '2025-26'")
+    parser.add_argument("--force_refresh", action="store_true",
+                        help="Force re-fetch even if file exists")
     args = parser.parse_args()
-    main(use_synthetic=args.use_synthetic)
+
+    main(season=args.season, force_refresh=args.force_refresh)

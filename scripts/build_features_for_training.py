@@ -1,66 +1,193 @@
 # ============================================================
 # File: scripts/build_features_for_training.py
-# Purpose: Build training features from historical games with labels
+# Purpose: Build training features from historical games
+#          Outputs both team-level and player-level features
 # ============================================================
 
-import os
 import pandas as pd
-from core.config import TRAINING_FEATURES_FILE, HISTORICAL_GAMES_FILE
+import datetime
+from pathlib import Path
+from core.config import (
+    HISTORICAL_GAMES_FILE,
+    TRAINING_FEATURES_FILE,
+    USE_ROLLING_AVG,
+    ROLLING_WINDOW,
+    BASE_LOGS_DIR,
+    BASE_DATA_DIR,
+)
 from core.log_config import setup_logger
-from core.utils import ensure_columns
 
 logger = setup_logger("build_features_training")
 
+TRAINING_FEATURES_LOG = BASE_LOGS_DIR / "training_features.log"
+PLAYER_FEATURES_FILE = BASE_DATA_DIR / "player_features.csv"
 
-def build_features_for_training(historical_file: str = HISTORICAL_GAMES_FILE) -> str:
-    """
-    Build game-level features from historical games.
-    Aggregates player stats into team averages, merges home vs away,
-    and adds a 'label' column (1 if home team won, else 0).
-    Saves to TRAINING_FEATURES_FILE and returns path.
-    """
-    if not os.path.exists(historical_file):
-        raise FileNotFoundError(f"{historical_file} not found. Provide historical games data.")
 
-    df = pd.read_csv(historical_file)
+def build_features_for_training() -> str:
+    logger.info("Loading historical games...")
+    df = pd.read_csv(HISTORICAL_GAMES_FILE)
 
-    # ✅ Do NOT require decimal_odds for training
-    ensure_columns(df, {
-        "PLAYER_NAME", "TEAM_ABBREVIATION", "TEAM_HOME", "TEAM_AWAY",
-        "PTS", "AST", "REB", "GAMES_PLAYED", "HOME_WIN"
-    }, "historical game features")
+    if df.empty:
+        raise ValueError("Historical games file is empty.")
 
-    # Aggregate player stats into team-level
-    team_features = df.groupby("TEAM_ABBREVIATION").agg({
-        "PTS": "mean", "AST": "mean", "REB": "mean", "GAMES_PLAYED": "mean"
-    }).reset_index().rename(columns={
-        "TEAM_ABBREVIATION": "team",
-        "PTS": "avg_pts", "AST": "avg_ast", "REB": "avg_reb", "GAMES_PLAYED": "avg_games_played"
-    })
+    logger.info(f"Detected columns: {list(df.columns)}")
 
-    # Merge into game-level rows
-    games = df[["TEAM_HOME", "TEAM_AWAY", "HOME_WIN"]].drop_duplicates()
-    merged = []
-    for _, row in games.iterrows():
-        home = team_features[team_features["team"] == row["TEAM_HOME"]].iloc[0]
-        away = team_features[team_features["team"] == row["TEAM_AWAY"]].iloc[0]
-        merged.append({
-            "game_id": f"{row['TEAM_HOME']}_vs_{row['TEAM_AWAY']}",
-            "home_team": row["TEAM_HOME"], "away_team": row["TEAM_AWAY"],
-            "home_avg_pts": home["avg_pts"], "home_avg_ast": home["avg_ast"],
-            "home_avg_reb": home["avg_reb"], "home_avg_games_played": home["avg_games_played"],
-            "away_avg_pts": away["avg_pts"], "away_avg_ast": away["avg_ast"],
-            "away_avg_reb": away["avg_reb"], "away_avg_games_played": away["avg_games_played"],
-            "label": 1 if row["HOME_WIN"] == 1 else 0
-        })
-    features_df = pd.DataFrame(merged)
+    # Normalize column names
+    rename_map = {
+        "TEAM_HOME": "home_team",
+        "TEAM_AWAY": "away_team",
+        "PTS": "pts",
+        "AST": "ast",
+        "REB": "reb",
+        "GAMES_PLAYED": "games_played",
+        "HOME_WIN": "home_win",
+    }
+    df = df.rename(columns={k: v for k, v in rename_map.items() if k in df.columns})
 
-    os.makedirs(os.path.dirname(TRAINING_FEATURES_FILE), exist_ok=True)
-    features_df.to_csv(TRAINING_FEATURES_FILE, index=False)
-    logger.info(f"✅ Training features built ({len(features_df)} rows) → {TRAINING_FEATURES_FILE}")
+    required = ["home_team", "away_team", "pts", "ast", "reb", "games_played", "home_win"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Historical games file missing required columns: {missing}")
 
-    return TRAINING_FEATURES_FILE
+    # --- Team-level aggregation ---
+    team_totals = (
+        df.groupby(["home_team", "away_team"])
+        [["pts", "ast", "reb", "games_played"]]
+        .sum()
+        .reset_index()
+    )
+
+    # Labels
+    team_totals["label"] = df.groupby(["home_team", "away_team"])["home_win"].max().values
+
+    # Split into home/away stats
+    home_stats = team_totals.rename(
+        columns={
+            "pts": "home_pts",
+            "ast": "home_ast",
+            "reb": "home_reb",
+            "games_played": "home_games_played",
+        }
+    )
+    away_stats = team_totals.rename(
+        columns={
+            "pts": "away_pts",
+            "ast": "away_ast",
+            "reb": "away_reb",
+            "games_played": "away_games_played",
+        }
+    )
+
+    # Merge home and away stats
+    features = pd.merge(
+        home_stats[["home_team", "away_team", "home_pts", "home_ast", "home_reb", "home_games_played", "label"]],
+        away_stats[["home_team", "away_team", "away_pts", "away_ast", "away_reb", "away_games_played"]],
+        on=["home_team", "away_team"],
+    )
+
+    # Margin of victory
+    features["margin"] = features["home_pts"] - features["away_pts"]
+
+    # Outcome category
+    def categorize(row):
+        if row["margin"] >= 10 and row["label"] == 1:
+            return "home_blowout"
+        elif row["margin"] < 10 and row["label"] == 1:
+            return "home_close"
+        elif row["margin"] <= -10 and row["label"] == 0:
+            return "away_blowout"
+        else:
+            return "away_close"
+
+    features["outcome_category"] = features.apply(categorize, axis=1)
+
+    # Rolling vs season averages for team stats
+    if USE_ROLLING_AVG:
+        logger.info(f"Using rolling averages (window={ROLLING_WINDOW}) for team features")
+        for col in ["home_pts", "home_ast", "home_reb"]:
+            features[f"home_avg_{col.split('_')[1]}"] = (
+                features.groupby("home_team")[col].transform(lambda x: x.rolling(ROLLING_WINDOW, min_periods=1).mean())
+            )
+        for col in ["away_pts", "away_ast", "away_reb"]:
+            features[f"away_avg_{col.split('_')[1]}"] = (
+                features.groupby("away_team")[col].transform(lambda x: x.rolling(ROLLING_WINDOW, min_periods=1).mean())
+            )
+    else:
+        logger.info("Using season averages for team features")
+        for col in ["home_pts", "home_ast", "home_reb"]:
+            features[f"home_avg_{col.split('_')[1]}"] = features.groupby("home_team")[col].transform("mean")
+        for col in ["away_pts", "away_ast", "away_reb"]:
+            features[f"away_avg_{col.split('_')[1]}"] = features.groupby("away_team")[col].transform("mean")
+
+    # Save team features
+    features.to_csv(TRAINING_FEATURES_FILE, index=False)
+    logger.info(f"✅ Team training features built ({len(features)} rows) → {TRAINING_FEATURES_FILE}")
+
+    # --- Player-level rolling/season averages ---
+    if USE_ROLLING_AVG:
+        logger.info(f"Computing player-level rolling averages (window={ROLLING_WINDOW})")
+        df = df.sort_values("games_played")
+        player_roll = (
+            df.groupby("PLAYER_NAME")[["pts", "ast", "reb"]]
+            .rolling(ROLLING_WINDOW, min_periods=1)
+            .mean()
+            .reset_index()
+        )
+        df["player_avg_pts"] = player_roll["pts"]
+        df["player_avg_ast"] = player_roll["ast"]
+        df["player_avg_reb"] = player_roll["reb"]
+    else:
+        logger.info("Computing player-level season averages")
+        df["player_avg_pts"] = df.groupby("PLAYER_NAME")["pts"].transform("mean")
+        df["player_avg_ast"] = df.groupby("PLAYER_NAME")["ast"].transform("mean")
+        df["player_avg_reb"] = df.groupby("PLAYER_NAME")["reb"].transform("mean")
+
+    # Save player features
+    player_features = df[["PLAYER_NAME", "TEAM_ABBREVIATION", "games_played",
+                          "player_avg_pts", "player_avg_ast", "player_avg_reb"]]
+    player_features.to_csv(PLAYER_FEATURES_FILE, index=False)
+    logger.info(f"✅ Player features built ({len(player_features)} rows) → {PLAYER_FEATURES_FILE}")
+
+    # Append summary log
+    run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    mode = "rolling" if USE_ROLLING_AVG else "season"
+    summary_entry = pd.DataFrame([{
+        "timestamp": run_time,
+        "mode": mode,
+        "window": ROLLING_WINDOW if USE_ROLLING_AVG else None,
+        "team_rows": len(features),
+        "player_rows": len(player_features),
+    }])
+    try:
+        if TRAINING_FEATURES_LOG.exists():
+            summary_entry.to_csv(TRAINING_FEATURES_LOG, mode="a", header=False, index=False)
+        else:
+            summary_entry.to_csv(TRAINING_FEATURES_LOG, index=False)
+        logger.info(f"📈 Training features summary appended to {TRAINING_FEATURES_LOG}")
+    except Exception as e:
+        logger.warning(f"Failed to append training features summary: {e}")
+
+    return str(TRAINING_FEATURES_FILE)
 
 
 if __name__ == "__main__":
+    import argparse
+    from core import config
+
+    parser = argparse.ArgumentParser(description="Build training features from historical games")
+    parser.add_argument("--rolling", action="store_true", help="Use rolling averages (last N games)")
+    parser.add_argument("--season", action="store_true", help="Use season averages")
+    parser.add_argument("--window", type=int, default=None, help="Rolling window size (default from config)")
+    args = parser.parse_args()
+
+    if args.rolling:
+        config.USE_ROLLING_AVG = True
+    if args.season:
+        config.USE_ROLLING_AVG = False
+    if args.window is not None:
+        config.ROLLING_WINDOW = args.window
+
+    mode = "rolling" if config.USE_ROLLING_AVG else "season"
+    logger.info(f"🛠️ CLI override: using {mode} averages (window={config.ROLLING_WINDOW if config.USE_ROLLING_AVG else 'N/A'})")
+
     build_features_for_training()

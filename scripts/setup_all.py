@@ -4,6 +4,8 @@
 # ============================================================
 
 import argparse
+import os
+import pandas as pd
 from core.log_config import setup_logger
 from core.exceptions import PipelineError
 
@@ -12,7 +14,7 @@ from scripts.build_features_for_training import build_features_for_training
 from scripts.build_features_for_new_games import build_features_for_new_games
 from scripts.train_model import main as train_model
 from scripts.generate_today_predictions import generate_today_predictions
-from core.config import NEW_GAMES_FEATURES_FILE, TRAINING_FEATURES_FILE
+from core.config import NEW_GAMES_FEATURES_FILE, TRAINING_FEATURES_FILE, PICKS_FILE
 
 logger = setup_logger("setup_all")
 
@@ -64,6 +66,16 @@ def main(skip_train=False, skip_fetch=False):
         logger.info("✅ EV calculations completed")
     else:
         logger.warning("⚠️ 'decimal_odds' column missing — skipping EV calculations")
+
+    # Step 7: Picks summary
+    if os.path.exists(PICKS_FILE):
+        picks_df = pd.read_csv(PICKS_FILE)
+        if len(picks_df) > 0:
+            logger.info(f"🎯 {len(picks_df)} recommended picks saved to {PICKS_FILE}")
+        else:
+            logger.info("ℹ️ Picks file exists but no positive EV picks today.")
+    else:
+        logger.info("ℹ️ No picks file generated today.")
 
     logger.info("=== PIPELINE COMPLETED SUCCESSFULLY ===")
 

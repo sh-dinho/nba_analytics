@@ -5,15 +5,49 @@
 
 import pandas as pd
 import datetime
+from pathlib import Path
 from core.log_config import setup_logger
 from core.exceptions import DataError, PipelineError
 from core.utils import ensure_columns
-from core.config import BASE_RESULTS_DIR, PICKS_LOG, TODAY_PREDICTIONS_FILE, PICKS_FILE
+from core.config import BASE_RESULTS_DIR, PICKS_LOG, TODAY_PREDICTIONS_FILE, PICKS_FILE, PICKS_BANKROLL_FILE
+from notifications import send_telegram_message, send_ev_summary
 
 logger = setup_logger("generate_picks")
 
 # Ensure results directory exists
 BASE_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def update_bankroll(picks_df: pd.DataFrame):
+    """Update bankroll tracking file with today's picks results."""
+    if picks_df is None or picks_df.empty:
+        return
+    today = pd.Timestamp.today().date().isoformat()
+    total_stake = picks_df["stake_amount"].sum() if "stake_amount" in picks_df.columns else 0
+    avg_ev = picks_df["ev"].mean() if "ev" in picks_df.columns else None
+    bankroll_change = (picks_df["ev"] * picks_df.get("stake_amount", 1)).sum() if "ev" in picks_df.columns else 0
+    record = {
+        "Date": today,
+        "Total_Stake": total_stake,
+        "Avg_EV": avg_ev,
+        "Bankroll_Change": bankroll_change,
+    }
+    if Path(PICKS_BANKROLL_FILE).exists():
+        hist = pd.read_csv(PICKS_BANKROLL_FILE)
+        hist = pd.concat([hist, pd.DataFrame([record])], ignore_index=True)
+    else:
+        hist = pd.DataFrame([record])
+    hist.to_csv(PICKS_BANKROLL_FILE, index=False)
+    logger.info(f"💰 Bankroll updated → {PICKS_BANKROLL_FILE}")
+
+    # Notify Telegram bankroll update
+    msg = (
+        f"🏀 Bankroll Update ({today})\n"
+        f"💰 Total Stake: {total_stake:.2f}\n"
+        f"📈 Avg EV: {avg_ev:.3f}\n"
+        f"💵 Bankroll Change: {bankroll_change:+.2f}"
+    )
+    send_telegram_message(msg)
 
 
 def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame:
@@ -28,23 +62,37 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
         raise FileNotFoundError(f"{preds_file} not found.")
 
     df = pd.read_csv(preds_file)
+    if df.empty:
+        raise DataError(f"{preds_file} is empty. No predictions available.")
 
-    # Validate required columns
-    required_cols = {"pred_home_win_prob"}
+    # Validate required probability column
     if "win_prob" in df.columns:
-        required_cols = {"win_prob"}
+        prob_col = "win_prob"
+    elif "pred_home_win_prob" in df.columns:
+        prob_col = "pred_home_win_prob"
+    else:
+        raise DataError("Predictions file missing required probability column")
+
     try:
-        ensure_columns(df, required_cols, "predictions")
+        ensure_columns(df, [prob_col], "predictions")
     except ValueError as e:
         raise DataError(str(e))
 
-    # Simple strategy: pick HOME if prob > 0.5, else AWAY
-    prob_col = "win_prob" if "win_prob" in df.columns else "pred_home_win_prob"
-    df["pick"] = df.apply(lambda row: "HOME" if row[prob_col] > 0.5 else "AWAY", axis=1)
+    # Strategy: pick HOME if prob > 0.5 (and EV > 0 if available)
+    if "ev" in df.columns:
+        df["pick"] = df.apply(
+            lambda row: "HOME" if row[prob_col] > 0.5 and row["ev"] > 0 else "AWAY",
+            axis=1,
+        )
+    else:
+        df["pick"] = df.apply(lambda row: "HOME" if row[prob_col] > 0.5 else "AWAY", axis=1)
 
     # Save picks
-    df.to_csv(out_file, index=False)
-    logger.info(f"✅ Picks saved to {out_file} | Total picks: {len(df)}")
+    try:
+        df.to_csv(out_file, index=False)
+        logger.info(f"✅ Picks saved to {out_file} | Total picks: {len(df)}")
+    except Exception as e:
+        raise PipelineError(f"Failed to save picks: {e}")
 
     # Summary stats
     home_picks = (df["pick"] == "HOME").sum()
@@ -73,9 +121,19 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
     except Exception as e:
         raise PipelineError(f"Failed to append picks summary: {e}")
 
+    # ✅ Update bankroll + notify Telegram
+    update_bankroll(df)
+    send_ev_summary(df)
+    summary_msg = f"📊 Picks Summary: HOME={home_picks}, AWAY={away_picks}, Avg EV={avg_ev_str}"
+    send_telegram_message(summary_msg)
+
     return df
 
 
 if __name__ == "__main__":
-    from pathlib import Path
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate picks from predictions")
+    parser.add_argument("--preds", default=TODAY_PREDICTIONS_FILE, help="Path to predictions file")
+    parser.add_argument("--out", default=PICKS_FILE, help="Path to save picks")
+    args = parser.parse_args()
+    main(preds_file=args.preds, out_file=args.out)
