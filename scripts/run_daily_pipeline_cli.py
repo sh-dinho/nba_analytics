@@ -1,240 +1,99 @@
 # ============================================================
 # File: scripts/run_daily_pipeline_cli.py
-# Purpose: Run daily NBA prediction pipeline end-to-end
+# Purpose: CLI entrypoint for daily NBA analytics pipeline
 # ============================================================
 
 import argparse
-import os
-import subprocess
-import datetime
-import pandas as pd
 from pathlib import Path
+
+# --- Config constants ---
 from core.config import (
-    ensure_dirs, RESULTS_DIR, SUMMARY_FILE,
-    PICKS_BANKROLL_FILE, DEFAULT_BANKROLL
+    DEFAULT_BANKROLL,
+    MAX_KELLY_FRACTION,
+    EV_THRESHOLD,
+    MIN_KELLY_STAKE,
+    PRINT_ONLY_ACTIONABLE,
 )
-from core.log_config import init_global_logger
-from core.exceptions import PipelineError
-from notifications import send_telegram_message  # ✅ optional Telegram hook
 
-# Ensure directories exist using centralized config
-ensure_dirs()
+# --- Path constants ---
+from core.paths import (
+    DATA_DIR,
+    LOGS_DIR,
+    RESULTS_DIR,
+    MODELS_DIR,
+    ARCHIVE_DIR,
+    SUMMARY_FILE,
+    PICKS_FILE,
+    PICKS_BANKROLL_FILE,
+    FEATURES_FILE,
+    FEATURES_LOG_FILE,
+    CONFIG_LOG_FILE,
+)
 
-today = datetime.datetime.now().strftime("%Y%m%d")
-LOG_FILE = os.path.join(RESULTS_DIR, f"pipeline_run_{today}.log")
+# --- Notifications ---
+from notifications import send_telegram_message, send_photo
 
-logger = init_global_logger()
-
-
-def get_current_season() -> str:
-    """Return current NBA season string like '2025-26' based on today's date."""
-    today = datetime.date.today()
-    year = today.year
-    month = today.month
-    return f"{year}-{str(year+1)[-2:]}" if month >= 10 else f"{year-1}-{str(year)[-2:]}"
+# --- Pipeline runner (replace with your actual runner function) ---
+from scripts.xgb_runner import xgb_runner
 
 
-def run_step(args, step_name: str):
-    """Run a subprocess step with logging and error handling."""
-    logger.info(f"▶️ {step_name}...")
+def main():
+    parser = argparse.ArgumentParser(description="Run daily NBA analytics pipeline")
+    parser.add_argument("--bankroll", type=float, default=DEFAULT_BANKROLL,
+                        help="Initial bankroll for simulation")
+    parser.add_argument("--kelly", action="store_true",
+                        help="Use Kelly criterion for bet sizing")
+    parser.add_argument("--notify", action="store_true",
+                        help="Send results to Telegram")
+    args = parser.parse_args()
+
+    # Example: load data (replace with your actual data loading logic)
+    # For now, just placeholders
+    data = []  # feature matrix
+    todays_games_uo = []
+    frame_ml = None
+    games = []
+    home_odds = []
+    away_odds = []
+
+    # Run pipeline
     try:
-        subprocess.run(args, check=True, capture_output=True, text=True)
-        logger.info(f"✅ {step_name} completed")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"❌ {step_name} failed: {e.stderr}")
-        raise PipelineError(f"{step_name} failed: {e.stderr}")
-
-
-def ensure_player_stats(season="2025-26", force_refresh=False):
-    args = ["python", "-m", "scripts.fetch_player_stats", "--season", season]
-    if force_refresh:
-        args.append("--force_refresh")
-    run_step(args, f"Ensuring player stats for season {season}")
-
-
-# === Bankroll Summaries ===
-
-def update_bankroll(picks_file: Path):
-    """Append today's picks results into bankroll tracking file."""
-    if not picks_file.exists():
-        logger.warning("⚠️ No picks.csv found, skipping bankroll update.")
-        return
-    df = pd.read_csv(picks_file)
-    if df.empty:
-        return
-    today = datetime.date.today().isoformat()
-    total_stake = df.get("stake_amount", pd.Series([0.0])).sum()
-    avg_ev = df.get("ev", pd.Series([0.0])).mean()
-    bankroll_change = (df.get("ev", pd.Series([0.0])) * df.get("stake_amount", pd.Series([0.0]))).sum()
-    record = {"Date": today, "Total_Stake": total_stake, "Avg_EV": avg_ev, "Bankroll_Change": bankroll_change}
-    if PICKS_BANKROLL_FILE.exists():
-        hist = pd.read_csv(PICKS_BANKROLL_FILE)
-        hist = pd.concat([hist, pd.DataFrame([record])], ignore_index=True)
-    else:
-        hist = pd.DataFrame([record])
-    hist.to_csv(PICKS_BANKROLL_FILE, index=False)
-    logger.info(f"💰 Bankroll updated → {PICKS_BANKROLL_FILE}")
-
-
-def export_daily_summary(summary_entry: pd.DataFrame):
-    """Export one-row daily summary with cumulative bankroll."""
-    if PICKS_BANKROLL_FILE.exists():
-        cumulative = DEFAULT_BANKROLL + pd.read_csv(PICKS_BANKROLL_FILE)["Bankroll_Change"].sum()
-    else:
-        cumulative = DEFAULT_BANKROLL
-    summary_file = RESULTS_DIR / "summary.csv"
-    summary_entry.assign(Final_Bankroll=cumulative).to_csv(summary_file, index=False)
-    logger.info(f"📑 Daily summary exported to {summary_file}")
-
-
-def log_weekly_summary():
-    """Aggregate bankroll changes by week."""
-    if not PICKS_BANKROLL_FILE.exists():
-        return
-    df = pd.read_csv(PICKS_BANKROLL_FILE)
-    df["Date"] = pd.to_datetime(df["Date"])
-    df["Week"] = df["Date"].dt.to_period("W").astype(str)
-    weekly = df.groupby("Week").agg({
-        "Total_Stake": "sum",
-        "Avg_EV": "mean",
-        "Bankroll_Change": "sum"
-    }).reset_index()
-    weekly["Cumulative_Bankroll"] = DEFAULT_BANKROLL + weekly["Bankroll_Change"].cumsum()
-    weekly_file = RESULTS_DIR / "weekly_summary.csv"
-    weekly.to_csv(weekly_file, index=False)
-    logger.info(f"📑 Weekly summary exported to {weekly_file}")
-
-
-def log_monthly_summary():
-    """Aggregate bankroll changes by month."""
-    if not PICKS_BANKROLL_FILE.exists():
-        return
-    df = pd.read_csv(PICKS_BANKROLL_FILE)
-    df["Date"] = pd.to_datetime(df["Date"])
-    df["Month"] = df["Date"].dt.to_period("M").astype(str)
-    monthly = df.groupby("Month").agg({
-        "Total_Stake": "sum",
-        "Avg_EV": "mean",
-        "Bankroll_Change": "sum"
-    }).reset_index()
-    monthly["Cumulative_Bankroll"] = DEFAULT_BANKROLL + monthly["Bankroll_Change"].cumsum()
-    monthly_file = RESULTS_DIR / "monthly_summary.csv"
-    monthly.to_csv(monthly_file, index=False)
-    logger.info(f"📑 Monthly summary exported to {monthly_file}")
-
-
-# === Main Pipeline ===
-
-def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
-         season=None, force_refresh=False, rounds=10,
-         target="label", model_type="logistic") -> pd.DataFrame:
-
-    season = season or get_current_season()
-    logger.info(f"📅 Auto-detected NBA season: {season}")
-    logger.info(f"Starting pipeline | threshold={threshold}, strategy={strategy}, "
-                f"max_fraction={max_fraction}, season={season}, force_refresh={force_refresh}, "
-                f"rounds={rounds}, target={target}, model_type={model_type}")
-
-    try:
-        # Steps 1–5
-        ensure_player_stats(season=season, force_refresh=force_refresh)
-
-        if target in ["label", "margin", "outcome_category"]:
-            run_step(["python", "-m", "scripts.build_features", "--rounds", str(rounds), "--training"],
-                     "Building training features")
-        else:
-            run_step(["python", "-m", "scripts.build_features", "--rounds", str(rounds)],
-                     "Building new game features")
-
-        run_step(["python", "-m", "scripts.train_model", "--target", target, "--model_type", model_type],
-                 "Training model")
-
-        run_step(["python", "-m", "scripts.generate_today_predictions",
-                  "--threshold", str(threshold), "--strategy", strategy, "--max_fraction", str(max_fraction)],
-                 "Generating predictions")
-
-        run_step(["python", "-m", "scripts.generate_picks"], "Generating picks")
-
-        # Step 6: Collect summaries
-        run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Collect metrics from picks.csv if available
-        picks_file = RESULTS_DIR / "picks.csv"
-        picks_count = 0
-        bankroll_change = 0.0
-        if picks_file.exists():
-            df_picks = pd.read_csv(picks_file)
-            picks_count = len(df_picks)
-            if not df_picks.empty:
-                bankroll_change = (df_picks.get("ev", pd.Series([0.0])) *
-                                   df_picks.get("stake_amount", pd.Series([0.0]))).sum()
-
-        summary_entry = pd.DataFrame([{
-            "timestamp": run_time,
-            "season": season,
-            "threshold": threshold,
-            "strategy": strategy,
-            "max_fraction": max_fraction,
-            "target": target,
-            "model_type": model_type,
-            "picks_count": picks_count,
-            "bankroll_change": bankroll_change
-        }])
-
-        if Path(SUMMARY_FILE).exists():
-            summary_entry.to_csv(SUMMARY_FILE, mode="a", header=False, index=False)
-        else:
-            summary_entry.to_csv(SUMMARY_FILE, index=False)
-        logger.info(f"Pipeline summary appended to {SUMMARY_FILE}")
-
-        # === New Enhancements ===
-        update_bankroll(picks_file)
-        export_daily_summary(summary_entry)
-        log_weekly_summary()
-        log_monthly_summary()
-
-        # ✅ Optional Telegram notification
-        msg = (f"🏀 Daily Pipeline Complete\n"
-               f"Season: {season}\n"
-               f"Picks: {picks_count}, Bankroll Δ: {bankroll_change:.2f}\n"
-               f"Strategy={strategy}, Threshold={threshold}")
-        send_telegram_message(msg)
-
-        return summary_entry
-
+        results, history, metrics = xgb_runner(
+            data,
+            todays_games_uo,
+            frame_ml,
+            games,
+            home_odds,
+            away_odds,
+            use_kelly=args.kelly,
+            bankroll=args.bankroll,
+            max_fraction=MAX_KELLY_FRACTION,
+        )
     except Exception as e:
-        logger.error(f"❌ Pipeline failed: {e}")
-        raise
+        print(f"❌ Pipeline failed: {e}")
+        return
+
+    # Print summary
+    print("=== Daily Pipeline Summary ===")
+    for k, v in metrics.items():
+        print(f"{k}: {v}")
+
+    # Optional Telegram notification
+    if args.notify:
+        msg = (
+            f"🏀 Daily Pipeline Results\n"
+            f"Final Bankroll: {metrics['final_bankroll']}\n"
+            f"Avg EV: {metrics['avg_EV']}\n"
+            f"Win Rate: {metrics['win_rate']}\n"
+            f"Total Bets: {metrics['total_bets']}\n"
+            f"Actionable Games: {metrics['actionable_count']}"
+        )
+        send_telegram_message(msg)
+        chart_path = RESULTS_DIR / "daily_bankroll.png"
+        # If you generate a chart elsewhere, send it too
+        if chart_path.exists():
+            send_photo(str(chart_path), caption="📈 Daily Bankroll Trajectory")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run daily NBA prediction pipeline")
-    parser.add_argument("--threshold", type=float, default=0.6,
-                        help="Minimum probability threshold for picks")
-    parser.add_argument("--strategy", type=str, default="kelly",
-                        help="Bet sizing strategy (e.g., kelly, flat)")
-    parser.add_argument("--max_fraction", type=float, default=0.05,
-                        help="Maximum bankroll fraction per pick")
-    parser.add_argument("--season", type=str, default=None,
-                        help="NBA season string (e.g., 2025-26)")
-    parser.add_argument("--force-refresh", action="store_true",
-                        help="Force refresh of player stats")
-    parser.add_argument("--rounds", type=int, default=10,
-                        help="Number of feature-building rounds")
-    parser.add_argument("--target", type=str, default="label",
-                        help="Prediction target (label, margin, outcome_category)")
-    parser.add_argument("--model-type", type=str, default="logistic",
-                        help="Model type (logistic, random_forest, xgboost, etc.)")
-    args = parser.parse_args()
-
-    # Run pipeline
-    main(threshold=args.threshold,
-         strategy=args.strategy,
-         max_fraction=args.max_fraction,
-         season=args.season,
-         force_refresh=args.force_refresh,
-         rounds=args.rounds,
-         target=args.target,
-         model_type=args.model_type)
-    
-    
+    main()

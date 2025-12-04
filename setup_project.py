@@ -92,3 +92,5 @@ send_telegram_message("Hello from NBA Analytics 🚀")
 import os
 print(os.getenv("TELEGRAM_BOT_TOKEN"))
 print(os.getenv("TELEGRAM_CHAT_ID"))
+import sys
+print(sys.path[0])
