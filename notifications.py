@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 from core.log_config import init_global_logger
-from core.exceptions import FileError, DataError, PipelineError
+from core.exceptions import PipelineError
 
 logger = init_global_logger()
 
@@ -25,14 +25,12 @@ def _send_request(url: str, data: dict, files: dict | None = None, timeout: int 
     """Helper to send requests with timeout and error handling."""
     try:
         resp = requests.post(url, data=data, files=files, timeout=timeout)
-        if resp.status_code != 200:
-            logger.error(f"❌ Telegram API error: {resp.text}")
-        else:
-            logger.info("✅ Telegram request succeeded")
+        resp.raise_for_status()
+        logger.info("✅ Telegram request succeeded")
         return resp
     except Exception as e:
         logger.error(f"❌ Telegram request failed: {e}")
-        return None
+        raise PipelineError(f"Telegram API request failed: {e}")
 
 def _plot_chart(df: pd.DataFrame, chart_path: Path, title: str, y_col: str = "Final_Bankroll"):
     """Centralized chart plotting helper."""
@@ -44,6 +42,8 @@ def _plot_chart(df: pd.DataFrame, chart_path: Path, title: str, y_col: str = "Fi
     plt.ylabel(y_col)
     plt.grid(True)
     plt.tight_layout()
+    if chart_path.exists():
+        chart_path.unlink()  # overwrite old chart
     plt.savefig(chart_path)
     logger.info(f"📊 Chart generated at {chart_path}")
 
@@ -55,7 +55,6 @@ def send_telegram_message(msg: str) -> None:
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("⚠️ Telegram credentials not set. Skipping notification.")
         return
-
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}
     _send_request(url, data)
@@ -68,7 +67,6 @@ def send_photo(photo_path: str, caption: str = None) -> None:
     if not os.path.exists(photo_path):
         logger.warning(f"⚠️ Chart not found at {photo_path}. Skipping photo upload.")
         return
-
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
     with open(photo_path, "rb") as photo:
         files = {"photo": photo}
@@ -80,7 +78,6 @@ def send_ev_summary(picks: pd.DataFrame) -> None:
     if picks is None or picks.empty:
         send_telegram_message("No picks available for EV summary.")
         return
-
     summary_lines = []
     if "pick" in picks.columns and "ev" in picks.columns:
         grouped = picks.groupby("pick").agg(
@@ -93,7 +90,6 @@ def send_ev_summary(picks: pd.DataFrame) -> None:
             )
     else:
         summary_lines.append("⚠️ Picks DataFrame missing 'pick' or 'ev' columns.")
-
     msg = "*EV Summary:*\n" + "\n".join(summary_lines)
     send_telegram_message(msg)
 
@@ -102,12 +98,10 @@ def send_summary_report(summary_path: Path, chart_path: Path, export_json: bool 
     if not summary_path.exists():
         send_telegram_message(f"⚠️ No summary file found at {summary_path}")
         return
-
     df = pd.read_csv(summary_path)
     if df.empty:
         send_telegram_message("⚠️ Summary file is empty.")
         return
-
     # Format message
     msg = f"*🏀 Bankroll Summary ({summary_path.name})*\n\n"
     for _, row in df.iterrows():
@@ -118,18 +112,12 @@ def send_summary_report(summary_path: Path, chart_path: Path, export_json: bool 
             f"🎯 Avg Stake: {row.get('Avg_Stake', 'N/A')}\n"
             f"📊 Total Bets: {row.get('Total_Bets', 'N/A')}\n\n"
         )
-
     send_telegram_message(msg)
-
     # Export JSON if requested
     if export_json:
         out_json = summary_path.with_suffix(".json")
-        try:
-            df.to_json(out_json, orient="records", indent=2)
-            logger.info(f"📑 Summary also exported to {out_json}")
-        except Exception as e:
-            logger.warning(f"Failed to export summary to JSON: {e}")
-
+        df.to_json(out_json, orient="records", indent=2)
+        logger.info(f"📑 Summary also exported to {out_json}")
     # Generate chart if missing
     if not chart_path.exists() and "Final_Bankroll" in df.columns:
         _plot_chart(df, chart_path, "Bankroll Trajectory")
@@ -147,32 +135,25 @@ def send_combined_dashboard(daily: Path, weekly: Path, monthly: Path, chart_path
     if not dfs:
         send_telegram_message("⚠️ No summaries available for dashboard.")
         return
-
     combined = pd.concat(dfs, ignore_index=True)
+    if "Date" in combined.columns:
+        combined = combined.sort_values(by="Date")
     msg = "*📊 Combined Dashboard*\n\n"
     for _, row in combined.iterrows():
         msg += (
             f"{row['Source']} → Bankroll={row.get('Final_Bankroll', 'N/A')}, "
             f"Avg EV={row.get('Avg_EV', 'N/A')}, Bets={row.get('Total_Bets', 'N/A')}\n"
         )
-
     send_telegram_message(msg)
-
-    # Export JSON if requested
     if export_json:
         out_json = chart_path.with_suffix(".json")
-        try:
-            combined.to_json(out_json, orient="records", indent=2)
-            logger.info(f"📑 Combined dashboard also exported to {out_json}")
-        except Exception as e:
-            logger.warning(f"Failed to export combined dashboard to JSON: {e}")
-
-    # Optional chart
+        combined.to_json(out_json, orient="records", indent=2)
+        logger.info(f"📑 Combined dashboard also exported to {out_json}")
     if "Final_Bankroll" in combined.columns:
         _plot_chart(combined, chart_path, "Combined Bankroll Trajectories")
         send_photo(str(chart_path), caption="📈 Combined Bankroll Dashboard")
 
 # ----------------------------------------------------------------
-# Aliases for compatibility with setup_all.py
+# Aliases for compatibility
 # ----------------------------------------------------------------
 send_message = send_telegram_message
