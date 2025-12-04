@@ -1,47 +1,54 @@
 # ============================================================
 # File: core/log_config.py
-# Purpose: Centralized logger setup with UTF-8 encoding, rotation, and rich console output
+# Purpose: Global logging configuration for NBA Analytics
 # ============================================================
 
 import logging
 import sys
-import io
 from pathlib import Path
-from logging.handlers import RotatingFileHandler
-from rich.logging import RichHandler
+from core.paths import LOGS_DIR
 
-try:
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
-except Exception:
-    pass
+LOG_FILE = LOGS_DIR / "pipeline.log"
 
-CONSOLE_FORMAT = "%(message)s"
-FILE_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+def init_global_logger(name: str = "nba_analytics", log_to_file: bool = True) -> logging.Logger:
+    """
+    Initialize and return a global logger.
 
-def setup_logger(name: str,
-                 log_file: Path | None = None,
-                 level: int = logging.INFO,
-                 max_bytes: int = 5_000_000,
-                 backup_count: int = 5) -> logging.Logger:
+    Parameters
+    ----------
+    name : str
+        Logger name (default: 'nba_analytics').
+    log_to_file : bool
+        Whether to write logs to a file in LOGS_DIR.
+
+    Returns
+    -------
+    logging.Logger
+        Configured logger.
+    """
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    if logger.handlers:
+        # Avoid adding multiple handlers if already configured
+        return logger
 
-    if not logger.handlers:
-        console_handler = RichHandler(markup=True, rich_tracebacks=True)
-        console_handler.setLevel(level)
-        console_handler.setFormatter(logging.Formatter(CONSOLE_FORMAT))
-        logger.addHandler(console_handler)
+    logger.setLevel(logging.INFO)
 
-        if log_file:
-            fh = RotatingFileHandler(log_file, maxBytes=max_bytes,
-                                     backupCount=backup_count, encoding="utf-8")
-            fh.setLevel(level)
-            fh.setFormatter(logging.Formatter(FILE_FORMAT))
-            logger.addHandler(fh)
+    # Formatter: [YYYY/MM/DD HH:MM:SS] LEVEL  message
+    formatter = logging.Formatter(
+        fmt='[%(asctime)s] %(levelname)-8s %(message)s',
+        datefmt='%Y/%m/%d %H:%M:%S'
+    )
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # File handler
+    if log_to_file:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     return logger
-
-def init_global_logger(log_file: Path | None = None,
-                       level: int = logging.INFO) -> logging.Logger:
-    return setup_logger("nba_pipeline", log_file=log_file, level=level)

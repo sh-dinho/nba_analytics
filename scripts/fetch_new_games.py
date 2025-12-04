@@ -25,8 +25,16 @@ REQUIRED_COLUMNS = [
     "PTS", "AST", "REB", "GAMES_PLAYED", "decimal_odds"
 ]
 
-# NBA mobile JSON feeds (season component should be updated yearly)
-NBA_SEASON_YEAR = "2025"  # adjust when season changes
+# Auto-detect NBA season year based on current date
+def get_season_year() -> str:
+    today = datetime.date.today()
+    year = today.year
+    # NBA season starts in October, so before October use previous year
+    if today.month < 10:
+        return str(year - 1)
+    return str(year)
+
+NBA_SEASON_YEAR = get_season_year()
 NBA_SCHEDULE_URL = f"https://data.nba.com/data/v2015/json/mobile_teams/nba/{NBA_SEASON_YEAR}/scores/00_todays_scores.json"
 BOX_URL_TEMPLATE = f"https://data.nba.com/data/v2015/json/mobile_teams/nba/{NBA_SEASON_YEAR}/scores/gamedetail/{{gid}}_gamedetail.json"
 
@@ -34,7 +42,6 @@ BOX_URL_TEMPLATE = f"https://data.nba.com/data/v2015/json/mobile_teams/nba/{NBA_
 load_dotenv()
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
-
 
 def archive_new_games():
     """Archive existing new_games file before overwriting."""
@@ -44,7 +51,6 @@ def archive_new_games():
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
         shutil.copy(NEW_GAMES_FILE, archive_file)
         logger.info(f"📦 Archived new games to {archive_file}")
-
 
 def debug_boxscore_structure(box_data: dict):
     """Log the JSON structure of the first game for debugging."""
@@ -58,12 +64,14 @@ def debug_boxscore_structure(box_data: dict):
             logger.info("Sample player entry:")
             logger.info(json.dumps(players[0], indent=2))
     except Exception:
-        # Defensive: avoid breaking on odd JSON structures
         logger.warning("Could not fully log boxscore structure.")
 
+def normalize_team_name(name: str) -> str:
+    """Normalize team names for odds matching."""
+    return name.strip().lower().replace(" ", "").replace("-", "")
 
 def fetch_odds(timeout: int = 30) -> dict:
-    """Fetch odds for today's NBA games from Odds API. Returns a dict keyed by (home_team, away_team)."""
+    """Fetch odds for today's NBA games from Odds API. Returns a dict keyed by normalized (home_team, away_team)."""
     if not ODDS_API_KEY:
         logger.warning("⚠️ No ODDS_API_KEY found in environment")
         return {}
@@ -98,7 +106,7 @@ def fetch_odds(timeout: int = 30) -> dict:
                         elif name == away_team and price is not None:
                             away_prices.append(price)
 
-            odds_map[(home_team, away_team)] = {
+            odds_map[(normalize_team_name(home_team), normalize_team_name(away_team))] = {
                 "home_odds": (sum(home_prices) / len(home_prices)) if home_prices else None,
                 "away_odds": (sum(away_prices) / len(away_prices)) if away_prices else None,
             }
@@ -108,14 +116,8 @@ def fetch_odds(timeout: int = 30) -> dict:
         logger.warning(f"⚠️ Failed to fetch odds: {e}")
         return {}
 
-
 def ensure_minimum_schema(df: pd.DataFrame, allow_placeholder: bool, schedule_empty: bool) -> pd.DataFrame:
-    """
-    Guarantee that the DataFrame has all required columns.
-    If missing, add them with None values.
-    If completely empty and allow_placeholder=True, insert a placeholder row.
-    Distinguishes between NO_GAMES_TODAY vs NO_STATS_YET.
-    """
+    """Guarantee that the DataFrame has all required columns."""
     if df.empty and allow_placeholder:
         placeholder_type = "NO_GAMES_TODAY" if schedule_empty else "NO_STATS_YET"
         df = pd.DataFrame([{
@@ -136,7 +138,6 @@ def ensure_minimum_schema(df: pd.DataFrame, allow_placeholder: bool, schedule_em
 
     return df[REQUIRED_COLUMNS]
 
-
 def fetch_new_games(debug: bool = False, allow_placeholder: bool = False, timeout: int = 30) -> Path:
     """Fetch today's games with player stats and merge odds; persist CSV and return its path."""
     ensure_dirs(strict=False)
@@ -152,13 +153,8 @@ def fetch_new_games(debug: bool = False, allow_placeholder: bool = False, timeou
         scoreboard = resp.json()
 
         games_node = scoreboard.get("gs", {}).get("g", [])
-        # Handle if "g" is a dict or list
-        if isinstance(games_node, dict):
-            games_iterable = [games_node]
-        else:
-            games_iterable = games_node
+        games_iterable = [games_node] if isinstance(games_node, dict) else games_node
 
-        # Filter today's games (gdte in ISO format, e.g., '2025-12-03')
         games_today = [g for g in games_iterable if g.get("gdte") == today.strftime("%Y-%m-%d")]
         schedule_empty = len(games_today) == 0
 
@@ -174,26 +170,23 @@ def fetch_new_games(debug: bool = False, allow_placeholder: bool = False, timeou
                 logger.warning(f"Skipping malformed game entry: gid={gid}, home={home_team}, away={away_team}")
                 continue
 
-            # Fetch boxscore for this game
+            # Fetch boxscore
             box_url = BOX_URL_TEMPLATE.format(gid=gid)
             box_resp = requests.get(box_url, timeout=timeout)
             box_resp.raise_for_status()
             box_data = box_resp.json()
 
-            # Debug first game structure if enabled
             if debug and not first_game_logged:
                 debug_boxscore_structure(box_data)
                 first_game_logged = True
 
-            # Odds lookup
-            odds_entry = odds_map.get((home_team, away_team), {})
+            odds_entry = odds_map.get((normalize_team_name(home_team), normalize_team_name(away_team)), {})
             home_odds = odds_entry.get("home_odds")
             away_odds = odds_entry.get("away_odds")
 
-            # Player stats under g.pstsg
             players = box_data.get("g", {}).get("pstsg", [])
             if not players:
-                # No stats yet; write team-level placeholders
+                # No stats yet; placeholders
                 all_players.append({
                     "PLAYER_NAME": None,
                     "TEAM_ABBREVIATION": home_team,
@@ -219,21 +212,19 @@ def fetch_new_games(debug: bool = False, allow_placeholder: bool = False, timeou
             else:
                 for p in players:
                     team_abbr = p.get("ta")
-                    first_name = p.get("fn", "")
-                    last_name = p.get("ln", "")
-                    player_name = f"{first_name} {last_name}".strip()
+                    player_name = " ".join(filter(None, [p.get("fn"), p.get("ln")]))
                     decimal_odds = home_odds if team_abbr == home_team else away_odds
                     all_players.append({
-                        "PLAYER_NAME": player_name or None,
-                        "TEAM_ABBREVIATION": team_abbr,
-                        "TEAM_HOME": home_team,
-                        "TEAM_AWAY": away_team,
-                        "PTS": p.get("pts"),
-                        "AST": p.get("ast"),
-                        "REB": p.get("reb"),
-                        "GAMES_PLAYED": p.get("gp"),
-                        "decimal_odds": decimal_odds,
-                    })
+                                            "PLAYER_NAME": player_name or None,
+                    "TEAM_ABBREVIATION": team_abbr,
+                    "TEAM_HOME": home_team,
+                    "TEAM_AWAY": away_team,
+                    "PTS": p.get("pts"),
+                    "AST": p.get("ast"),
+                    "REB": p.get("reb"),
+                    "GAMES_PLAYED": p.get("gp"),
+                    "decimal_odds": decimal_odds,
+                })
 
         df = pd.DataFrame(all_players)
         df = ensure_minimum_schema(df, allow_placeholder=allow_placeholder, schedule_empty=schedule_empty)
@@ -242,7 +233,14 @@ def fetch_new_games(debug: bool = False, allow_placeholder: bool = False, timeou
         archive_new_games()
         NEW_GAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(NEW_GAMES_FILE, index=False)
-        logger.info(f"✅ new_games.csv saved to {NEW_GAMES_FILE} with {len(df)} rows")
+
+        # Enhanced logging
+        odds_coverage = df["decimal_odds"].notna().mean() * 100
+        logger.info(
+            f"✅ new_games.csv saved to {NEW_GAMES_FILE} "
+            f"with {len(df)} rows, {df['TEAM_ABBREVIATION'].nunique()} teams, "
+            f"odds coverage: {odds_coverage:.1f}%"
+        )
 
         return NEW_GAMES_FILE
 
@@ -264,11 +262,14 @@ def fetch_new_games(debug: bool = False, allow_placeholder: bool = False, timeou
         raise DataError(msg)
 
 
+# ======================
+# CLI entry point
+# ======================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Fetch today's games with player stats + odds")
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging of JSON structure")
-    parser.add_argument("--allow_placeholder", action="store_true", help="Insert NO_GAMES_TODAY or NO_STATS_YET row if feed is empty")
-    parser.add_argument("--timeout", type=int, default=30, help="HTTP timeout in seconds")
+    parser = argparse.ArgumentParser(description="Fetch today's NBA games with player stats + odds")
+    parser.add_argument("--debug", action="store_true", help="Log boxscore JSON structure for the first game")
+    parser.add_argument("--allow_placeholder", action="store_true", help="Insert placeholder row if no games/stats")
+    parser.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds")
     args = parser.parse_args()
 
     fetch_new_games(debug=args.debug, allow_placeholder=args.allow_placeholder, timeout=args.timeout)

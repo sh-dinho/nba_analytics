@@ -6,27 +6,53 @@
 
 import pandas as pd
 import datetime
+import matplotlib.pyplot as plt
 from pathlib import Path
+import argparse
+import core.config as config
 
 from core.paths import (
     HISTORICAL_GAMES_FILE,
     TRAINING_FEATURES_FILE,
     DATA_DIR,
     LOGS_DIR,
+    FEATURES_LOG_FILE,
     ensure_dirs,
 )
-from core.config import USE_ROLLING_AVG, ROLLING_WINDOW
+from core.config import USE_ROLLING_AVG, ROLLING_WINDOW, log_config_snapshot
 from core.log_config import init_global_logger
 from core.exceptions import DataError, FileError
 
 logger = init_global_logger()
 
-TRAINING_FEATURES_LOG = LOGS_DIR / "training_features.log"
+TRAINING_FEATURES_LOG = LOGS_DIR / "training_features_summary.csv"
 PLAYER_FEATURES_FILE = DATA_DIR / "player_features.csv"
+
+
+def log_feature_summary(summary_entry: pd.DataFrame):
+    """Append summary entry to both training log and unified features log."""
+    try:
+        if TRAINING_FEATURES_LOG.exists():
+            summary_entry.to_csv(TRAINING_FEATURES_LOG, mode="a", header=False, index=False)
+        else:
+            summary_entry.to_csv(TRAINING_FEATURES_LOG, index=False)
+        logger.info(f"📈 Training features summary appended to {TRAINING_FEATURES_LOG}")
+    except Exception as e:
+        logger.warning(f"Failed to append training features summary: {e}")
+
+    try:
+        if FEATURES_LOG_FILE.exists():
+            summary_entry.to_csv(FEATURES_LOG_FILE, mode="a", header=False, index=False)
+        else:
+            summary_entry.to_csv(FEATURES_LOG_FILE, index=False)
+        logger.info(f"📈 Unified features summary appended to {FEATURES_LOG_FILE}")
+    except Exception as e:
+        logger.warning(f"Failed to append unified features summary: {e}")
 
 
 def build_features_for_training() -> str:
     ensure_dirs(strict=False)
+    log_config_snapshot()  # record configuration state
 
     logger.info("Loading historical games...")
     if not HISTORICAL_GAMES_FILE.exists():
@@ -57,8 +83,7 @@ def build_features_for_training() -> str:
 
     # --- Team-level aggregation ---
     team_totals = (
-        df.groupby(["home_team", "away_team"])
-        [["pts", "ast", "reb", "games_played"]]
+        df.groupby(["home_team", "away_team"])[["pts", "ast", "reb", "games_played"]]
         .sum()
         .reset_index()
     )
@@ -164,26 +189,48 @@ def build_features_for_training() -> str:
         "team_rows": len(features),
         "player_rows": len(player_features),
     }])
-    try:
-        if TRAINING_FEATURES_LOG.exists():
-            summary_entry.to_csv(TRAINING_FEATURES_LOG, mode="a", header=False, index=False)
-        else:
-            summary_entry.to_csv(TRAINING_FEATURES_LOG, index=False)
-        logger.info(f"📈 Training features summary appended to {TRAINING_FEATURES_LOG}")
-    except Exception as e:
-        logger.warning(f"Failed to append training features summary: {e}")
 
+    log_feature_summary(summary_entry)
     return str(TRAINING_FEATURES_FILE)
 
 
+def plot_training_feature_trends():
+    """Plot trends of training feature builds over time."""
+    if not TRAINING_FEATURES_LOG.exists():
+        logger.warning("No training features log found.")
+        return ""
+    df = pd.read_csv(TRAINING_FEATURES_LOG)
+    if df.empty:
+        logger.warning("Training features log is empty.")
+        return ""
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df["timestamp"], df["team_rows"], marker="o", label="Team Rows")
+    ax.plot(df["timestamp"], df["player_rows"], marker="x", label="Player Rows")
+    ax.set_title("Training Features Trends")
+    ax.set_xlabel("Run Timestamp")
+    ax.legend()
+    ax.grid(True, linestyle="--", alpha=0.7)
+
+        trend_path = LOGS_DIR / "training_features_trends.png"
+    plt.tight_layout()
+    plt.savefig(trend_path)
+    plt.close()
+    logger.info(f"📊 Training feature trends saved → {trend_path}")
+    return str(trend_path)
+
+
+
 if __name__ == "__main__":
-    import argparse
-    import core.config as config
+
 
     parser = argparse.ArgumentParser(description="Build training features from historical games")
     parser.add_argument("--rolling", action="store_true", help="Use rolling averages (last N games)")
     parser.add_argument("--season", action="store_true", help="Use season averages")
     parser.add_argument("--window", type=int, default=None, help="Rolling window size (default from config)")
+    parser.add_argument("--plot-trends", action="store_true", help="Plot training feature trends over time")
+    parser.add_argument("--plot-combined-trends", action="store_true", help="Plot combined training + new games trends")
     args = parser.parse_args()
 
     if args.rolling:
@@ -196,4 +243,9 @@ if __name__ == "__main__":
     mode = "rolling" if config.USE_ROLLING_AVG else "season"
     logger.info(f"🛠️ CLI override: using {mode} averages (window={config.ROLLING_WINDOW if config.USE_ROLLING_AVG else 'N/A'})")
 
-    build_features_for_training()
+    if args.plot_trends:
+        plot_training_feature_trends()
+    elif args.plot_combined_trends:
+        plot_combined_feature_trends()
+    else:
+        build_features_for_training()

@@ -11,6 +11,7 @@ import datetime
 import time
 from pathlib import Path
 import argparse
+import os
 
 from nba_api.stats.endpoints import leaguegamefinder
 
@@ -78,7 +79,8 @@ def download_games(seasons: list[str], force: bool = False, gzip: bool = False) 
                 season_file.parent.mkdir(parents=True, exist_ok=True)
                 df.to_csv(season_file, index=False, compression="gzip" if gzip else None)
                 status = "downloaded" if not force else "re-downloaded"
-                logger.info(f"📂 Saved season file → {season_file}")
+                size_kb = season_file.stat().st_size / 1024
+                logger.info(f"📂 Saved season file → {season_file} ({len(df)} rows, {size_kb:.1f} KB)")
                 summary_entries.append({"season": season, "status": status, "rows": len(df)})
             except Exception as e:
                 raise FileError(f"Failed to write season file {season_file}", file_path=str(season_file)) from e
@@ -92,22 +94,26 @@ def download_games(seasons: list[str], force: bool = False, gzip: bool = False) 
 
 def _parse_seasons(season_start: str, season_end: str | None, only: str | None, update: bool) -> list[str]:
     """Build the season list based on CLI flags."""
-    current_year = datetime.datetime.now().year
-    latest_season = f"{current_year-1}-{str(current_year)[-2:]}"
+    today = datetime.date.today()
+    year = today.year
+    # NBA season starts in October
+    if today.month < 10:
+        latest_season = f"{year-1}-{str(year)[-2:]}"
+    else:
+        latest_season = f"{year}-{str(year+1)[-2:]}"
 
     if update:
         return [latest_season]
     if only:
         return [only]
 
-    # Inclusive start, exclusive end to match year-year+1 format
-    end_year = int(season_end.split("-")[0]) if season_end else current_year
+    end_year = int(season_end.split("-")[0]) if season_end else int(latest_season.split("-")[0])
     start_year = int(season_start.split("-")[0])
-    return [f"{year}-{str(year + 1)[-2:]}" for year in range(start_year, end_year)]
+    return [f"{year}-{str(year + 1)[-2:]}" for year in range(start_year, end_year + 1)]
 
 def main(season_start: str, season_end: str | None = None, only: str | None = None,
          force: bool = False, gzip: bool = False, update: bool = False,
-         retries: int = 3, delay: int = 5):
+         retries: int = 3, delay: int = 5, cli_args: dict | None = None):
     ensure_dirs(strict=False)
 
     seasons = _parse_seasons(season_start, season_end, only, update)
@@ -135,11 +141,13 @@ def main(season_start: str, season_end: str | None = None, only: str | None = No
     except Exception as e:
         raise FileError(f"Failed to write historical dataset {HISTORICAL_GAMES_FILE}", file_path=str(HISTORICAL_GAMES_FILE)) from e
 
-    # Append summary log (CSV in logs directory)
+    # Append summary log
     run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     summary_df = pd.DataFrame(summary_entries)
     summary_df["timestamp"] = run_time
     summary_df["total_rows"] = len(combined)
+    if cli_args:
+        summary_df["args"] = str(cli_args)
     try:
         DOWNLOAD_SUMMARY_FILE.parent.mkdir(parents=True, exist_ok=True)
         if DOWNLOAD_SUMMARY_FILE.exists():
@@ -164,10 +172,4 @@ if __name__ == "__main__":
                         help="Save files compressed as .csv.gz")
     parser.add_argument("--update", action="store_true",
                         help="Download the latest season only, if missing")
-    parser.add_argument("--retries", type=int, default=3,
-                        help="Number of retries per season fetch")
-    parser.add_argument("--delay", type=int, default=5,
-                        help="Delay between retries in seconds")
-    args = parser.parse_args()
-
-    main(args.season_start, args.season_end, args.only, args.force, args.gzip, args.update, args.retries, args.delay)
+   

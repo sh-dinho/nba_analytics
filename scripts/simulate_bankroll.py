@@ -11,11 +11,18 @@ from pathlib import Path
 
 from scripts.betting_utils import expected_value, kelly_fraction, american_to_decimal
 from core.log_config import init_global_logger
-from core.exceptions import DataError, FileError
+from core.exceptions import DataError, FileError, PipelineError
+from core.paths import RESULTS_DIR
 from notifications import send_telegram_message, send_photo  # ✅ Telegram hooks
 
 logger = init_global_logger()
 
+SIM_SUMMARY_FILE = RESULTS_DIR / "bankroll_simulation_summary.csv"
+SIM_WEEKLY_FILE = RESULTS_DIR / "bankroll_simulation_weekly.csv"
+SIM_MONTHLY_FILE = RESULTS_DIR / "bankroll_simulation_monthly.csv"
+
+
+# === Simulation Core ===
 
 def simulate_bankroll(
     preds_df: pd.DataFrame,
@@ -83,6 +90,7 @@ def simulate_bankroll(
     win_rate = wins / total_bets if total_bets > 0 else 0.0
 
     metrics = {
+        "Date": pd.Timestamp.today().date().isoformat(),
         "final_bankroll": round(current_bankroll, 2),
         "avg_EV": float(preds_df["EV"].mean(skipna=True)),
         "avg_Kelly_Bet": float(preds_df["Kelly_Bet"].mean(skipna=True)),
@@ -106,6 +114,8 @@ def simulate_bankroll(
     return preds_df, history, metrics
 
 
+# === Plotting ===
+
 def plot_trajectory(history: list[float], chart_path: Path):
     """Plot bankroll trajectory and save chart."""
     plt.figure(figsize=(8, 5))
@@ -119,6 +129,148 @@ def plot_trajectory(history: list[float], chart_path: Path):
     logger.info(f"📈 Bankroll chart saved to {chart_path}")
     return chart_path
 
+
+# === Summaries ===
+
+def export_simulation_summary(metrics: dict):
+    """Append simulation metrics to bankroll_simulation_summary.csv."""
+    df = pd.DataFrame([metrics])
+    if SIM_SUMMARY_FILE.exists():
+        df.to_csv(SIM_SUMMARY_FILE, mode="a", header=False, index=False)
+    else:
+        df.to_csv(SIM_SUMMARY_FILE, index=False)
+    logger.info(f"📑 Simulation summary appended to {SIM_SUMMARY_FILE}")
+
+
+def log_weekly_summary():
+    """Aggregate simulation bankroll changes by week."""
+    if not SIM_SUMMARY_FILE.exists():
+        return
+    df = pd.read_csv(SIM_SUMMARY_FILE)
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["Week"] = df["Date"].dt.to_period("W").astype(str)
+    weekly = df.groupby("Week").agg({
+        "final_bankroll": "last",
+        "avg_EV": "mean",
+        "avg_Kelly_Bet": "mean",
+        "win_rate": "mean",
+        "total_bets": "sum"
+    }).reset_index()
+    weekly.to_csv(SIM_WEEKLY_FILE, index=False)
+    logger.info(f"📑 Weekly simulation summary exported to {SIM_WEEKLY_FILE}")
+
+
+def log_monthly_summary():
+    """Aggregate simulation bankroll changes by month."""
+    if not SIM_SUMMARY_FILE.exists():
+        return
+    df = pd.read_csv(SIM_SUMMARY_FILE)
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["Month"] = df["Date"].dt.to_period("M").astype(str)
+    monthly = df.groupby("Month").agg({
+        "final_bankroll": "last",
+        "avg_EV": "mean",
+        "avg_Kelly_Bet": "mean",
+        "win_rate": "mean",
+        "total_bets": "sum"
+    }).reset_index()
+    monthly.to_csv(SIM_MONTHLY_FILE, index=False)
+    logger.info(f"📑 Monthly simulation summary exported to {SIM_MONTHLY_FILE}")
+
+def log_weekly_summary():
+    """Aggregate simulation bankroll changes by week with cumulative bankroll."""
+    if not SIM_SUMMARY_FILE.exists():
+        return
+    df = pd.read_csv(SIM_SUMMARY_FILE)
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["Week"] = df["Date"].dt.to_period("W").astype(str)
+
+    weekly = df.groupby("Week").agg({
+        "final_bankroll": "last",
+        "avg_EV": "mean",
+        "avg_Kelly_Bet": "mean",
+        "win_rate": "mean",
+        "total_bets": "sum"
+    }).reset_index()
+
+    # Add cumulative bankroll progression
+    weekly["Cumulative_Bankroll"] = weekly["final_bankroll"].cummax()
+
+    weekly.to_csv(SIM_WEEKLY_FILE, index=False)
+    logger.info(f"📑 Weekly simulation summary exported to {SIM_WEEKLY_FILE}")
+
+
+def log_monthly_summary():
+    """Aggregate simulation bankroll changes by month with cumulative bankroll."""
+    if not SIM_SUMMARY_FILE.exists():
+        return
+    df = pd.read_csv(SIM_SUMMARY_FILE)
+    df["Date"] = pd.to_datetime(df["Date"])
+    df["Month"] = df["Date"].dt.to_period("M").astype(str)
+
+    monthly = df.groupby("Month").agg({
+        "final_bankroll": "last",
+        "avg_EV": "mean",
+        "avg_Kelly_Bet": "mean",
+        "win_rate": "mean",
+        "total_bets": "sum"
+    }).reset_index()
+
+    # Add cumulative bankroll progression
+    monthly["Cumulative_Bankroll"] = monthly["final_bankroll"].cummax()
+
+    monthly.to_csv(SIM_MONTHLY_FILE, index=False)
+    logger.info(f"📑 Monthly simulation summary exported to {SIM_MONTHLY_FILE}")
+
+
+def plot_weekly_summary():
+    """Generate a line chart of cumulative bankroll progression by week."""
+    if not SIM_WEEKLY_FILE.exists():
+        logger.warning("⚠️ No weekly summary file found.")
+        return None
+    df = pd.read_csv(SIM_WEEKLY_FILE)
+    if df.empty:
+        return None
+
+    chart_path = RESULTS_DIR / "weekly_bankroll_chart.png"
+    plt.figure(figsize=(10, 6))
+    plt.plot(df["Week"], df["Cumulative_Bankroll"], marker="o", label="Cumulative Bankroll")
+    plt.title("Weekly Bankroll Progression")
+    plt.xlabel("Week")
+    plt.ylabel("Cumulative Bankroll")
+    plt.xticks(rotation=45)
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(chart_path)
+    logger.info(f"📈 Weekly bankroll chart saved to {chart_path}")
+    return chart_path
+
+
+def plot_monthly_summary():
+    """Generate a line chart of cumulative bankroll progression by month."""
+    if not SIM_MONTHLY_FILE.exists():
+        logger.warning("⚠️ No monthly summary file found.")
+        return None
+    df = pd.read_csv(SIM_MONTHLY_FILE)
+    if df.empty:
+        return None
+
+    chart_path = RESULTS_DIR / "monthly_bankroll_chart.png"
+    plt.figure(figsize=(10, 6))
+    plt.plot(df["Month"], df["Cumulative_Bankroll"], marker="s", color="green", label="Cumulative Bankroll")
+    plt.title("Monthly Bankroll Progression")
+    plt.xlabel("Month")
+    plt.ylabel("Cumulative Bankroll")
+    plt.xticks(rotation=45)
+    plt.grid(True, linestyle="--", alpha=0.7)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(chart_path)
+    logger.info(f"📈 Monthly bankroll chart saved to {chart_path}")
+    return chart_path
+
+# === CLI ===
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simulate bankroll trajectory with EV and Kelly bet sizes")
@@ -140,6 +292,8 @@ if __name__ == "__main__":
                         help="Optional path to save bankroll trajectory chart")
     parser.add_argument("--notify", action="store_true",
                         help="Send final metrics and chart to Telegram")
+    parser.add_argument("--export-summary", action="store_true",
+                        help="Append metrics to bankroll_simulation_summary.csv and update weekly/monthly summaries")
     args = parser.parse_args()
 
     try:
@@ -161,6 +315,11 @@ if __name__ == "__main__":
         if args.chart and history:
             chart_path = plot_trajectory(history, Path(args.chart))
 
+        if args.export_summary:
+            export_simulation_summary(metrics)
+            log_weekly_summary()
+            log_monthly_summary()
+
         if args.notify:
             msg = (
                 f"🏀 Bankroll Simulation Complete\n"
@@ -176,3 +335,4 @@ if __name__ == "__main__":
 
     except Exception as e:
         logger.error(f"❌ Simulation failed: {e}")
+        raise PipelineError(f"Simulation failed: {e}")

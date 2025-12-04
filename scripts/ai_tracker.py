@@ -4,23 +4,40 @@
 # ============================================================
 
 import pandas as pd
-from pathlib import Path
-from core.config import BASE_RESULTS_DIR, SUMMARY_FILE as PIPELINE_SUMMARY_FILE
-from core.log_config import init_global_logger
-from notifications import send_message
 import matplotlib.pyplot as plt
+from pathlib import Path
+import datetime
+
+from core.config import BASE_RESULTS_DIR, SUMMARY_FILE as PIPELINE_SUMMARY_FILE, log_config_snapshot
+from core.paths import (
+    AI_TRACKER_TEAMS_FILE,
+    AI_TRACKER_PLAYERS_FILE,
+    AI_TRACKER_INSIGHT_FILE,
+    AI_TRACKER_DASHBOARD_FILE,
+    AI_TRACKER_SUMMARY_FILE,
+    ensure_dirs,
+)
+from core.log_config import init_global_logger
+from notifications import send_telegram_message, send_photo
 
 logger = init_global_logger()
 
-TRACKER_FILE = BASE_RESULTS_DIR / "ai_tracker.csv"
-INSIGHT_FILE = BASE_RESULTS_DIR / "ai_tracker_insight.txt"
+def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker update",
+                   notify=False, avoid_threshold=0.4, watch_threshold=0.6):
+    ensure_dirs(strict=False)
+    log_config_snapshot()   
 
-def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker update", notify=False):
     if not backtest_file.exists():
         logger.warning(f"⚠️ Backtest file not found: {backtest_file}")
         return
 
     df = pd.read_csv(backtest_file)
+
+    # Validate required columns
+    required_cols = {"team_id", "correct"}
+    if not required_cols.issubset(df.columns):
+        logger.error(f"❌ Missing required columns in {backtest_file}")
+        return
 
     # Team-level aggregation
     team_stats = df.groupby("team_id").agg(
@@ -29,29 +46,33 @@ def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker up
     ).reset_index()
     team_stats["losses"] = team_stats["total"] - team_stats["wins"]
     team_stats["win_rate"] = team_stats["wins"] / team_stats["total"]
-    team_stats["avoid_flag"] = team_stats["win_rate"] < 0.4
+    team_stats["avoid_flag"] = team_stats["win_rate"] < avoid_threshold
 
     # Player-level aggregation (if player_id present)
     player_stats = None
     if "player_id" in df.columns:
-        player_stats = df.groupby("player_id").agg(
+        group_cols = ["player_id"]
+        if "player_name" in df.columns:
+            group_cols.append("player_name")
+
+        player_stats = df.groupby(group_cols).agg(
             wins=("correct", "sum"),
             total=("correct", "count")
         ).reset_index()
         player_stats["losses"] = player_stats["total"] - player_stats["wins"]
         player_stats["win_rate"] = player_stats["wins"] / player_stats["total"]
-        player_stats["watch_flag"] = player_stats["win_rate"] > 0.6
-        player_stats["avoid_flag"] = player_stats["win_rate"] < 0.4
+        player_stats["watch_flag"] = player_stats["win_rate"] > watch_threshold
+        player_stats["avoid_flag"] = player_stats["win_rate"] < avoid_threshold
 
-    # Save tracker
-    tracker_out = {"teams": team_stats}
+    # Save separate tracker CSVs
+    team_stats.to_csv(AI_TRACKER_TEAMS_FILE, index=False)
+    logger.info(f"📑 Team tracker updated → {AI_TRACKER_TEAMS_FILE}")
+
     if player_stats is not None:
-        tracker_out["players"] = player_stats
+        player_stats.to_csv(AI_TRACKER_PLAYERS_FILE, index=False)
+        logger.info(f"📑 Player tracker updated → {AI_TRACKER_PLAYERS_FILE}")
 
-    pd.concat(tracker_out.values(), axis=0).to_csv(TRACKER_FILE, index=False)
-    logger.info(f"📑 AI tracker updated → {TRACKER_FILE}")
-
-    # Save insight
+    # Save insight text
     avoid_teams = team_stats.loc[team_stats["avoid_flag"], "team_id"].tolist()
     watch_players = player_stats.loc[player_stats["watch_flag"], "player_id"].tolist() if player_stats is not None else []
     avoid_players = player_stats.loc[player_stats["avoid_flag"], "player_id"].tolist() if player_stats is not None else []
@@ -62,11 +83,12 @@ def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker up
         f"Players to watch: {watch_players}\n"
         f"Players to avoid: {avoid_players}\n"
     )
-    with open(INSIGHT_FILE, "w") as f:
+    AI_TRACKER_INSIGHT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(AI_TRACKER_INSIGHT_FILE, "w") as f:
         f.write(insight)
-    logger.info(f"AI insight saved → {INSIGHT_FILE}")
+    logger.info(f"AI insight saved → {AI_TRACKER_INSIGHT_FILE}")
 
-    # Append to pipeline_summary
+    # Append to pipeline_summary CSV
     run_time = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     summary_row = {
         "timestamp": run_time,
@@ -84,15 +106,27 @@ def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker up
         index=False
     )
 
+    # Append to dedicated AI tracker summary log
+    try:
+        AI_TRACKER_SUMMARY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame([summary_row]).to_csv(
+            AI_TRACKER_SUMMARY_FILE,
+            mode="a",
+            header=not AI_TRACKER_SUMMARY_FILE.exists(),
+            index=False
+        )
+        logger.info(f"📈 AI tracker summary appended to {AI_TRACKER_SUMMARY_FILE}")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to append AI tracker summary: {e}")
+
+    # Notify via Telegram
     if notify:
-        send_message(insight)
+        send_telegram_message(insight)
         logger.info("📲 AI tracker insight pushed to Telegram")
 
 
-def plot_team_dashboard(team_stats, season="aggregate"):
-    """
-    Generate a bar chart of team win rates with avoid flags highlighted.
-    """
+def plot_team_dashboard(team_stats: pd.DataFrame, season="aggregate") -> Path:
+    """Generate a bar chart of team win rates with avoid flags highlighted."""
     fig, ax = plt.subplots(figsize=(12, 6))
 
     colors = team_stats["win_rate"].apply(
@@ -106,21 +140,26 @@ def plot_team_dashboard(team_stats, season="aggregate"):
     ax.set_ylim(0, 1)
     ax.grid(True, axis="y", linestyle="--", alpha=0.7)
 
-    # Annotate with wins/losses
-    for idx, row in team_stats.iterrows():
-        ax.text(idx, row["win_rate"] + 0.02,
-                f"{row['wins']}-{row['losses']}",
-                ha="center", fontsize=8)
+    # Annotate bars with wins-losses
+    for x, row in zip(team_stats["team_id"].astype(str), team_stats.itertuples()):
+        ax.text(x, row.win_rate + 0.02, f"{row.wins}-{row.losses}", ha="center", fontsize=8)
 
     plt.tight_layout()
-    dashboard_path = BASE_RESULTS_DIR / "ai_tracker_dashboard.png"
-    plt.savefig(dashboard_path)
+    plt.savefig(AI_TRACKER_DASHBOARD_FILE)
     plt.close()
-    logger.info(f"📊 AI tracker dashboard saved → {dashboard_path}")
-    return dashboard_path
+    logger.info(f"📊 AI tracker dashboard saved → {AI_TRACKER_DASHBOARD_FILE}")
 
-    dashboard_path = plot_team_dashboard(team_stats, season=season)
+    return AI_TRACKER_DASHBOARD_FILE
 
-    if notify:
-        send_message(f"📊 AI Tracker Dashboard ({season})")
-        send_photo(str(dashboard_path), caption="Team Win Rates — Avoid flags highlighted")
+
+# ======================
+# Example usage
+# ======================
+if __name__ == "__main__":
+    backtest_file = BASE_RESULTS_DIR / "backtest_results.csv"
+    update_tracker(backtest_file, season="2025-2026", notes="Daily run", notify=True)
+
+    if AI_TRACKER_TEAMS_FILE.exists():
+        team_stats_df = pd.read_csv(AI_TRACKER_TEAMS_FILE)
+        dashboard_img = plot_team_dashboard(team_stats_df, season="2025-2026")
+        send_photo(str(dashboard_img), caption="📊 AI Tracker Team Win Rates")

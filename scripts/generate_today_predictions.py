@@ -22,16 +22,20 @@ from core.config import (
 from core.log_config import init_global_logger
 from core.utils import ensure_columns
 from core.exceptions import DataError, PipelineError, FileError
-from notifications import send_telegram_message, send_ev_summary  # ✅ Telegram hooks
+from notifications import send_telegram_message, send_ev_summary
 
 logger = init_global_logger()
 PREDICTIONS_LOG = LOGS_DIR / "predictions.log"
 
+# ============================================================
+# Bankroll update
+# ============================================================
 
 def update_bankroll(picks_df: pd.DataFrame):
     """Update bankroll tracking file with today's picks results."""
     if picks_df is None or picks_df.empty:
         return
+
     today = pd.Timestamp.today().date().isoformat()
     total_stake = picks_df["stake_amount"].sum()
     avg_ev = picks_df["ev"].mean()
@@ -42,15 +46,17 @@ def update_bankroll(picks_df: pd.DataFrame):
         "Avg_EV": avg_ev,
         "Bankroll_Change": bankroll_change,
     }
+
     if Path(PICKS_BANKROLL_FILE).exists():
         hist = pd.read_csv(PICKS_BANKROLL_FILE)
         hist = pd.concat([hist, pd.DataFrame([record])], ignore_index=True)
     else:
         hist = pd.DataFrame([record])
+
     hist.to_csv(PICKS_BANKROLL_FILE, index=False)
     logger.info(f"💰 Bankroll updated → {PICKS_BANKROLL_FILE}")
 
-    # ✅ Notify Telegram bankroll update
+    # Telegram notification
     msg = (
         f"🏀 Bankroll Update ({today})\n"
         f"💰 Total Stake: {total_stake:.2f}\n"
@@ -59,13 +65,12 @@ def update_bankroll(picks_df: pd.DataFrame):
     )
     send_telegram_message(msg)
 
+# ============================================================
+# Generate today's predictions
+# ============================================================
 
 def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd.DataFrame:
-    """
-    Generate predictions for today's games using the trained model.
-    Handles binary, regression, and multi-class targets.
-    Saves predictions to PREDICTIONS_FILE and returns DataFrame.
-    """
+    """Generate predictions for today's games using the trained model."""
     ensure_dirs(strict=False)
     features_file = Path(features_file)
 
@@ -76,7 +81,7 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
     if df.empty:
         raise DataError(f"{features_file} is empty. No games to predict today.")
 
-    # Load trained model artifact
+    # Load trained model
     if not Path(MODEL_FILE_PKL).exists():
         raise FileError("Model file not found", file_path=str(MODEL_FILE_PKL))
 
@@ -95,22 +100,16 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
 
     X = df[feature_cols]
 
-    # Predict depending on target type
+    # Predict
     if target == "label":
-        if hasattr(pipeline, "predict_proba"):
-            probs = pipeline.predict_proba(X)[:, 1]
-        else:
-            probs = pipeline.predict(X)
-        preds = (probs >= threshold).astype(int)
+        probs = pipeline.predict_proba(X)[:, 1] if hasattr(pipeline, "predict_proba") else pipeline.predict(X)
         df["pred_home_win_prob"] = probs
-        df["predicted_home_win"] = preds
-
+        df["predicted_home_win"] = (probs >= threshold).astype(int)
     elif target == "margin":
         preds = pipeline.predict(X)
         df["predicted_margin"] = preds
         df["pred_home_win_prob"] = 1 / (1 + np.exp(-0.1 * preds))
         df["predicted_home_win"] = (df["pred_home_win_prob"] >= threshold).astype(int)
-
     elif target == "outcome_category":
         preds = pipeline.predict(X)
         df["predicted_outcome_category"] = preds
@@ -131,7 +130,6 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
     # Picks logic
     picks = []
     if "decimal_odds" in df.columns and "pred_home_win_prob" in df.columns:
-        logger.info("=== GAME-LEVEL PREDICTIONS WITH PICKS & STAKING ===")
         for _, row in df.iterrows():
             odds = row["decimal_odds"]
             if pd.isna(odds) or odds <= 1:
@@ -150,41 +148,32 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
                     "game_id": row["game_id"],
                     "home_team": row["home_team"],
                     "away_team": row["away_team"],
-                    "pred_home_win_prob": row.get("pred_home_win_prob"),
+                    "pred_home_win_prob": p,
                     "predicted_home_win": row.get("predicted_home_win"),
                     "decimal_odds": odds,
                     "ev": ev,
                     "kelly_fraction": kelly_fraction,
                     "stake_amount": stake_amount,
                 })
-                logger.info(
-                    f"{row['home_team']} vs {row['away_team']} → EV={ev:.3f} | ✅ Pick | Stake={stake_amount:.2f}"
-                )
 
-    # Save picks if any
+    # Save picks
     if picks:
         picks_df = pd.DataFrame(picks)
-        try:
-            picks_df.to_csv(PICKS_FILE, index=False)
-            logger.info(f"💾 Picks saved to {PICKS_FILE} ({len(picks)} rows)")
-        except Exception as e:
-            raise PipelineError(f"Failed to save picks: {e}")
+        picks_df.to_csv(PICKS_FILE, index=False)
+        logger.info(f"💾 Picks saved to {PICKS_FILE} ({len(picks)} rows)")
 
-        # Update bankroll + notify Telegram
+        # Update bankroll + Telegram
         update_bankroll(picks_df)
-
-        # ✅ Send EV summary to Telegram
         send_ev_summary(picks_df)
     else:
         logger.info("ℹ️ No positive EV picks found today.")
         send_telegram_message("ℹ️ No positive EV picks found today.")
 
-    # Summary log + Telegram
+    # Summary log
     summary_msg = f"SUMMARY: Games={len(df)}, Picks={len(picks)}, Threshold={threshold}"
     logger.info(summary_msg)
     send_telegram_message(summary_msg)
 
-    # Append summary log
     summary_entry = pd.DataFrame([{
         "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
         "games": len(df),
@@ -193,6 +182,7 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
         "predictions_file": str(PREDICTIONS_FILE),
         "picks_file": str(PICKS_FILE) if picks else None,
     }])
+
     try:
         if PREDICTIONS_LOG.exists():
             summary_entry.to_csv(PREDICTIONS_LOG, mode="a", header=False, index=False)
@@ -204,9 +194,11 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
 
     return df
 
+# ============================================================
+# Print latest summary
+# ============================================================
 
 def print_latest_summary():
-    """Print the latest predictions summary entry without regenerating predictions."""
     if not PREDICTIONS_LOG.exists():
         logger.error("No predictions summary log found.")
         return
@@ -220,6 +212,9 @@ def print_latest_summary():
     except Exception as e:
         logger.error(f"Failed to read predictions summary log: {e}")
 
+# ============================================================
+# CLI entry
+# ============================================================
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate today's predictions")
@@ -228,4 +223,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.summary_only:
-        print
+        print_latest_summary()
+    else:
+        generate_today_predictions(FEATURES_FILE, threshold=args.threshold)

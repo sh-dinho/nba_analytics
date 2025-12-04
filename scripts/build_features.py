@@ -5,19 +5,24 @@
 
 import argparse
 import pandas as pd
+import matplotlib.pyplot as plt
 from pathlib import Path
 
 from core.paths import (
     HISTORICAL_GAMES_FILE,
     NEW_GAMES_FILE,
-    DATA_DIR,
+    TRAINING_FEATURES_FILE,
+    PLAYER_FEATURES_FILE,
+    NEW_GAMES_FEATURES_FILE,
+    LOGS_DIR,
     ensure_dirs,
 )
-from core.config import USE_ROLLING_AVG, ROLLING_WINDOW
+from core.config import USE_ROLLING_AVG, ROLLING_WINDOW, log_config_snapshot
 from core.log_config import init_global_logger
 from core.exceptions import DataError, FileError
 
 logger = init_global_logger()
+
 
 COLUMN_MAP = {
     "Home": "home_team",
@@ -61,6 +66,7 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 def build_features(rounds: int = 10, training: bool = False, player: bool = False):
     """Build features for training or prediction (team and/or player)."""
     ensure_dirs(strict=False)
+    log_config_snapshot() 
 
     if training:
         logger.info("Loading historical games...")
@@ -74,6 +80,11 @@ def build_features(rounds: int = 10, training: bool = False, player: bool = Fals
         for col in required:
             if col not in df.columns:
                 raise DataError(f"Missing required column: {col}")
+
+        # Sort by date for rolling averages
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.sort_values("date")
 
         # --- TEAM FEATURES ---
         if not player:  # combined mode builds both team + player
@@ -117,9 +128,8 @@ def build_features(rounds: int = 10, training: bool = False, player: bool = Fals
                               "away_blowout"
                 )
 
-            out_file = DATA_DIR / "training_features.csv"
-            features.to_csv(out_file, index=False)
-            logger.info(f"✅ Training features saved to {out_file} ({len(features)} rows)")
+            features.to_csv(TRAINING_FEATURES_FILE, index=False)
+            logger.info(f"✅ Training features saved to {TRAINING_FEATURES_FILE} ({len(features)} rows)")
 
         # --- PLAYER FEATURES ---
         if player or not player:  # combined mode builds player features too
@@ -142,11 +152,10 @@ def build_features(rounds: int = 10, training: bool = False, player: bool = Fals
                     df["player_avg_ast"] = df.groupby("player_name")["ast"].transform("mean")
                     df["player_avg_reb"] = df.groupby("player_name")["reb"].transform("mean")
 
-                player_out_file = DATA_DIR / "player_features.csv"
                 player_features = df[["player_name", "team_abbreviation", "games_played",
                                       "player_avg_pts", "player_avg_ast", "player_avg_reb"]]
-                player_features.to_csv(player_out_file, index=False)
-                logger.info(f"✅ Player features saved to {player_out_file} ({len(player_features)} rows)")
+                player_features.to_csv(PLAYER_FEATURES_FILE, index=False)
+                logger.info(f"✅ Player features saved to {PLAYER_FEATURES_FILE} ({len(player_features)} rows)")
 
     else:
         logger.info("Loading new games...")
@@ -167,19 +176,25 @@ def build_features(rounds: int = 10, training: bool = False, player: bool = Fals
             "away_team": df["away_team"],
         })
 
-        out_file = DATA_DIR / "new_games_features.csv"
-        features.to_csv(out_file, index=False)
-        logger.info(f"✅ New game features saved to {out_file} ({len(features)} rows)")
+        features.to_csv(NEW_GAMES_FEATURES_FILE, index=False)
+        logger.info(f"✅ New game features saved to {NEW_GAMES_FEATURES_FILE} ({len(features)} rows)")
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build features for training or prediction")
-    parser.add_argument("--rounds", type=int, default=10,
-                        help="Number of rounds or rolling window size")
-    parser.add_argument("--training", action="store_true",
-                        help="Build training features from historical games")
-    parser.add_argument("--player", action="store_true",
-                        help="Build only player-level features (requires --training). If omitted, builds both team and player features.")
-    args = parser.parse_args()
+def plot_feature_trends(file: Path, feature_cols: list[str]):
+    """Plot trends of selected features over time."""
+    if not file.exists():
+        logger.warning(f"⚠️ Feature file not found: {file}")
+        return ""
+    df = pd.read_csv(file)
+    if df.empty:
+        logger.warning("Feature file is empty.")
+        return ""
 
-    build_features(rounds=args.rounds, training=args.training, player=args.player)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        fig, ax = plt.subplots(figsize=(10, 5))
+        for col in feature_cols:
+            if col in df.columns:
+                ax.plot(df["date"], df[col], label=col)
+        ax.set_title("Feature Trends Over Time")
+        ax.legend()

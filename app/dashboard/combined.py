@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from core.config import RESULTS_DIR
 from core.log_config import setup_logger
 from core.exceptions import PipelineError, DataError
-from scripts.notifications import send_photo
+from notifications import send_photo
 
 logger = setup_logger("combined_dashboard")
 

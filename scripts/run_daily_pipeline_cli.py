@@ -1,30 +1,3 @@
-I see what you’re building here: a **daily CLI pipeline runner** that orchestrates all the steps end‑to‑end, then logs bankroll summaries at daily, weekly, and monthly levels. The structure is solid, but there are a couple of issues and opportunities to tighten things up:
-
----
-
-## 🔧 Fixes Needed
-
-1. **Incomplete `summary_entry`**  
-   Right now you have:
-   ```python
-   summary_entry = pd.DataFrame([{ ... }])  # same as your version
-   ```
-   That placeholder needs to be replaced with actual metrics collected from the run (e.g., timestamp, threshold, strategy, picks count, bankroll change, etc.).
-
-2. **Consistent Logging**  
-   You’re still using `setup_logger`. Across the rest of your pipeline we’ve standardized on `init_global_logger`.
-
-3. **Error Handling**  
-   Wrap the main pipeline in a `try/except` so failures are logged cleanly instead of crashing.
-
-4. **Optional Telegram Notification**  
-   Since you’ve added bankroll summaries, you can also push a one‑line summary to Telegram (like in your other scripts) so you get notified when the pipeline finishes.
-
----
-
-## 📂 Updated `scripts/run_daily_pipeline_cli.py`
-
-```python
 # ============================================================
 # File: scripts/run_daily_pipeline_cli.py
 # Purpose: Run daily NBA prediction pipeline end-to-end
@@ -184,6 +157,18 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
 
         # Step 6: Collect summaries
         run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Collect metrics from picks.csv if available
+        picks_file = RESULTS_DIR / "picks.csv"
+        picks_count = 0
+        bankroll_change = 0.0
+        if picks_file.exists():
+            df_picks = pd.read_csv(picks_file)
+            picks_count = len(df_picks)
+            if not df_picks.empty:
+                bankroll_change = (df_picks.get("ev", pd.Series([0.0])) *
+                                   df_picks.get("stake_amount", pd.Series([0.0]))).sum()
+
         summary_entry = pd.DataFrame([{
             "timestamp": run_time,
             "season": season,
@@ -191,7 +176,9 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
             "strategy": strategy,
             "max_fraction": max_fraction,
             "target": target,
-            "model_type": model_type
+            "model_type": model_type,
+            "picks_count": picks_count,
+            "bankroll_change": bankroll_change
         }])
 
         if Path(SUMMARY_FILE).exists():
@@ -201,7 +188,7 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         logger.info(f"Pipeline summary appended to {SUMMARY_FILE}")
 
         # === New Enhancements ===
-        update_bankroll(RESULTS_DIR / "picks.csv")
+        update_bankroll(picks_file)
         export_daily_summary(summary_entry)
         log_weekly_summary()
         log_monthly_summary()
@@ -209,7 +196,7 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
         # ✅ Optional Telegram notification
         msg = (f"🏀 Daily Pipeline Complete\n"
                f"Season: {season}\n"
-               f"Final Bankroll summary exported.\n"
+               f"Picks: {picks_count}, Bankroll Δ: {bankroll_change:.2f}\n"
                f"Strategy={strategy}, Threshold={threshold}")
         send_telegram_message(msg)
 
@@ -222,4 +209,32 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run daily NBA prediction pipeline")
-    parser.add_argument("--threshold", type=float, default=0.6)
+    parser.add_argument("--threshold", type=float, default=0.6,
+                        help="Minimum probability threshold for picks")
+    parser.add_argument("--strategy", type=str, default="kelly",
+                        help="Bet sizing strategy (e.g., kelly, flat)")
+    parser.add_argument("--max_fraction", type=float, default=0.05,
+                        help="Maximum bankroll fraction per pick")
+    parser.add_argument("--season", type=str, default=None,
+                        help="NBA season string (e.g., 2025-26)")
+    parser.add_argument("--force-refresh", action="store_true",
+                        help="Force refresh of player stats")
+    parser.add_argument("--rounds", type=int, default=10,
+                        help="Number of feature-building rounds")
+    parser.add_argument("--target", type=str, default="label",
+                        help="Prediction target (label, margin, outcome_category)")
+    parser.add_argument("--model-type", type=str, default="logistic",
+                        help="Model type (logistic, random_forest, xgboost, etc.)")
+    args = parser.parse_args()
+
+    # Run pipeline
+    main(threshold=args.threshold,
+         strategy=args.strategy,
+         max_fraction=args.max_fraction,
+         season=args.season,
+         force_refresh=args.force_refresh,
+         rounds=args.rounds,
+         target=args.target,
+         model_type=args.model_type)
+    
+    

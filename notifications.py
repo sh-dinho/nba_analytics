@@ -18,23 +18,47 @@ logger = init_global_logger()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# ----------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------
+def _send_request(url: str, data: dict, files: dict | None = None, timeout: int = 10):
+    """Helper to send requests with timeout and error handling."""
+    try:
+        resp = requests.post(url, data=data, files=files, timeout=timeout)
+        if resp.status_code != 200:
+            logger.error(f"❌ Telegram API error: {resp.text}")
+        else:
+            logger.info("✅ Telegram request succeeded")
+        return resp
+    except Exception as e:
+        logger.error(f"❌ Telegram request failed: {e}")
+        return None
 
+def _plot_chart(df: pd.DataFrame, chart_path: Path, title: str, y_col: str = "Final_Bankroll"):
+    """Centralized chart plotting helper."""
+    plt.figure(figsize=(8, 5))
+    x = df["Date"] if "Date" in df.columns else range(len(df))
+    plt.plot(x, df[y_col], marker="o")
+    plt.title(title)
+    plt.xlabel("Date" if "Date" in df.columns else "Run Index")
+    plt.ylabel(y_col)
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(chart_path)
+    logger.info(f"📊 Chart generated at {chart_path}")
+
+# ----------------------------------------------------------------
+# Notification functions
+# ----------------------------------------------------------------
 def send_telegram_message(msg: str) -> None:
-    """Send a plain text message to Telegram."""
+    """Send a plain text message to Telegram (Markdown enabled)."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("⚠️ Telegram credentials not set. Skipping notification.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    try:
-        resp = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
-        if resp.status_code != 200:
-            logger.error(f"❌ Failed to send Telegram message: {resp.text}")
-        else:
-            logger.info("✅ Telegram message sent successfully")
-    except Exception as e:
-        logger.error(f"❌ Error sending Telegram message: {e}")
-
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}
+    _send_request(url, data)
 
 def send_photo(photo_path: str, caption: str = None) -> None:
     """Send a photo to Telegram with optional caption."""
@@ -49,15 +73,7 @@ def send_photo(photo_path: str, caption: str = None) -> None:
     with open(photo_path, "rb") as photo:
         files = {"photo": photo}
         data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption or ""}
-        try:
-            resp = requests.post(url, data=data, files=files, timeout=10)
-            if resp.status_code != 200:
-                logger.error(f"❌ Failed to send Telegram photo: {resp.text}")
-            else:
-                logger.info("📸 Telegram chart sent successfully")
-        except Exception as e:
-            logger.error(f"❌ Error sending Telegram photo: {e}")
-
+        _send_request(url, data, files=files)
 
 def send_ev_summary(picks: pd.DataFrame) -> None:
     """Send an EV (expected value) summary of picks to Telegram."""
@@ -78,9 +94,8 @@ def send_ev_summary(picks: pd.DataFrame) -> None:
     else:
         summary_lines.append("⚠️ Picks DataFrame missing 'pick' or 'ev' columns.")
 
-    msg = "EV Summary:\n" + "\n".join(summary_lines)
+    msg = "*EV Summary:*\n" + "\n".join(summary_lines)
     send_telegram_message(msg)
-
 
 def send_summary_report(summary_path: Path, chart_path: Path, export_json: bool = False) -> None:
     """Send bankroll summary report (daily/weekly/monthly) to Telegram."""
@@ -117,19 +132,8 @@ def send_summary_report(summary_path: Path, chart_path: Path, export_json: bool 
 
     # Generate chart if missing
     if not chart_path.exists() and "Final_Bankroll" in df.columns:
-        plt.figure(figsize=(8, 5))
-        x = df["Date"] if "Date" in df.columns else range(len(df))
-        plt.plot(x, df["Final_Bankroll"], marker="o")
-        plt.title("Bankroll Trajectory")
-        plt.xlabel("Date")
-        plt.ylabel("Final Bankroll")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(chart_path)
-        logger.info(f"📊 Chart generated at {chart_path}")
-
+        _plot_chart(df, chart_path, "Bankroll Trajectory")
     send_photo(str(chart_path), caption="📈 Bankroll Trajectories")
-
 
 def send_combined_dashboard(daily: Path, weekly: Path, monthly: Path, chart_path: Path, export_json: bool = False) -> None:
     """Merge daily, weekly, and monthly summaries into one dashboard message."""
@@ -165,13 +169,10 @@ def send_combined_dashboard(daily: Path, weekly: Path, monthly: Path, chart_path
 
     # Optional chart
     if "Final_Bankroll" in combined.columns:
-        plt.figure(figsize=(8, 5))
-        plt.plot(combined.index, combined["Final_Bankroll"], marker="o")
-        plt.title("Combined Bankroll Trajectories")
-        plt.xlabel("Run Index")
-        plt.ylabel("Final Bankroll")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(chart_path)
-        logger.info(f"📊 Combined chart generated at {chart_path}")
+        _plot_chart(combined, chart_path, "Combined Bankroll Trajectories")
         send_photo(str(chart_path), caption="📈 Combined Bankroll Dashboard")
+
+# ----------------------------------------------------------------
+# Aliases for compatibility with setup_all.py
+# ----------------------------------------------------------------
+send_message = send_telegram_message
