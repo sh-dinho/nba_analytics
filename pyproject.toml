@@ -1,35 +1,40 @@
+# ============================================================
+# File: pyproject.toml
+# Purpose: Build and dependency configuration for nba-analytics
+# ============================================================
+
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=65.0.0"]  # specify minimum setuptools version for pyproject support
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nba-analytics"
 version = "0.1.0"
 description = "NBA analytics pipeline"
-authors = [{ name = "Your Name" }]
+authors = [{ name = "Your Name", email = "your.email@example.com" }]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
-    "pandas",
-    "numpy",
-    "requests",
-    "toml",
-    "joblib",
-    "scikit-learn",
-    "xgboost",
-    "tensorflow",
-    "matplotlib",
-    "colorama"
+    "pandas>=2.0",
+    "numpy>=1.25",
+    "requests>=2.31",
+    "toml>=0.10",
+    "joblib>=1.3",
+    "scikit-learn>=1.3",
+    "xgboost>=1.7",
+    "tensorflow>=2.15",
+    "matplotlib>=3.8",
+    "colorama>=0.4"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest",
-    "black",
-    "flake8"
+    "pytest>=7.4",
+    "black>=24.3",
+    "flake8>=7.0"
 ]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app", "scripts", "core"]
+include = ["app*", "scripts*", "core*"]

@@ -1,89 +1,60 @@
 # ============================================================
 # File: scripts/setup_all.py
-# Purpose: Orchestrate full NBA analytics pipeline
+# Purpose: Full NBA pipeline setup: fetch games, build features, generate predictions
 # ============================================================
 
-import argparse
-import os
-import pandas as pd
-from core.log_config import setup_logger
-from core.exceptions import PipelineError
+import sys
+import logging
+from pathlib import Path
 
+# Ensure project root is in sys.path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# -----------------------------
+# Core imports
+# -----------------------------
+from core.paths import ensure_dirs, DATA_DIR, FEATURES_FILE
+from core.config import PREDICTIONS_FILE, PREDICTION_THRESHOLD
+from core.log_config import init_global_logger
+from notifications import send_telegram_message
+
+# -----------------------------
+# Scripts imports
+# -----------------------------
 from scripts.fetch_new_games import fetch_new_games
-from scripts.build_features_for_training import build_features_for_training
-from scripts.build_features_for_new_games import build_features_for_new_games
-from scripts.train_model import main as train_model
 from scripts.generate_today_predictions import generate_today_predictions
-from core.config import NEW_GAMES_FEATURES_FILE, TRAINING_FEATURES_FILE, PICKS_FILE
 
-logger = setup_logger("setup_all")
+# Initialize logger
+logger = init_global_logger()
 
+def main():
+    logger.info("🚀 Starting NBA analytics pipeline...")
 
-def _safe_run(step_name, func, *args, **kwargs):
+    # Ensure necessary directories
+    ensure_dirs(strict=False)
+    logger.info("✅ All pipeline directories exist.")
+
+    # Step 1: Fetch today's NBA games
     try:
-        logger.info(f"===== Starting: {step_name} =====")
-        result = func(*args, **kwargs)
-        logger.info(f"✅ Completed: {step_name}")
-        return result
+        new_games_file = fetch_new_games(debug=False, allow_placeholder=True)
+        logger.info(f"📥 Fetched new games → {new_games_file}")
     except Exception as e:
-        logger.error(f"❌ {step_name} failed: {e}", exc_info=True)
-        raise PipelineError(f"{step_name} failed: {e}")
+        logger.error(f"❌ Failed to fetch new games: {e}")
+        send_telegram_message(f"❌ Pipeline failed at fetch_new_games: {e}")
+        return
 
-
-def main(skip_train=False, skip_fetch=False):
-    # Step 1: Fetch new games
-    if not skip_fetch:
-        _safe_run("Fetch New Games", fetch_new_games)
-
-    # Step 2: Build training features
-    if not skip_train:
-        _safe_run("Build Features (Training)", build_features_for_training)
-
-    # Step 3: Train model
-    if not skip_train:
-        metrics = _safe_run("Train Model", train_model)
-        logger.info("=== TRAINING METRICS ===")
-        for k, v in metrics.items():
-            logger.info(f"{k.capitalize()}: {v:.3f}")
-
-    # Step 4: Build features for new games (fallback to training if none)
+    # Step 2: Generate predictions
     try:
-        features_file = _safe_run("Build Features (New Games)", build_features_for_new_games)
-    except FileNotFoundError:
-        logger.warning("⚠️ No new games found today — falling back to historical training features")
-        features_file = TRAINING_FEATURES_FILE
+        df_predictions = generate_today_predictions(
+            features_file=str(FEATURES_FILE),
+            threshold=PREDICTION_THRESHOLD
+        )
+        logger.info(f"📊 Predictions generated → {PREDICTIONS_FILE} ({len(df_predictions)} rows)")
+    except Exception as e:
+        logger.error(f"❌ Failed to generate predictions: {e}")
+        send_telegram_message(f"❌ Pipeline failed at generate_today_predictions: {e}")
+        return
 
-    # Step 5: Generate today's predictions
-    preds = _safe_run(
-        "Generate Today's Predictions",
-        generate_today_predictions,
-        features_file
-    )
-
-    # Step 6: EV calculation (graceful handling)
-    if "decimal_odds" in preds.columns:
-        preds["expected_value"] = preds["pred_home_win_prob"] * preds["decimal_odds"] - 1
-        logger.info("✅ EV calculations completed")
-    else:
-        logger.warning("⚠️ 'decimal_odds' column missing — skipping EV calculations")
-
-    # Step 7: Picks summary
-    if os.path.exists(PICKS_FILE):
-        picks_df = pd.read_csv(PICKS_FILE)
-        if len(picks_df) > 0:
-            logger.info(f"🎯 {len(picks_df)} recommended picks saved to {PICKS_FILE}")
-        else:
-            logger.info("ℹ️ Picks file exists but no positive EV picks today.")
-    else:
-        logger.info("ℹ️ No picks file generated today.")
-
-    logger.info("=== PIPELINE COMPLETED SUCCESSFULLY ===")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--skip-train", action="store_true", help="Skip training step")
-    parser.add_argument("--skip-fetch", action="store_true", help="Skip fetch step")
-    args = parser.parse_args()
-
-    main(skip_train=args.skip_train, skip_fetch=args.skip_fetch)
+    logger.info

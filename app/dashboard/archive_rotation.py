@@ -1,6 +1,6 @@
 # ============================================================
 # File: app/dashboard/archive_rotation.py
-# Purpose: Archive old dashboard images and pipeline logs instead of deleting
+# Purpose: Archive old daily dashboard images and pipeline logs
 # ============================================================
 
 import os
@@ -13,7 +13,7 @@ from core.log_config import setup_logger
 
 logger = setup_logger("archive_rotation")
 
-# Keep only the last N files in results/, move older ones to archive
+# Maximum number of files to keep in results/
 MAX_DASHBOARD_IMAGES = 10
 MAX_LOG_FILES = 20
 
@@ -35,13 +35,12 @@ def archive_files(pattern: str, max_files: int, archive_subdir: str):
 def main():
     logger.info("🚀 Starting archive rotation")
 
-    # Archive dashboards
-    archive_files(os.path.join(RESULTS_DIR, "dashboard_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
-    archive_files(os.path.join(RESULTS_DIR, "weekly_dashboard_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
-    archive_files(os.path.join(RESULTS_DIR, "monthly_dashboard_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
-    archive_files(os.path.join(RESULTS_DIR, "combined_dashboard_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
+    # Daily Dashboard Images and CSVs
+    dashboard_dir = RESULTS_DIR / "dashboard"
+    archive_files(str(dashboard_dir / "bankroll_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
+    archive_files(str(dashboard_dir / "bankroll_*.csv"), MAX_DASHBOARD_IMAGES, "dashboards")
 
-    # Archive pipeline logs
+    # Pipeline Logs
     archive_files(os.path.join(RESULTS_DIR, "pipeline_run_*.log"), MAX_LOG_FILES, "logs")
 
     logger.info("✅ Archive rotation complete")

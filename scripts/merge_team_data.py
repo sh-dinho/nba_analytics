@@ -1,99 +1,120 @@
 # ============================================================
 # File: scripts/merge_team_data.py
-# Purpose: Merge team tables into one master table (teamdata_all)
+# Purpose: Merge all season-level team tables into one master table
+#          Automatically skip empty tables and allow skipping specific seasons
 # ============================================================
 
 import os
 import sqlite3
 import pandas as pd
 import datetime
+from pathlib import Path
 import argparse
 
-# Resolve DB path
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-relative_path = os.path.join(BASE_DIR, "Data", "TeamData.sqlite")
+# --- Configuration ---
+DB_PATH = "../../Data/TeamData.sqlite"
+ARCHIVE_DIR = "../../Data/archive"
+MASTER_TABLE = "teamdata_all"
+ARCHIVE_PREFIX = "teamdata_backup"
 
-# Fallback absolute path (edit if needed)
-fallback_path = r"C:\Users\Mohamadou\projects\nba_analytics\Data\TeamData.sqlite"
+Path(ARCHIVE_DIR).mkdir(parents=True, exist_ok=True)
 
-if os.path.exists(relative_path):
-    db_path = relative_path
-else:
-    db_path = fallback_path
+# --- CLI Parser ---
+parser = argparse.ArgumentParser(description="Merge season-level team tables into a master table")
+parser.add_argument(
+    "--skip-seasons",
+    type=str,
+    nargs="*",
+    default=[],
+    help="Seasons to skip, e.g., 2020-21 2021-22"
+)
+args = parser.parse_args()
+SKIP_SEASONS = args.skip_seasons
 
-print("Resolved DB path:", db_path)
-print("Exists?", os.path.exists(db_path))
-
-def get_current_season_label() -> str:
-    """Determine current NBA season label based on today's date."""
-    today = datetime.date.today()
-    year = today.year
-    if today.month >= 10:  # Oct–Dec → season spans current year → next year
-        return f"{year}_{year+1}"
-    else:  # Jan–Jun → season spans previous year → current year
-        return f"{year-1}_{year}"
-
-def merge_current_season(con):
-    """Merge only the current season table into teamdata_all."""
-    season_label = get_current_season_label()
-    season_table = f"teamdata_{season_label}"
-
+# --- Connect to SQLite DB ---
+try:
+    con = sqlite3.connect(DB_PATH)
     cursor = con.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (season_table,))
-    row = cursor.fetchone()
+except sqlite3.Error as e:
+    raise RuntimeError(f"❌ Failed to connect to database {DB_PATH}: {e}")
 
-    if not row:
-        print(f"⚠️ No table found for current season: {season_table}")
-        return None
+# --- List all season tables ---
+cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'teamdata_%'")
+season_tables = [row[0] for row in cursor.fetchall()]
 
-    print(f"Found current season table: {season_table}")
-    df = pd.read_sql_query(f"SELECT * FROM {season_table}", con)
-    df["Season"] = season_label
-    return df
+if not season_tables:
+    raise RuntimeError("❌ No season tables found in the database.")
 
-def merge_all_seasons(con):
-    """Merge all season tables into teamdata_all."""
-    cursor = con.cursor()
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'teamdata_%'")
-    season_tables = [row[0] for row in cursor.fetchall()]
+# --- Filter out skipped seasons ---
+filtered_tables = []
+for table in season_tables:
+    season = table.replace("teamdata_", "")
+    if season in SKIP_SEASONS:
+        print(f"⏩ Skipping season {season} as requested")
+        continue
+    filtered_tables.append(table)
 
-    if not season_tables:
-        print("⚠️ No season tables found in the database.")
-        return None
+season_tables = filtered_tables
 
-    print(f"Found {len(season_tables)} season tables: {season_tables}")
-    frames = []
-    for table in season_tables:
+if not season_tables:
+    raise RuntimeError("❌ No tables left to merge after applying skip_seasons.")
+
+print(f"Processing {len(season_tables)} season tables: {season_tables}")
+
+# --- Archive existing master table if it exists ---
+cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{MASTER_TABLE}'")
+if cursor.fetchone():
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    archive_name = f"{ARCHIVE_PREFIX}_{ts}"
+    cursor.execute(f"ALTER TABLE {MASTER_TABLE} RENAME TO {archive_name}")
+    con.commit()
+    print(f"📦 Archived existing master table '{MASTER_TABLE}' → '{archive_name}'")
+
+# --- Merge all season tables ---
+frames = []
+row_counts = {}
+skipped_tables = []
+
+for table in season_tables:
+    try:
         df = pd.read_sql_query(f"SELECT * FROM {table}", con)
+        if df.empty:
+            print(f"⚠️ Skipping empty table {table}")
+            skipped_tables.append(table)
+            continue
         df["Season"] = table.replace("teamdata_", "")
         frames.append(df)
+        row_counts[table] = len(df)
+        print(f"✅ Loaded {table} with {len(df)} rows")
+    except Exception as e:
+        print(f"⚠️ Failed to read table {table}: {e}")
+        skipped_tables.append(table)
 
-    return pd.concat(frames, ignore_index=True)
+if not frames:
+    raise RuntimeError("❌ No non-empty tables loaded. Aborting merge.")
 
-def main(use_all: bool):
-    con = sqlite3.connect(db_path)
+master_df = pd.concat(frames, ignore_index=True)
 
-    if use_all:
-        master_df = merge_all_seasons(con)
-    else:
-        master_df = merge_current_season(con)
+# --- Save to master table ---
+try:
+    master_df.to_sql(MASTER_TABLE, con, if_exists="replace", index=False)
+    print(f"✅ Merged {len(frames)} tables into '{MASTER_TABLE}' ({len(master_df)} rows)")
+    if skipped_tables:
+        print(f"⚠️ Skipped {len(skipped_tables)} tables: {skipped_tables}")
+except Exception as e:
+    raise RuntimeError(f"❌ Failed to write master table {MASTER_TABLE}: {e}")
 
-    if master_df is None:
-        con.close()
-        return
+# --- Save summary CSV ---
+summary_file = Path(DB_PATH).parent / "merge_teamdata_summary.csv"
+summary_df = pd.DataFrame([{
+    "merged_tables": ",".join([t.replace("teamdata_", "") for t in season_tables if t not in skipped_tables]),
+    "skipped_tables": ",".join(skipped_tables),
+    "requested_skip_seasons": ",".join(SKIP_SEASONS),
+    "total_rows": len(master_df),
+    "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+}])
+summary_df.to_csv(summary_file, index=False)
+print(f"📊 Merge summary saved to {summary_file}")
 
-    # Save to master table
-    master_df.to_sql("teamdata_all", con, if_exists="replace", index=False)
-
-    # Optional: add index for faster queries
-    con.execute("CREATE INDEX IF NOT EXISTS idx_teamdata_all_season ON teamdata_all(Season)")
-
-    print(f"✅ Merged into teamdata_all with {len(master_df)} rows")
-
-    con.close()
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Merge team tables into teamdata_all")
-    parser.add_argument("--all", action="store_true", help="Merge all seasons instead of just current season")
-    args = parser.parse_args()
-    main(use_all=args.all)
+# --- Close connection ---
+con.close()

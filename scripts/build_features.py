@@ -1,190 +1,275 @@
 # ============================================================
 # File: scripts/build_features.py
-# Purpose: Build training or prediction features
+# Purpose: Generate training and prediction features
+# Author: <your name / org>
+# Last Updated: 2025-02-21
+#
+# Notes:
+# - Produces team-level and player-level features
+# - Supports rolling averages or season averages
+# - Aligned with CI/CD pipeline (fetch → build_features → train)
 # ============================================================
 
 import argparse
-import os
 import pandas as pd
-from core.config import (
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+from core.paths import (
     HISTORICAL_GAMES_FILE,
     NEW_GAMES_FILE,
-    BASE_DATA_DIR,
+    TRAINING_FEATURES_FILE,
+    PLAYER_FEATURES_FILE,
+    NEW_GAMES_FEATURES_FILE,
     ensure_dirs,
-    USE_ROLLING_AVG,
-    ROLLING_WINDOW,
 )
-from core.log_config import setup_logger
+from core.config import USE_ROLLING_AVG, ROLLING_WINDOW, log_config_snapshot
+from core.log_config import init_global_logger
+from core.exceptions import DataError, FileError
 
-logger = setup_logger("build_features")
+logger = init_global_logger()
+
+
+# ============================================================
+# COLUMN NORMALIZATION
+# ============================================================
 
 COLUMN_MAP = {
-    "Home": "home_team",
-    "Away": "away_team",
-    "HomeScore": "home_pts",
-    "AwayScore": "away_pts",
-    "Date": "date",
-    "GameID": "game_id",
+    "home": "home_team",
+    "away": "away_team",
+    "homescore": "home_pts",
+    "awayscore": "away_pts",
+    "date": "date",
+    "gameid": "game_id",
+    "pts_home": "home_pts",
+    "pts_away": "away_pts",
     "teamhome": "home_team",
     "teamaway": "away_team",
     "home_points": "home_pts",
     "away_points": "away_pts",
-    "pts_home": "home_pts",
-    "pts_away": "away_pts",
-    "TEAM_HOME": "home_team",
-    "TEAM_AWAY": "away_team",
-    "PTS": "pts",
-    "AST": "ast",
-    "REB": "reb",
-    "GAMES_PLAYED": "games_played",
-    "HOME_WIN": "homewin",
+    "ast": "ast",
+    "reb": "reb",
+    "pts": "pts",
+    "games_played": "games_played",
+    "homewin": "homewin",
 }
 
 
 def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize column names to lowercase and map known variations."""
-    df.columns = [col.strip().lower().replace(" ", "").replace("_", "") for col in df.columns]
-    normalized_map = {k.lower().replace(" ", "").replace("_", ""): v for k, v in COLUMN_MAP.items()}
-    applied = {col: normalized_map[col] for col in df.columns if col in normalized_map}
-    df = df.rename(columns=applied)
+    """Normalize column names and apply known mappings."""
+    original_cols = df.columns.tolist()
+    df.columns = [col.lower().replace(" ", "").replace("_", "") for col in df.columns]
 
-    logger.info(f"Column mapping applied: {applied}")
-    unmapped = [col for col in df.columns if col not in normalized_map.values()]
+    normalized_map = {
+        k.lower().replace(" ", "").replace("_", ""): v for k, v in COLUMN_MAP.items()
+    }
+
+    applied_renames = {col: normalized_map[col] for col in df.columns if col in normalized_map}
+    df = df.rename(columns=applied_renames)
+
+    logger.info(f"Column mapping applied: {applied_renames}")
+
+    unmapped = [c for c in df.columns if c not in applied_renames.values()]
     if unmapped:
-        logger.warning(f"Unmapped columns: {unmapped}")
+        logger.warning(f"⚠️ Unmapped columns: {unmapped}")
 
-    logger.info(f"Normalized columns: {list(df.columns)}")
     return df
 
 
-def build_features(rounds=10, training=False):
-    ensure_dirs()
+# ============================================================
+# TEAM FEATURES
+# ============================================================
 
-    if training:
-        logger.info("Loading historical games...")
-        try:
-            df = pd.read_csv(HISTORICAL_GAMES_FILE)
-        except FileNotFoundError:
-            logger.error(f"File not found: {HISTORICAL_GAMES_FILE}")
-            return
+def build_team_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Create team-level features for training data."""
+    required = ["home_team", "away_team"]
+    for col in required:
+        if col not in df.columns:
+            raise DataError(f"Missing required column: {col}")
 
-        df = normalize_columns(df)
+    df = df.copy()
 
-        required = ["home_team", "away_team"]
-        for col in required:
-            if col not in df.columns:
-                raise ValueError(f"Missing required column: {col}")
+    # Order by date for correct rolling averages
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.sort_values("date")
 
-        # --- TEAM FEATURES ---
-        features = pd.DataFrame({
-            "game_id": df["game_id"] if "game_id" in df.columns else df.index,
-            "home_team": df["home_team"],
-            "away_team": df["away_team"],
-        })
+    feats = pd.DataFrame({
+        "game_id": df.get("game_id", df.index),
+        "home_team": df["home_team"],
+        "away_team": df["away_team"],
+    })
 
-        # Rolling vs season averages
-        if USE_ROLLING_AVG:
-            rounds = ROLLING_WINDOW
-            logger.info(f"Using rolling averages (window={rounds}) for team features")
-            for col in ["home_pts", "away_pts", "home_reb", "away_reb", "home_ast", "away_ast"]:
-                if col in df:
-                    features[f"{col.replace('home_', 'home_avg_').replace('away_', 'away_avg_')}"] = (
-                        df.groupby(col.split('_')[0] + "_team")[col].transform(lambda x: x.rolling(rounds, min_periods=1).mean())
-                    )
-        else:
-            logger.info("Using season averages for team features")
-            for col in ["home_pts", "away_pts", "home_reb", "away_reb", "home_ast", "away_ast"]:
-                if col in df:
-                    features[f"{col.replace('home_', 'home_avg_').replace('away_', 'away_avg_')}"] = (
-                        df.groupby(col.split('_')[0] + "_team")[col].transform("mean")
-                    )
+    stat_pairs = [
+        ("home_pts", "home_avg_pts", "home_team"),
+        ("away_pts", "away_avg_pts", "away_team"),
+        ("home_reb", "home_avg_reb", "home_team"),
+        ("away_reb", "away_avg_reb", "away_team"),
+        ("home_ast", "home_avg_ast", "home_team"),
+        ("away_ast", "away_avg_ast", "away_team"),
+    ]
 
-        # Labels
-        if "homewin" in df.columns:
-            features["label"] = df["homewin"].astype(int)
-        elif "home_pts" in df and "away_pts" in df:
-            features["label"] = (df["home_pts"] > df["away_pts"]).astype(int)
-        else:
-            raise ValueError("No valid label source found (homewin or points).")
+    logger.info(
+        f"Building team features using {'rolling window '+str(ROLLING_WINDOW) if USE_ROLLING_AVG else 'season averages'}"
+    )
 
-        # Margin and outcome category
-        if "home_pts" in df and "away_pts" in df:
-            features["margin"] = (df["home_pts"] - df["away_pts"]).astype(int)
-            features["outcome_category"] = features["margin"].apply(
-                lambda m: "home_blowout" if m >= 10 else
-                          "home_close" if m > 0 else
-                          "away_close" if m > -10 else
-                          "away_blowout"
-            )
-
-        # Diagnostics
-        label_counts = features["label"].value_counts()
-        logger.info(f"📊 Label distribution: {label_counts.to_dict()}")
-        if features["label"].nunique() < 2:
-            logger.warning("⚠️ Only one class present in labels. Training will fail unless data includes both outcomes.")
-        if "margin" in features:
-            logger.info(f"📊 Margin stats: min={features['margin'].min()}, max={features['margin'].max()}, mean={features['margin'].mean():.2f}")
-
-        out_file = os.path.join(BASE_DATA_DIR, "training_features.csv")
-        features.to_csv(out_file, index=False)
-        logger.info(f"✅ Training features saved to {out_file} ({len(features)} rows)")
-
-        # --- PLAYER FEATURES ---
-        if "player_name" in df.columns:
+    for raw_col, out_col, team_col in stat_pairs:
+        if raw_col in df.columns:
             if USE_ROLLING_AVG:
-                logger.info(f"Computing player-level rolling averages (window={rounds})")
-                df = df.sort_values("games_played") if "games_played" in df.columns else df
-                player_roll = (
-                    df.groupby("player_name")[["pts", "ast", "reb"]]
-                    .rolling(rounds, min_periods=1)
-                    .mean()
-                    .reset_index()
+                feats[out_col] = (
+                    df.groupby(team_col)[raw_col]
+                    .transform(lambda x: x.rolling(ROLLING_WINDOW, min_periods=1).mean())
                 )
-                df["player_avg_pts"] = player_roll["pts"]
-                df["player_avg_ast"] = player_roll["ast"]
-                df["player_avg_reb"] = player_roll["reb"]
             else:
-                logger.info("Computing player-level season averages")
-                df["player_avg_pts"] = df.groupby("player_name")["pts"].transform("mean")
-                df["player_avg_ast"] = df.groupby("player_name")["ast"].transform("mean")
-                df["player_avg_reb"] = df.groupby("player_name")["reb"].transform("mean")
+                feats[out_col] = df.groupby(team_col)[raw_col].transform("mean")
 
-            player_out_file = os.path.join(BASE_DATA_DIR, "player_features.csv")
-            player_features = df[["player_name", "team_abbreviation", "games_played",
-                                  "player_avg_pts", "player_avg_ast", "player_avg_reb"]]
-            player_features.to_csv(player_out_file, index=False)
-            logger.info(f"✅ Player features saved to {player_out_file} ({len(player_features)} rows)")
+    # Labels
+    if "homewin" in df.columns:
+        feats["label"] = df["homewin"].astype(int)
+    elif "home_pts" in df.columns and "away_pts" in df.columns:
+        feats["label"] = (df["home_pts"] > df["away_pts"]).astype(int)
+    else:
+        raise DataError("Cannot compute label: need homewin or score columns.")
+
+    # Margin-based targets
+    if "home_pts" in df.columns and "away_pts" in df.columns:
+        feats["margin"] = (df["home_pts"] - df["away_pts"])
+        feats["outcome_category"] = feats["margin"].apply(
+            lambda m: (
+                "home_blowout" if m >= 10 else
+                "home_close" if m > 0 else
+                "away_close" if m > -10 else
+                "away_blowout"
+            )
+        )
+
+    logger.info(f"Team features built: {feats.shape[0]} rows, {feats.shape[1]} columns")
+    return feats
+
+
+# ============================================================
+# PLAYER FEATURES
+# ============================================================
+
+def build_player_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Build player-level rolling or season averages."""
+    if "player_name" not in df.columns:
+        logger.info("No player data found. Skipping player feature generation.")
+        return pd.DataFrame()
+
+    df = df.copy()
+
+    required = ["pts", "ast", "reb"]
+    for col in required:
+        if col not in df.columns:
+            raise DataError(f"Missing player column: {col}")
+
+    if USE_ROLLING_AVG:
+        logger.info(f"Computing player rolling averages (window={ROLLING_WINDOW})")
+
+        df = df.sort_values("games_played") if "games_played" in df.columns else df
+
+        roll = (
+            df.groupby("player_name")[["pts", "ast", "reb"]]
+            .rolling(ROLLING_WINDOW, min_periods=1)
+            .mean()
+            .reset_index()
+        )
+        df["player_avg_pts"] = roll["pts"]
+        df["player_avg_ast"] = roll["ast"]
+        df["player_avg_reb"] = roll["reb"]
 
     else:
-        logger.info("Loading new games...")
-        try:
-            df = pd.read_csv(NEW_GAMES_FILE)
-        except FileNotFoundError:
-            logger.error(f"File not found: {NEW_GAMES_FILE}")
-            return
+        logger.info("Computing player season averages")
+        df["player_avg_pts"] = df.groupby("player_name")["pts"].transform("mean")
+        df["player_avg_ast"] = df.groupby("player_name")["ast"].transform("mean")
+        df["player_avg_reb"] = df.groupby("player_name")["reb"].transform("mean")
 
+    keep_cols = [
+        "player_name",
+        "team_abbreviation" if "team_abbreviation" in df.columns else "team",
+        "games_played" if "games_played" in df.columns else None,
+        "player_avg_pts",
+        "player_avg_ast",
+        "player_avg_reb",
+    ]
+    keep_cols = [c for c in keep_cols if c is not None and c in df.columns]
+
+    player_features = df[keep_cols].drop_duplicates("player_name")
+
+    logger.info(f"Player features built: {len(player_features)} players")
+    return player_features
+
+
+# ============================================================
+# NEW GAME FEATURES (PREDICTION MODE)
+# ============================================================
+
+def build_new_game_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Create team-only features for new upcoming games."""
+    return pd.DataFrame({
+        "game_id": df.get("game_id", df.index),
+        "home_team": df["home_team"],
+        "away_team": df["away_team"],
+    })
+
+
+# ============================================================
+# MAIN BUILDER
+# ============================================================
+
+def build_features(training: bool, player: bool):
+    ensure_dirs(strict=False)
+    log_config_snapshot()
+
+    if training:
+        # -----------------------------
+        # Load historical training data
+        # -----------------------------
+        if not HISTORICAL_GAMES_FILE.exists():
+            raise FileError("Historical games file not found", file_path=str(HISTORICAL_GAMES_FILE))
+
+        df = pd.read_csv(HISTORICAL_GAMES_FILE)
         df = normalize_columns(df)
 
-        required = ["home_team", "away_team"]
-        for col in required:
-            if col not in df.columns:
-                raise ValueError(f"Missing required column: {col}")
+        # TEAM FEATURES
+        team_features = build_team_features(df)
+        team_features.to_csv(TRAINING_FEATURES_FILE, index=False)
+        logger.info(f"Saved training team features → {TRAINING_FEATURES_FILE}")
 
-        features = pd.DataFrame({
-            "game_id": df["game_id"] if "game_id" in df.columns else df.index,
-            "home_team": df["home_team"],
-            "away_team": df["away_team"],
-        })
+        # PLAYER FEATURES
+        if player:
+            player_features = build_player_features(df)
+            player_features.to_csv(PLAYER_FEATURES_FILE, index=False)
+            logger.info(f"Saved player features → {PLAYER_FEATURES_FILE}")
 
-        out_file = os.path.join(BASE_DATA_DIR, "new_games_features.csv")
-        features.to_csv(out_file, index=False)
-        logger.info(f"✅ New game features saved to {out_file} ({len(features)} rows)")
+    else:
+        # -----------------------------
+        # Build inference features
+        # -----------------------------
+        if not NEW_GAMES_FILE.exists():
+            raise FileError("New games file not found", file_path=str(NEW_GAMES_FILE))
+
+        df = pd.read_csv(NEW_GAMES_FILE)
+        df = normalize_columns(df)
+
+        features = build_new_game_features(df)
+        features.to_csv(NEW_GAMES_FEATURES_FILE, index=False)
+        logger.info(f"Saved new game features → {NEW_GAMES_FEATURES_FILE}")
+
+
+# ============================================================
+# ENTRYPOINT
+# ============================================================
+
+def main():
+    parser = argparse.ArgumentParser(description="Build NBA training & inference features")
+    parser.add_argument("--training", action="store_true", help="Build training features")
+    parser.add_argument("--player", action="store_true", help="Build player features")
+    args = parser.parse_args()
+
+    build_features(training=args.training, player=args.player)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Build features for training or prediction")
-    parser.add_argument("--rounds", type=int, default=10)
-    parser.add_argument("--training", action="store_true")
-    args = parser.parse_args()
-
-    build_features(rounds=args.rounds, training=args.training)
+    main()

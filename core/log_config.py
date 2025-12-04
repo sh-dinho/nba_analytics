@@ -1,45 +1,54 @@
 # ============================================================
 # File: core/log_config.py
-# Purpose: Centralized logger setup with UTF-8 encoding
+# Purpose: Global logging configuration for NBA Analytics
 # ============================================================
 
 import logging
 import sys
-import io
 from pathlib import Path
+from core.paths import LOGS_DIR
 
-# Force stdout/stderr to UTF-8 so emojis and Unicode characters work on Windows
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+LOG_FILE = LOGS_DIR / "pipeline.log"
 
-
-def setup_logger(name: str,
-                 log_file: Path | None = None,
-                 level: int = logging.INFO) -> logging.Logger:
+def init_global_logger(name: str = "nba_analytics", log_to_file: bool = True) -> logging.Logger:
     """
-    Configure and return a logger with UTF-8 encoding.
-    Logs to console and optionally to a file.
+    Initialize and return a global logger.
+
+    Parameters
+    ----------
+    name : str
+        Logger name (default: 'nba_analytics').
+    log_to_file : bool
+        Whether to write logs to a file in LOGS_DIR.
+
+    Returns
+    -------
+    logging.Logger
+        Configured logger.
     """
     logger = logging.getLogger(name)
-    logger.setLevel(level)
+    if logger.handlers:
+        # Avoid adding multiple handlers if already configured
+        return logger
 
-    # Avoid duplicate handlers if setup_logger is called multiple times
-    if not logger.handlers:
-        # Console handler (UTF-8)
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(level)
-        console_handler.setFormatter(logging.Formatter(
-            "%(name)s - %(levelname)s - %(message)s"
-        ))
-        logger.addHandler(console_handler)
+    logger.setLevel(logging.INFO)
 
-        # Optional file handler
-        if log_file:
-            fh = logging.FileHandler(log_file, encoding="utf-8")
-            fh.setLevel(level)
-            fh.setFormatter(logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            ))
-            logger.addHandler(fh)
+    # Formatter: [YYYY/MM/DD HH:MM:SS] LEVEL  message
+    formatter = logging.Formatter(
+        fmt='[%(asctime)s] %(levelname)-8s %(message)s',
+        datefmt='%Y/%m/%d %H:%M:%S'
+    )
+
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    # File handler
+    if log_to_file:
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     return logger

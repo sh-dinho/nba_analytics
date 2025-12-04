@@ -1,0 +1,47 @@
+name: NBA Model Training Pipeline
+
+on:
+  workflow_dispatch:        # allows manual triggering
+    inputs:
+      triggered_by:
+        description: "Source workflow"
+        required: false
+        default: "manual"
+      run_id:
+        description: "Upstream run ID"
+        required: false
+  workflow_run:             # automatic trigger after fetch.yml
+    workflows: ["NBA Data Fetch & Feature Pipeline"]
+    types: [completed]
+
+jobs:
+  train-models:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        model_type: [logistic, xgb, nn]
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # ... (rest of your training steps unchanged)
+
+  aggregate:
+    needs: train-models
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Aggregation Pipeline
+        uses: peter-evans/workflow-dispatch@v2
+        with:
+          workflow: "aggregate.yml"
+          ref: main
+          inputs:
+            triggered_by: ${{ github.event_name }}
+              run_id: ${{ github.run_id }}

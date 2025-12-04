@@ -1,0 +1,115 @@
+# ============================================================
+# File: .github/workflows/train.yml
+# Purpose: Train NBA prediction models (logistic, XGB, NN),
+#          run bankroll strategy, and trigger aggregation once.
+# ============================================================
+
+name: NBA Model Training Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      triggered_by:
+        description: "Source workflow"
+        required: false
+        default: "manual"
+      run_id:
+        description: "Upstream run ID"
+        required: false
+  workflow_run:
+    workflows: ["NBA Data Fetch & Feature Pipeline"]
+    types: [completed]
+
+jobs:
+  train-models:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        model_type: [logistic, xgb, nn]
+
+    env:
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/core
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore venv cache
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Add venv to PATH
+        run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+
+      - name: Download data artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: nba-daily-data
+          path: data
+
+      - name: Train model
+        run: |
+          mkdir -p models logs results
+          python scripts/train_model.py --model_type ${{ matrix.model_type }}
+
+      - name: Run prediction pipeline & bankroll tracker
+        run: |
+          python app/prediction_pipeline.py \
+            --threshold 0.6 \
+            --strategy kelly \
+            --max_fraction 0.05 \
+            --model_type ${{ matrix.model_type }}
+
+      - name: Upload model artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-${{ matrix.model_type }}
+          path: |
+            models/game_predictor.pkl
+            models/game_predictor.h5
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload bankroll results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bankroll-${{ matrix.model_type }}
+          path: results/picks_bankroll_${{ matrix.model_type }}.csv
+          retention-days: 30
+
+      - name: Upload logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.model_type }}
+          path: logs/pipeline_${{ matrix.model_type }}.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  aggregate:
+    needs: train-models
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Aggregation Pipeline
+        uses: peter-evans/workflow-dispatch@v2
+        with:
+          workflow: "aggregate.yml"
+          ref: main
+          inputs:
+            triggered_by: ${{ github.event_name }}
+              run_id: ${{ github.run_id }}
