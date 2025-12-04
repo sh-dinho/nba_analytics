@@ -1,0 +1,69 @@
+# ============================================================
+# File: .github/workflows/fetch.yml
+# Purpose: Daily NBA data ingestion, feature building, and
+#          prediction generation. Triggers training workflow.
+# ============================================================
+
+name: NBA Data Fetch & Feature Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+jobs:
+  fetch-process:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/core
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache virtual environment
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Add venv to PATH
+        run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+
+      - name: Run data-fetch + feature pipeline
+        run: |
+          mkdir -p data/logs data/features data/raw
+          python scripts/fetch_new_games.py --use_synthetic
+          python scripts/build_features.py --for_new_games
+          python scripts/generate_today_predictions.py
+
+      - name: Upload processed data artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nba-daily-data
+          path: |
+            data/raw/
+            data/features/
+            data/predictions_today.csv
+          retention-days: 14
+
+      - name: Trigger Model Training Workflow
+        uses: peter-evans/workflow-dispatch@v1
+        with:
+          workflow: "train.yml"
+          ref: main

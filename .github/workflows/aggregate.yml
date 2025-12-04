@@ -1,0 +1,80 @@
+# ============================================================
+# File: .github/workflows/aggregate.yml
+# Purpose: Aggregate predictions & bankroll results across all
+#          models, generate dashboards & monthly summaries,
+#          and send Telegram report.
+# ============================================================
+
+name: NBA Aggregation & Reporting Pipeline
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["NBA Model Training Pipeline"]
+    types: [completed]
+
+jobs:
+  aggregate:
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+
+    env:
+      PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/core
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Restore venv cache
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+
+      - name: Add venv to PATH
+        run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: results_all
+
+      - name: Aggregate results
+        run: |
+          mkdir -p results
+          python scripts/aggregate_results.py
+
+      - name: Monthly aggregation
+        run: |
+          python scripts/monthly_aggregate.py
+
+      - name: Build dashboard
+        run: |
+          python scripts/dashboard.py
+
+      - name: Send Telegram report
+        if: ${{ env.TELEGRAM_TOKEN && env.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/telegram_report.py
+
+      - name: Upload summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-aggregate-summary
+          path: results/aggregate_summary.csv
+          retention-days: 30
