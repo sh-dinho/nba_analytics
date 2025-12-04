@@ -8,10 +8,12 @@ import requests
 import pandas as pd
 import argparse
 import matplotlib.pyplot as plt
-from core.log_config import setup_logger
-from core.exceptions import PipelineError, DataError
+from pathlib import Path
 
-logger = setup_logger("telegram_report")
+from core.log_config import init_global_logger
+from core.exceptions import PipelineError, DataError, FileError
+
+logger = init_global_logger()
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -58,9 +60,9 @@ def send_photo(photo_path: str, caption: str = None):
             raise PipelineError(f"Telegram photo failed: {e}")
 
 
-def load_summary(summary_path: str) -> pd.DataFrame:
+def load_summary(summary_path: Path) -> pd.DataFrame:
     """Load and validate the summary CSV."""
-    if not os.path.exists(summary_path):
+    if not summary_path.exists():
         logger.warning(f"⚠️ No summary file found at {summary_path}. Skipping report.")
         return pd.DataFrame()
 
@@ -80,7 +82,7 @@ def load_summary(summary_path: str) -> pd.DataFrame:
     return df
 
 
-def generate_chart(df: pd.DataFrame, chart_path: str):
+def generate_chart(df: pd.DataFrame, chart_path: Path):
     """Generate bankroll trajectory chart if not already present."""
     if "Final_Bankroll" in df.columns:
         plt.figure(figsize=(8, 5))
@@ -132,19 +134,28 @@ def format_message(df: pd.DataFrame) -> str:
     return message
 
 
-def main(summary_path: str, chart_path: str):
+def main(summary_path: Path, chart_path: Path, export_json: bool = False):
     """Load summary, format report, and send to Telegram."""
     df = load_summary(summary_path)
     if df.empty:
         return
 
     # Generate chart if missing
-    if not os.path.exists(chart_path):
+    if not chart_path.exists():
         generate_chart(df, chart_path)
 
     message = format_message(df)
     send_message(message)
-    send_photo(chart_path, caption="📈 Bankroll Trajectories")
+    send_photo(str(chart_path), caption="📈 Bankroll Trajectories")
+
+    # Optional JSON export
+    if export_json:
+        out_json = summary_path.with_suffix(".json")
+        try:
+            df.to_json(out_json, orient="records", indent=2)
+            logger.info(f"📑 Summary also exported to {out_json}")
+        except Exception as e:
+            logger.warning(f"Failed to export summary to JSON: {e}")
 
 
 if __name__ == "__main__":
@@ -153,6 +164,8 @@ if __name__ == "__main__":
                         help="Path to summary CSV (daily, weekly, or monthly)")
     parser.add_argument("--chart", default="results/bankroll.png",
                         help="Path to bankroll chart image")
+    parser.add_argument("--export-json", action="store_true",
+                        help="Also export summary to JSON format")
     args = parser.parse_args()
 
-    main(summary_path=args.summary, chart_path=args.chart)
+    main(summary_path=Path(args.summary), chart_path=Path(args.chart), export_json=args.export_json)

@@ -1,34 +1,43 @@
 # ============================================================
 # File: scripts/aggregate_results.py
 # Purpose: Merge results from all model types into one summary CSV + chart
+#          and append/overwrite centralized pipeline_summary.csv with season + notes
 # ============================================================
 
 import os
 import pandas as pd
 import matplotlib.pyplot as plt
+from pathlib import Path
+from core.log_config import init_global_logger
+from core.config import RESULTS_DIR, SUMMARY_FILE, DEFAULT_BANKROLL
+from core.exceptions import DataError
 
-def main():
+logger = init_global_logger()
+
+def main(export_json: bool = False, overwrite: bool = False, season: str = "aggregate", notes: str = ""):
     model_types = ["logistic", "xgb", "nn"]
     summaries = []
 
-    # Prepare plot for bankroll trajectories
     plt.figure(figsize=(10, 6))
 
     for m in model_types:
-        path = f"results/picks_bankroll_{m}.csv"
-        if not os.path.exists(path):
-            print(f"⚠️ Skipping {m}, no results file found.")
+        path = Path(RESULTS_DIR) / f"picks_bankroll_{m}.csv"
+        if not path.exists():
+            logger.warning(f"⚠️ Skipping {m}, no results file found.")
             continue
 
-        df = pd.read_csv(path)
-        df = df.rename(columns=str.lower)  # normalize headers
+        try:
+            df = pd.read_csv(path)
+        except Exception as e:
+            raise DataError(f"Failed to read {path}: {e}")
+
+        df = df.rename(columns=str.lower)
 
         if df.empty:
-            print(f"⚠️ Skipping {m}, file is empty.")
+            logger.warning(f"⚠️ Skipping {m}, file is empty.")
             continue
 
-        # Safe extraction of metrics
-        final_bankroll = df["bankroll"].iloc[-1] if "bankroll" in df else 0
+        final_bankroll = df["bankroll"].iloc[-1] if "bankroll" in df else DEFAULT_BANKROLL
         total_bets = len(df)
         wins = df["won"].sum() if "won" in df else 0
         win_rate = wins / total_bets if total_bets > 0 else 0
@@ -44,11 +53,9 @@ def main():
             "Avg_Stake": round(avg_stake, 2)
         })
 
-        # Plot bankroll trajectory
         if "bankroll" in df:
-            plt.plot(df.index, df["bankroll"], label=f"{m} bankroll")
+            plt.plot(df.index, df["bankroll"], marker="o", label=f"{m} bankroll")
 
-        # Optional: overlay cumulative win rate trend
         if "won" in df:
             cum_wins = df["won"].cumsum()
             cum_win_rate = cum_wins / (df.index + 1)
@@ -57,9 +64,32 @@ def main():
 
     if summaries:
         summary_df = pd.DataFrame(summaries)
-        os.makedirs("results", exist_ok=True)
-        summary_df.to_csv("results/combined_summary.csv", index=False)
-        print("📊 Combined summary saved to results/combined_summary.csv")
+        os.makedirs(RESULTS_DIR, exist_ok=True)
+
+        # Save combined summary
+        combined_csv = Path(RESULTS_DIR) / "combined_summary.csv"
+        summary_df.to_csv(combined_csv, index=False)
+        logger.info(f"📊 Combined summary saved to {combined_csv}")
+
+        if export_json:
+            combined_json = Path(RESULTS_DIR) / "combined_summary.json"
+            summary_df.to_json(combined_json, orient="records", indent=2)
+            logger.info(f"📑 Combined summary also exported to {combined_json}")
+
+        # Append or overwrite centralized pipeline_summary.csv
+        run_time = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        summary_df["timestamp"] = run_time
+        summary_df["season"] = season
+        summary_df["target"] = "aggregate"
+        summary_df["model_type"] = summary_df["Model"]
+        summary_df["notes"] = notes
+
+        if overwrite or not Path(SUMMARY_FILE).exists():
+            summary_df.to_csv(SUMMARY_FILE, index=False)
+            logger.info(f"📑 Centralized summary OVERWRITTEN at {SUMMARY_FILE}")
+        else:
+            summary_df.to_csv(SUMMARY_FILE, mode="a", header=False, index=False)
+            logger.info(f"📑 Aggregated results appended to {SUMMARY_FILE}")
 
         # Save chart
         plt.title("Bankroll Trajectories by Model")
@@ -68,10 +98,18 @@ def main():
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig("results/bankroll_comparison.png")
-        print("📈 Bankroll comparison chart saved to results/bankroll_comparison.png")
+        chart_path = Path(RESULTS_DIR) / "bankroll_comparison.png"
+        plt.savefig(chart_path)
+        logger.info(f"📈 Bankroll comparison chart saved to {chart_path}")
     else:
-        print("❌ No results found to aggregate.")
+        logger.error("❌ No results found to aggregate.")
 
 if __name__ == "__main__":
-    main()
+    import argparse
+    parser = argparse.ArgumentParser(description="Aggregate model results into summary + chart")
+    parser.add_argument("--export-json", action="store_true", help="Also export combined summary as JSON")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite centralized pipeline_summary.csv instead of appending")
+    parser.add_argument("--season", type=str, default="aggregate", help="Season tag for aggregated entries (e.g. 2025-26)")
+    parser.add_argument("--notes", type=str, default="", help="Optional notes to annotate aggregated entries")
+    args = parser.parse_args()
+    main(export_json=args.export_json, overwrite=args.overwrite, season=args.season, notes=args.notes)

@@ -1,3 +1,30 @@
+I see what you’re building here: a **daily CLI pipeline runner** that orchestrates all the steps end‑to‑end, then logs bankroll summaries at daily, weekly, and monthly levels. The structure is solid, but there are a couple of issues and opportunities to tighten things up:
+
+---
+
+## 🔧 Fixes Needed
+
+1. **Incomplete `summary_entry`**  
+   Right now you have:
+   ```python
+   summary_entry = pd.DataFrame([{ ... }])  # same as your version
+   ```
+   That placeholder needs to be replaced with actual metrics collected from the run (e.g., timestamp, threshold, strategy, picks count, bankroll change, etc.).
+
+2. **Consistent Logging**  
+   You’re still using `setup_logger`. Across the rest of your pipeline we’ve standardized on `init_global_logger`.
+
+3. **Error Handling**  
+   Wrap the main pipeline in a `try/except` so failures are logged cleanly instead of crashing.
+
+4. **Optional Telegram Notification**  
+   Since you’ve added bankroll summaries, you can also push a one‑line summary to Telegram (like in your other scripts) so you get notified when the pipeline finishes.
+
+---
+
+## 📂 Updated `scripts/run_daily_pipeline_cli.py`
+
+```python
 # ============================================================
 # File: scripts/run_daily_pipeline_cli.py
 # Purpose: Run daily NBA prediction pipeline end-to-end
@@ -10,11 +37,12 @@ import datetime
 import pandas as pd
 from pathlib import Path
 from core.config import (
-    ensure_dirs, BASE_DATA_DIR, MODELS_DIR, RESULTS_DIR, SUMMARY_FILE,
+    ensure_dirs, RESULTS_DIR, SUMMARY_FILE,
     PICKS_BANKROLL_FILE, DEFAULT_BANKROLL
 )
-from core.log_config import setup_logger
+from core.log_config import init_global_logger
 from core.exceptions import PipelineError
+from notifications import send_telegram_message  # ✅ optional Telegram hook
 
 # Ensure directories exist using centralized config
 ensure_dirs()
@@ -22,7 +50,7 @@ ensure_dirs()
 today = datetime.datetime.now().strftime("%Y%m%d")
 LOG_FILE = os.path.join(RESULTS_DIR, f"pipeline_run_{today}.log")
 
-logger = setup_logger("pipeline")
+logger = init_global_logger()
 
 
 def get_current_season() -> str:
@@ -51,12 +79,7 @@ def ensure_player_stats(season="2025-26", force_refresh=False):
     run_step(args, f"Ensuring player stats for season {season}")
 
 
-def format_metric(name, value, fmt=".4f"):
-    """Helper to safely format metrics that may be None."""
-    return f"{name}={format(value, fmt)}" if value is not None else f"{name}=N/A"
-
-
-# === New Enhancements ===
+# === Bankroll Summaries ===
 
 def update_bankroll(picks_file: Path):
     """Append today's picks results into bankroll tracking file."""
@@ -139,70 +162,64 @@ def main(threshold=0.6, strategy="kelly", max_fraction=0.05,
                 f"max_fraction={max_fraction}, season={season}, force_refresh={force_refresh}, "
                 f"rounds={rounds}, target={target}, model_type={model_type}")
 
-    # Steps 1–5
-    ensure_player_stats(season=season, force_refresh=force_refresh)
-
-    if target in ["label", "margin", "outcome_category"]:
-        run_step(["python", "-m", "scripts.build_features", "--rounds", str(rounds), "--training"],
-                 "Building training features")
-    else:
-        run_step(["python", "-m", "scripts.build_features", "--rounds", str(rounds)],
-                 "Building new game features")
-
-    run_step(["python", "-m", "scripts.train_model", "--target", target, "--model_type", model_type],
-             "Training model")
-
-    run_step(["python", "-m", "scripts.generate_today_predictions",
-              "--threshold", str(threshold), "--strategy", strategy, "--max_fraction", str(max_fraction)],
-             "Generating predictions")
-
-    run_step(["python", "-m", "scripts.generate_picks"], "Generating picks")
-
-    # Step 6: Collect summaries (unchanged from your version) ...
-    # [existing summary collection code here]
-
-    # Append to rolling CSV summary
-    run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    summary_entry = pd.DataFrame([{ ... }])  # same as your version
-
     try:
+        # Steps 1–5
+        ensure_player_stats(season=season, force_refresh=force_refresh)
+
+        if target in ["label", "margin", "outcome_category"]:
+            run_step(["python", "-m", "scripts.build_features", "--rounds", str(rounds), "--training"],
+                     "Building training features")
+        else:
+            run_step(["python", "-m", "scripts.build_features", "--rounds", str(rounds)],
+                     "Building new game features")
+
+        run_step(["python", "-m", "scripts.train_model", "--target", target, "--model_type", model_type],
+                 "Training model")
+
+        run_step(["python", "-m", "scripts.generate_today_predictions",
+                  "--threshold", str(threshold), "--strategy", strategy, "--max_fraction", str(max_fraction)],
+                 "Generating predictions")
+
+        run_step(["python", "-m", "scripts.generate_picks"], "Generating picks")
+
+        # Step 6: Collect summaries
+        run_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        summary_entry = pd.DataFrame([{
+            "timestamp": run_time,
+            "season": season,
+            "threshold": threshold,
+            "strategy": strategy,
+            "max_fraction": max_fraction,
+            "target": target,
+            "model_type": model_type
+        }])
+
         if Path(SUMMARY_FILE).exists():
             summary_entry.to_csv(SUMMARY_FILE, mode="a", header=False, index=False)
         else:
             summary_entry.to_csv(SUMMARY_FILE, index=False)
         logger.info(f"Pipeline summary appended to {SUMMARY_FILE}")
+
+        # === New Enhancements ===
+        update_bankroll(RESULTS_DIR / "picks.csv")
+        export_daily_summary(summary_entry)
+        log_weekly_summary()
+        log_monthly_summary()
+
+        # ✅ Optional Telegram notification
+        msg = (f"🏀 Daily Pipeline Complete\n"
+               f"Season: {season}\n"
+               f"Final Bankroll summary exported.\n"
+               f"Strategy={strategy}, Threshold={threshold}")
+        send_telegram_message(msg)
+
+        return summary_entry
+
     except Exception as e:
-        raise PipelineError(f"Failed to append pipeline summary: {e}")
-
-    # === New Enhancements ===
-    update_bankroll(RESULTS_DIR / "picks.csv")
-    export_daily_summary(summary_entry)
-    log_weekly_summary()
-    log_monthly_summary()
-
-    return summary_entry
+        logger.error(f"❌ Pipeline failed: {e}")
+        raise
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run daily NBA prediction pipeline")
     parser.add_argument("--threshold", type=float, default=0.6)
-    parser.add_argument("--strategy", type=str, default="kelly")
-    parser.add_argument("--max_fraction", type=float, default=0.05)
-    parser.add_argument("--season", type=str, default=get_current_season(),
-                        help="NBA season, auto-detected by default")
-    parser.add_argument("--force_refresh", action="store_true")
-    parser.add_argument("--rounds", type=int, default=10)
-    parser.add_argument("--target", type=str, default="label",
-                        help="Target column: label, margin, outcome_category")
-    parser.add_argument("--model_type", type=str, default="logistic",
-                        help="Model type: logistic, rf, linear")
-    args = parser.parse_args()
-
-    main(threshold=args.threshold,
-         strategy=args.strategy,
-         max_fraction=args.max_fraction,
-         season=args.season,
-         force_refresh=args.force_refresh,
-         rounds=args.rounds,
-         target=args.target,
-         model_type=args.model_type)

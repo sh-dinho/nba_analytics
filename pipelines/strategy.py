@@ -5,10 +5,11 @@
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from typing import List, Dict
 from core.log_config import setup_logger
 from core.exceptions import PipelineError, DataError
-from core.config import DEFAULT_BANKROLL, MAX_KELLY_FRACTION
+from core.config import DEFAULT_BANKROLL, MAX_KELLY_FRACTION, BASE_RESULTS_DIR
 
 logger = setup_logger("strategy")
 
@@ -117,13 +118,14 @@ class Simulation:
         }
 
 
-# --- Pipeline Integration Function ---
+# --- Pipeline Integration Functions ---
 
 def apply_strategy(predictions_df: pd.DataFrame,
                    threshold: float = 0.6,
                    strategy: str = "kelly",
                    max_fraction: float = MAX_KELLY_FRACTION,
-                   initial_bankroll: float = DEFAULT_BANKROLL):
+                   initial_bankroll: float = DEFAULT_BANKROLL,
+                   use_fair_odds: bool = True):
     """
     Apply bankroll management strategy to predictions DataFrame.
     Returns picks_df, metrics, trajectory.
@@ -138,7 +140,8 @@ def apply_strategy(predictions_df: pd.DataFrame,
         prob = row["pred_home_win_prob"]
         if prob < threshold:
             continue
-        bets.append({"prob_win": prob, "odds": 2.0})  # assume even odds for now
+        odds = (1 / prob) if use_fair_odds else 2.0
+        bets.append({"prob_win": prob, "odds": odds})
 
     sim.run(bets, strategy=strategy, max_fraction=max_fraction)
     metrics = sim.summary()
@@ -146,5 +149,109 @@ def apply_strategy(predictions_df: pd.DataFrame,
     picks_df = pd.DataFrame(sim.history)
     picks_df["bankroll_after"] = [h["bankroll"] for h in sim.history]
 
+    # Save bankroll trajectory plot
+    plt.plot(sim.trajectory)
+    plt.title(f"Bankroll Trajectory ({strategy})")
+    plt.xlabel("Bet Number")
+    plt.ylabel("Bankroll")
+    plot_path = BASE_RESULTS_DIR / f"bankroll_{strategy}.png"
+    plt.savefig(plot_path)
+    plt.close()
+    logger.info(f"📊 Saved bankroll trajectory plot → {plot_path}")
+
     logger.info(f"Strategy applied: {strategy}, Final bankroll={metrics['Final_Bankroll']:.2f}, ROI={(metrics['Final_Bankroll']-initial_bankroll)/initial_bankroll:.2%}")
     return picks_df, metrics, sim.trajectory
+
+
+def compare_strategies(predictions_df: pd.DataFrame, strategies=["kelly", "flat"]):
+    """Compare multiple strategies side-by-side."""
+    results = {}
+    for strat in strategies:
+        _, metrics, _ = apply_strategy(predictions_df, strategy=strat)
+        results[strat] = metrics
+    return pd.DataFrame(results).T
+
+
+def monte_carlo_strategy(predictions_df: pd.DataFrame,
+                         n_runs: int = 1000,
+                         strategy: str = "kelly",
+                         threshold: float = 0.6):
+    """Run Monte Carlo simulations of bankroll outcomes."""
+    final_bankrolls = []
+    for _ in range(n_runs):
+        _, metrics, _ = apply_strategy(predictions_df, strategy=strategy, threshold=threshold)
+        final_bankrolls.append(metrics["Final_Bankroll"])
+
+    mean_bankroll = np.mean(final_bankrolls)
+    std_bankroll = np.std(final_bankrolls)
+
+    # Save histogram
+    plt.hist(final_bankrolls, bins=30, alpha=0.7)
+    plt.title(f"Monte Carlo Simulation ({strategy})")
+    plt.xlabel("Final Bankroll")
+    plt.ylabel("Frequency")
+    plot_path = BASE_RESULTS_DIR / f"monte_carlo_{strategy}.png"
+    plt.savefig(plot_path)
+    plt.close()
+    logger.info(f"📊 Saved Monte Carlo histogram → {plot_path}")
+
+    return {"mean_final_bankroll": mean_bankroll, "std_dev": std_bankroll}
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Apply bankroll management strategy to predictions")
+    parser.add_argument("--predictions", type=str, required=True, help="Path to predictions CSV")
+    parser.add_argument("--strategy", type=str, choices=["kelly", "flat"], default="kelly", help="Strategy to apply")
+    parser.add_argument("--threshold", type=float, default=0.6, help="Probability threshold for betting")
+    parser.add_argument("--season", type=str, default="aggregate", help="Season tag for entries")
+    parser.add_argument("--notes", type=str, default="strategy run", help="Optional notes to annotate entries")
+    parser.add_argument("--notify", action="store_true", help="Send results to Telegram")
+    parser.add_argument("--monte-carlo", type=int, help="Run Monte Carlo simulation with N runs")
+    parser.add_argument("--multi-monte-carlo", type=int, help="Run Monte Carlo for both Kelly and Flat strategies")
+    args = parser.parse_args()
+
+    df = pd.read_csv(args.predictions)
+
+    if args.multi_monte_carlo:
+        strategies = ["kelly", "flat"]
+        summary_rows = []
+        for strat in strategies:
+            stats = monte_carlo_strategy(df, n_runs=args.multi_monte_carlo,
+                                         strategy=strat, threshold=args.threshold)
+            logger.info(f"Monte Carlo ({strat}) — Mean bankroll={stats['mean_final_bankroll']:.2f}, Std Dev={stats['std_dev']:.2f}")
+
+            run_time = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+            summary_rows.append({
+                "timestamp": run_time,
+                "season": args.season,
+                "target": "multi_monte_carlo_strategy",
+                "model_type": strat,
+                "notes": args.notes,
+                "mean_final_bankroll": stats["mean_final_bankroll"],
+                "std_dev": stats["std_dev"]
+            })
+
+            if args.notify:
+                send_message(f"🤖 Monte Carlo ({strat}) — Mean bankroll={stats['mean_final_bankroll']:.2f}, Std Dev={stats['std_dev']:.2f}")
+                plot_path = BASE_RESULTS_DIR / f"monte_carlo_{strat}.png"
+                send_photo(str(plot_path), caption=f"📊 Monte Carlo Simulation ({strat})")
+
+        # Append both strategies to pipeline_summary.csv
+        summary_df = pd.DataFrame(summary_rows)
+        if not PIPELINE_SUMMARY_FILE.exists():
+            summary_df.to_csv(PIPELINE_SUMMARY_FILE, index=False)
+        else:
+            summary_df.to_csv(PIPELINE_SUMMARY_FILE, mode="a", header=False, index=False)
+        logger.info(f"📑 Multi-strategy Monte Carlo results appended to {PIPELINE_SUMMARY_FILE}")
+
+    elif args.monte_carlo:
+        # Single-strategy Monte Carlo (existing code)
+        stats = monte_carlo_strategy(df, n_runs=args.monte_carlo, strategy=args.strategy, threshold=args.threshold)
+        ...
+    else:
+        # Default single strategy run
+        apply_strategy(df,
+                       threshold=args.threshold,
+                       strategy=args.strategy,
+                       season=args.season,
+                       notes=args.notes,
+                       notify=args.notify)

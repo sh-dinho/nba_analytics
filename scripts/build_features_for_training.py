@@ -7,28 +7,34 @@
 import pandas as pd
 import datetime
 from pathlib import Path
-from core.config import (
+
+from core.paths import (
     HISTORICAL_GAMES_FILE,
     TRAINING_FEATURES_FILE,
-    USE_ROLLING_AVG,
-    ROLLING_WINDOW,
-    BASE_LOGS_DIR,
-    BASE_DATA_DIR,
+    DATA_DIR,
+    LOGS_DIR,
+    ensure_dirs,
 )
-from core.log_config import setup_logger
+from core.config import USE_ROLLING_AVG, ROLLING_WINDOW
+from core.log_config import init_global_logger
+from core.exceptions import DataError, FileError
 
-logger = setup_logger("build_features_training")
+logger = init_global_logger()
 
-TRAINING_FEATURES_LOG = BASE_LOGS_DIR / "training_features.log"
-PLAYER_FEATURES_FILE = BASE_DATA_DIR / "player_features.csv"
+TRAINING_FEATURES_LOG = LOGS_DIR / "training_features.log"
+PLAYER_FEATURES_FILE = DATA_DIR / "player_features.csv"
 
 
 def build_features_for_training() -> str:
-    logger.info("Loading historical games...")
-    df = pd.read_csv(HISTORICAL_GAMES_FILE)
+    ensure_dirs(strict=False)
 
+    logger.info("Loading historical games...")
+    if not HISTORICAL_GAMES_FILE.exists():
+        raise FileError("Historical games file not found", file_path=str(HISTORICAL_GAMES_FILE))
+
+    df = pd.read_csv(HISTORICAL_GAMES_FILE)
     if df.empty:
-        raise ValueError("Historical games file is empty.")
+        raise DataError("Historical games file is empty.")
 
     logger.info(f"Detected columns: {list(df.columns)}")
 
@@ -47,7 +53,7 @@ def build_features_for_training() -> str:
     required = ["home_team", "away_team", "pts", "ast", "reb", "games_played", "home_win"]
     missing = [c for c in required if c not in df.columns]
     if missing:
-        raise ValueError(f"Historical games file missing required columns: {missing}")
+        raise DataError(f"Historical games file missing required columns: {missing}")
 
     # --- Team-level aggregation ---
     team_totals = (
@@ -172,7 +178,7 @@ def build_features_for_training() -> str:
 
 if __name__ == "__main__":
     import argparse
-    from core import config
+    import core.config as config
 
     parser = argparse.ArgumentParser(description="Build training features from historical games")
     parser.add_argument("--rolling", action="store_true", help="Use rolling averages (last N games)")

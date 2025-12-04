@@ -9,38 +9,40 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
+from core.log_config import init_global_logger
+from core.exceptions import FileError, DataError, PipelineError
+
+logger = init_global_logger()
+
 # Load Telegram credentials from environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 
 def send_telegram_message(msg: str) -> None:
-    """
-    Send a plain text message to Telegram.
-    Requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID in environment.
-    """
+    """Send a plain text message to Telegram."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Telegram credentials not set. Skipping notification.")
+        logger.warning("⚠️ Telegram credentials not set. Skipping notification.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
         resp = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg})
         if resp.status_code != 200:
-            print(f"❌ Failed to send Telegram message: {resp.text}")
+            logger.error(f"❌ Failed to send Telegram message: {resp.text}")
         else:
-            print("✅ Telegram message sent successfully")
+            logger.info("✅ Telegram message sent successfully")
     except Exception as e:
-        print(f"❌ Error sending Telegram message: {e}")
+        logger.error(f"❌ Error sending Telegram message: {e}")
 
 
 def send_photo(photo_path: str, caption: str = None) -> None:
     """Send a photo to Telegram with optional caption."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("⚠️ Telegram credentials not set. Skipping photo upload.")
+        logger.warning("⚠️ Telegram credentials not set. Skipping photo upload.")
         return
     if not os.path.exists(photo_path):
-        print(f"⚠️ Chart not found at {photo_path}. Skipping photo upload.")
+        logger.warning(f"⚠️ Chart not found at {photo_path}. Skipping photo upload.")
         return
 
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
@@ -50,18 +52,15 @@ def send_photo(photo_path: str, caption: str = None) -> None:
         try:
             resp = requests.post(url, data=data, files=files, timeout=10)
             if resp.status_code != 200:
-                print(f"❌ Failed to send Telegram photo: {resp.text}")
+                logger.error(f"❌ Failed to send Telegram photo: {resp.text}")
             else:
-                print("📸 Telegram chart sent successfully")
+                logger.info("📸 Telegram chart sent successfully")
         except Exception as e:
-            print(f"❌ Error sending Telegram photo: {e}")
+            logger.error(f"❌ Error sending Telegram photo: {e}")
 
 
 def send_ev_summary(picks: pd.DataFrame) -> None:
-    """
-    Send an EV (expected value) summary of picks to Telegram.
-    Expects a DataFrame with at least 'pick', 'ev', and 'stake_amount' columns.
-    """
+    """Send an EV (expected value) summary of picks to Telegram."""
     if picks is None or picks.empty:
         send_telegram_message("No picks available for EV summary.")
         return
@@ -83,11 +82,8 @@ def send_ev_summary(picks: pd.DataFrame) -> None:
     send_telegram_message(msg)
 
 
-def send_summary_report(summary_path: Path, chart_path: Path) -> None:
-    """
-    Send bankroll summary report (daily/weekly/monthly) to Telegram.
-    Generates chart if missing.
-    """
+def send_summary_report(summary_path: Path, chart_path: Path, export_json: bool = False) -> None:
+    """Send bankroll summary report (daily/weekly/monthly) to Telegram."""
     if not summary_path.exists():
         send_telegram_message(f"⚠️ No summary file found at {summary_path}")
         return
@@ -110,6 +106,15 @@ def send_summary_report(summary_path: Path, chart_path: Path) -> None:
 
     send_telegram_message(msg)
 
+    # Export JSON if requested
+    if export_json:
+        out_json = summary_path.with_suffix(".json")
+        try:
+            df.to_json(out_json, orient="records", indent=2)
+            logger.info(f"📑 Summary also exported to {out_json}")
+        except Exception as e:
+            logger.warning(f"Failed to export summary to JSON: {e}")
+
     # Generate chart if missing
     if not chart_path.exists() and "Final_Bankroll" in df.columns:
         plt.figure(figsize=(8, 5))
@@ -121,15 +126,13 @@ def send_summary_report(summary_path: Path, chart_path: Path) -> None:
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(chart_path)
-        print(f"📊 Chart generated at {chart_path}")
+        logger.info(f"📊 Chart generated at {chart_path}")
 
     send_photo(str(chart_path), caption="📈 Bankroll Trajectories")
 
 
-def send_combined_dashboard(daily: Path, weekly: Path, monthly: Path, chart_path: Path) -> None:
-    """
-    Merge daily, weekly, and monthly summaries into one dashboard message.
-    """
+def send_combined_dashboard(daily: Path, weekly: Path, monthly: Path, chart_path: Path, export_json: bool = False) -> None:
+    """Merge daily, weekly, and monthly summaries into one dashboard message."""
     dfs = []
     for p in [daily, weekly, monthly]:
         if p.exists():
@@ -151,6 +154,15 @@ def send_combined_dashboard(daily: Path, weekly: Path, monthly: Path, chart_path
 
     send_telegram_message(msg)
 
+    # Export JSON if requested
+    if export_json:
+        out_json = chart_path.with_suffix(".json")
+        try:
+            combined.to_json(out_json, orient="records", indent=2)
+            logger.info(f"📑 Combined dashboard also exported to {out_json}")
+        except Exception as e:
+            logger.warning(f"Failed to export combined dashboard to JSON: {e}")
+
     # Optional chart
     if "Final_Bankroll" in combined.columns:
         plt.figure(figsize=(8, 5))
@@ -161,5 +173,5 @@ def send_combined_dashboard(daily: Path, weekly: Path, monthly: Path, chart_path
         plt.grid(True)
         plt.tight_layout()
         plt.savefig(chart_path)
-        print(f"📊 Combined chart generated at {chart_path}")
+        logger.info(f"📊 Combined chart generated at {chart_path}")
         send_photo(str(chart_path), caption="📈 Combined Bankroll Dashboard")

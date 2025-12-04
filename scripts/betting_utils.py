@@ -3,15 +3,15 @@
 # Purpose: Odds conversion, expected value, and Kelly criterion with custom stake support
 # ============================================================
 
-from typing import Optional, Tuple
-from core.log_config import setup_logger
+from typing import Tuple, Union
+from core.log_config import init_global_logger
 from core.exceptions import DataError
 from core.config import DEFAULT_BANKROLL, MAX_KELLY_FRACTION
 
-logger = setup_logger("betting_utils")
+logger = init_global_logger()
 
 
-def american_to_decimal(american_odds: int) -> float:
+def american_to_decimal(american_odds: Union[int, float]) -> float:
     """
     Convert American odds to decimal odds (European odds).
 
@@ -19,7 +19,7 @@ def american_to_decimal(american_odds: int) -> float:
     - Positive odds: decimal = 1 + (odds / 100)
     - Negative odds: decimal = 1 + (100 / abs(odds))
 
-    Example:
+    Examples:
         +150 -> 2.5
         -150 -> 1.67
     """
@@ -32,14 +32,13 @@ def american_to_decimal(american_odds: int) -> float:
         decimal_odds = 1 + (100 / abs(american_odds))
 
     logger.debug(f"Converted American odds {american_odds} → {decimal_odds:.4f} (decimal)")
-    return decimal_odds
+    return float(decimal_odds)
 
 
 def _validate_prob(p: float) -> float:
     """Validate and clip probability to (0,1) for numerical stability."""
     if not (0.0 <= p <= 1.0):
         raise DataError("Probability must be between 0 and 1")
-    # clip away from exact 0 and 1
     eps = 1e-6
     return max(min(p, 1.0 - eps), eps)
 
@@ -54,6 +53,7 @@ def _validate_decimal_odds(decimal_odds: float) -> float:
 
 
 def _profit_if_win(decimal_odds: float, stake: float) -> float:
+    """Profit if bet wins given decimal odds and stake."""
     return (decimal_odds - 1.0) * stake
 
 
@@ -62,14 +62,6 @@ def expected_value_decimal(prob_win: float, decimal_odds: float, stake: float = 
     Calculate expected value (EV) using decimal odds.
 
     EV = (p * profit_if_win) - ((1 - p) * stake)
-
-    Args:
-        prob_win: Probability of winning (0 ≤ p ≤ 1).
-        decimal_odds: Decimal odds (>= 1.01).
-        stake: Stake size in dollars (> 0).
-
-    Returns:
-        EV in dollars.
     """
     p = _validate_prob(prob_win)
     d = _validate_decimal_odds(decimal_odds)
@@ -78,16 +70,12 @@ def expected_value_decimal(prob_win: float, decimal_odds: float, stake: float = 
 
     profit_if_win = _profit_if_win(d, stake)
     ev = (p * profit_if_win) - ((1.0 - p) * stake)
-    logger.debug(f"EV (decimal) calc: p={p:.6f}, d_odds={d:.3f}, stake={stake:.2f} → EV={ev:.2f}")
+    logger.debug(f"EV (decimal): p={p:.6f}, d_odds={d:.3f}, stake={stake:.2f} → EV={ev:.2f}")
     return float(ev)
 
 
-def expected_value(prob_win: float, american_odds: int, stake: float = 100.0) -> float:
-    """
-    Calculate expected value (EV) using American odds (for backward compatibility).
-
-    Delegates to expected_value_decimal after converting odds.
-    """
+def expected_value(prob_win: float, american_odds: Union[int, float], stake: float = 100.0) -> float:
+    """Calculate expected value (EV) using American odds."""
     decimal_odds = american_to_decimal(american_odds)
     return expected_value_decimal(prob_win, decimal_odds, stake)
 
@@ -101,9 +89,6 @@ def kelly_fraction_decimal(prob_win: float, decimal_odds: float) -> float:
         b = decimal_odds - 1
         p = prob_win
         q = 1 - p
-
-    Returns:
-        Kelly fraction in [0, 1] (not capped).
     """
     p = _validate_prob(prob_win)
     d = _validate_decimal_odds(decimal_odds)
@@ -115,10 +100,8 @@ def kelly_fraction_decimal(prob_win: float, decimal_odds: float) -> float:
     return float(max(f, 0.0))
 
 
-def kelly_fraction(prob_win: float, american_odds: int) -> float:
-    """
-    Kelly fraction using American odds (backward compatibility).
-    """
+def kelly_fraction(prob_win: float, american_odds: Union[int, float]) -> float:
+    """Kelly fraction using American odds."""
     decimal_odds = american_to_decimal(american_odds)
     return kelly_fraction_decimal(prob_win, decimal_odds)
 
@@ -131,7 +114,6 @@ def calculate_kelly_criterion_decimal(
 ) -> float:
     """
     Calculate Kelly bet size in dollars given decimal odds, model probability, and bankroll.
-
     Caps by max_fraction.
     """
     if bankroll <= 0:
@@ -142,21 +124,19 @@ def calculate_kelly_criterion_decimal(
     bet_size = bankroll * stake_fraction
 
     logger.debug(
-        f"Kelly (decimal) calc: p={model_prob:.6f}, d_odds={decimal_odds:.3f}, "
+        f"Kelly (decimal): p={model_prob:.6f}, d_odds={decimal_odds:.3f}, "
         f"bankroll={bankroll:.2f}, fraction={stake_fraction:.4f} → bet={bet_size:.2f}"
     )
     return float(bet_size)
 
 
 def calculate_kelly_criterion(
-    american_odds: int,
+    american_odds: Union[int, float],
     model_prob: float,
     bankroll: float = DEFAULT_BANKROLL,
     max_fraction: float = MAX_KELLY_FRACTION,
 ) -> float:
-    """
-    Kelly stake using American odds (backward compatibility).
-    """
+    """Kelly stake using American odds."""
     decimal_odds = american_to_decimal(american_odds)
     return calculate_kelly_criterion_decimal(decimal_odds, model_prob, bankroll, max_fraction)
 
@@ -168,9 +148,21 @@ def ev_and_kelly_summary_decimal(
     stake: float = 100.0,
     max_fraction: float = MAX_KELLY_FRACTION,
 ) -> Tuple[float, float]:
-    """
-    Convenience helper returning (EV, Kelly bet size) using decimal odds.
-    """
+    """Convenience helper returning (EV, Kelly bet size) using decimal odds."""
+    ev = expected_value_decimal(prob_win, decimal_odds, stake)
+    kelly_bet = calculate_kelly_criterion_decimal(decimal_odds, prob_win, bankroll, max_fraction)
+    return float(ev), float(kelly_bet)
+
+
+def ev_and_kelly_summary(
+    prob_win: float,
+    american_odds: Union[int, float],
+    bankroll: float = DEFAULT_BANKROLL,
+    stake: float = 100.0,
+    max_fraction: float = MAX_KELLY_FRACTION,
+) -> Tuple[float, float]:
+    """Convenience helper returning (EV, Kelly bet size) using American odds."""
+    decimal_odds = american_to_decimal(american_odds)
     ev = expected_value_decimal(prob_win, decimal_odds, stake)
     kelly_bet = calculate_kelly_criterion_decimal(decimal_odds, prob_win, bankroll, max_fraction)
     return float(ev), float(kelly_bet)

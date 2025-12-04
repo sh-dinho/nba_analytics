@@ -3,18 +3,29 @@
 # Purpose: Generate picks from predictions using a simple EV strategy
 # ============================================================
 
+import argparse
 import pandas as pd
 import datetime
 from pathlib import Path
-from core.log_config import setup_logger
-from core.exceptions import DataError, PipelineError
+
+from core.paths import ensure_dirs, LOGS_DIR
+from core.log_config import init_global_logger
+from core.exceptions import DataError, PipelineError, FileError
 from core.utils import ensure_columns
-from core.config import BASE_RESULTS_DIR, PICKS_LOG, TODAY_PREDICTIONS_FILE, PICKS_FILE, PICKS_BANKROLL_FILE
+from core.config import (
+    BASE_RESULTS_DIR,
+    PICKS_LOG,
+    TODAY_PREDICTIONS_FILE,
+    PICKS_FILE,
+    PICKS_BANKROLL_FILE,
+)
 from notifications import send_telegram_message, send_ev_summary
 
-logger = setup_logger("generate_picks")
+logger = init_global_logger()
+PICKS_SUMMARY_LOG = LOGS_DIR / "picks_summary.log"
 
 # Ensure results directory exists
+ensure_dirs(strict=False)
 BASE_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -25,7 +36,11 @@ def update_bankroll(picks_df: pd.DataFrame):
     today = pd.Timestamp.today().date().isoformat()
     total_stake = picks_df["stake_amount"].sum() if "stake_amount" in picks_df.columns else 0
     avg_ev = picks_df["ev"].mean() if "ev" in picks_df.columns else None
-    bankroll_change = (picks_df["ev"] * picks_df.get("stake_amount", 1)).sum() if "ev" in picks_df.columns else 0
+    bankroll_change = (
+        (picks_df["ev"] * picks_df.get("stake_amount", 1)).sum()
+        if "ev" in picks_df.columns
+        else 0
+    )
     record = {
         "Date": today,
         "Total_Stake": total_stake,
@@ -50,7 +65,9 @@ def update_bankroll(picks_df: pd.DataFrame):
     send_telegram_message(msg)
 
 
-def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame:
+def generate_picks(preds_file=TODAY_PREDICTIONS_FILE,
+                   out_file=PICKS_FILE,
+                   export_json: bool = False) -> pd.DataFrame:
     """
     Generate picks from predictions using a simple EV strategy.
     Adds a rolling summary log for tracking.
@@ -59,7 +76,7 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
     out_file = Path(out_file)
 
     if not preds_file.exists():
-        raise FileNotFoundError(f"{preds_file} not found.")
+        raise FileError("Predictions file not found", file_path=str(preds_file))
 
     df = pd.read_csv(preds_file)
     if df.empty:
@@ -73,10 +90,7 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
     else:
         raise DataError("Predictions file missing required probability column")
 
-    try:
-        ensure_columns(df, [prob_col], "predictions")
-    except ValueError as e:
-        raise DataError(str(e))
+    ensure_columns(df, [prob_col], "predictions")
 
     # Strategy: pick HOME if prob > 0.5 (and EV > 0 if available)
     if "ev" in df.columns:
@@ -94,6 +108,16 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
     except Exception as e:
         raise PipelineError(f"Failed to save picks: {e}")
 
+    if export_json:
+        out_json = out_file.with_suffix(".json")
+        try:
+            df.to_json(out_json, orient="records", indent=2)
+            logger.info(f"📑 Picks also exported to {out_json}")
+        except Exception as e:
+            logger.warning(f"Failed to export picks to JSON: {e}")
+    else:
+        out_json = None
+
     # Summary stats
     home_picks = (df["pick"] == "HOME").sum()
     away_picks = (df["pick"] == "AWAY").sum()
@@ -109,7 +133,8 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
         "total_picks": len(df),
         "home_picks": home_picks,
         "away_picks": away_picks,
-        "avg_ev": avg_ev
+        "avg_ev": avg_ev,
+        "json_export": str(out_json) if out_json else None,
     }])
 
     try:
@@ -127,13 +152,44 @@ def main(preds_file=TODAY_PREDICTIONS_FILE, out_file=PICKS_FILE) -> pd.DataFrame
     summary_msg = f"📊 Picks Summary: HOME={home_picks}, AWAY={away_picks}, Avg EV={avg_ev_str}"
     send_telegram_message(summary_msg)
 
+    # Append summary to dedicated log
+    try:
+        if PICKS_SUMMARY_LOG.exists():
+            summary_entry.to_csv(PICKS_SUMMARY_LOG, mode="a", header=False, index=False)
+        else:
+            summary_entry.to_csv(PICKS_SUMMARY_LOG, index=False)
+        logger.info(f"📈 Picks summary also appended to {PICKS_SUMMARY_LOG}")
+    except Exception as e:
+        logger.warning(f"Failed to append to dedicated picks summary log: {e}")
+
     return df
 
 
+def print_latest_summary():
+    """Print the latest picks summary entry without regenerating picks."""
+    if not PICKS_SUMMARY_LOG.exists():
+        logger.error("No picks summary log found.")
+        return
+    try:
+        df = pd.read_csv(PICKS_SUMMARY_LOG)
+        if df.empty:
+            logger.warning("Picks summary log is empty.")
+            return
+        latest = df.tail(1).iloc[0].to_dict()
+        logger.info(f"📊 Latest picks summary: {latest}")
+    except Exception as e:
+        logger.error(f"Failed to read picks summary log: {e}")
+
+
 if __name__ == "__main__":
-    import argparse
     parser = argparse.ArgumentParser(description="Generate picks from predictions")
     parser.add_argument("--preds", default=TODAY_PREDICTIONS_FILE, help="Path to predictions file")
     parser.add_argument("--out", default=PICKS_FILE, help="Path to save picks")
+    parser.add_argument("--export-json", action="store_true", help="Also export picks to JSON format")
+    parser.add_argument("--summary-only", action="store_true", help="Print the latest picks summary log entry")
     args = parser.parse_args()
-    main(preds_file=args.preds, out_file=args.out)
+
+    if args.summary_only:
+        print_latest_summary()
+    else:
+        generate_picks(preds_file=args.preds, out_file=args.out, export_json=args.export_json)

@@ -3,11 +3,13 @@
 # Purpose: Generate today's predictions from trained model + notify Telegram
 # ============================================================
 
-import os
+import argparse
 import pandas as pd
 import numpy as np
 import joblib
 from pathlib import Path
+
+from core.paths import DATA_DIR, LOGS_DIR, ensure_dirs
 from core.config import (
     MODEL_FILE_PKL,
     PREDICTIONS_FILE,
@@ -17,12 +19,13 @@ from core.config import (
     FEATURES_FILE,
     PICKS_BANKROLL_FILE,
 )
-from core.log_config import setup_logger
+from core.log_config import init_global_logger
 from core.utils import ensure_columns
-from core.exceptions import DataError, PipelineError
+from core.exceptions import DataError, PipelineError, FileError
 from notifications import send_telegram_message, send_ev_summary  # ✅ Telegram hooks
 
-logger = setup_logger("generate_today_predictions")
+logger = init_global_logger()
+PREDICTIONS_LOG = LOGS_DIR / "predictions.log"
 
 
 def update_bankroll(picks_df: pd.DataFrame):
@@ -63,10 +66,11 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
     Handles binary, regression, and multi-class targets.
     Saves predictions to PREDICTIONS_FILE and returns DataFrame.
     """
+    ensure_dirs(strict=False)
     features_file = Path(features_file)
 
     if not features_file.exists():
-        raise FileNotFoundError(f"{features_file} not found. Run build_features_for_new_games first.")
+        raise FileError("Features file not found", file_path=str(features_file))
 
     df = pd.read_csv(features_file)
     if df.empty:
@@ -74,7 +78,7 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
 
     # Load trained model artifact
     if not Path(MODEL_FILE_PKL).exists():
-        raise FileNotFoundError(f"{MODEL_FILE_PKL} not found. Run train_model first.")
+        raise FileError("Model file not found", file_path=str(MODEL_FILE_PKL))
 
     artifact = joblib.load(MODEL_FILE_PKL)
     pipeline = artifact["model"]
@@ -180,12 +184,48 @@ def generate_today_predictions(features_file: str, threshold: float = 0.6) -> pd
     logger.info(summary_msg)
     send_telegram_message(summary_msg)
 
+    # Append summary log
+    summary_entry = pd.DataFrame([{
+        "timestamp": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "games": len(df),
+        "picks": len(picks),
+        "threshold": threshold,
+        "predictions_file": str(PREDICTIONS_FILE),
+        "picks_file": str(PICKS_FILE) if picks else None,
+    }])
+    try:
+        if PREDICTIONS_LOG.exists():
+            summary_entry.to_csv(PREDICTIONS_LOG, mode="a", header=False, index=False)
+        else:
+            summary_entry.to_csv(PREDICTIONS_LOG, index=False)
+        logger.info(f"📈 Predictions summary appended to {PREDICTIONS_LOG}")
+    except Exception as e:
+        logger.warning(f"Failed to append predictions summary: {e}")
+
     return df
 
 
+def print_latest_summary():
+    """Print the latest predictions summary entry without regenerating predictions."""
+    if not PREDICTIONS_LOG.exists():
+        logger.error("No predictions summary log found.")
+        return
+    try:
+        df = pd.read_csv(PREDICTIONS_LOG)
+        if df.empty:
+            logger.warning("Predictions summary log is empty.")
+            return
+        latest = df.tail(1).iloc[0].to_dict()
+        logger.info(f"📊 Latest predictions summary: {latest}")
+    except Exception as e:
+        logger.error(f"Failed to read predictions summary log: {e}")
+
+
 if __name__ == "__main__":
-    import argparse
     parser = argparse.ArgumentParser(description="Generate today's predictions")
     parser.add_argument("--threshold", type=float, default=0.6, help="Win probability threshold")
+    parser.add_argument("--summary-only", action="store_true", help="Print the latest predictions summary log entry")
     args = parser.parse_args()
-    generate_today_predictions(FEATURES_FILE, threshold=args.threshold)
+
+    if args.summary_only:
+        print
