@@ -1,6 +1,6 @@
 # ============================================================
 # File: app/dashboard/cleanup.py
-# Purpose: Cleanup old dashboards/logs (delete or archive based on config)
+# Purpose: Cleanup old daily dashboard images and pipeline logs
 # ============================================================
 
 import os
@@ -14,7 +14,7 @@ from core.log_config import setup_logger
 logger = setup_logger("cleanup")
 
 def handle_files(pattern: str, max_files: int, archive_subdir: str):
-    """Delete or archive files depending on CLEANUP_MODE."""
+    """Delete or archive old files depending on CLEANUP_MODE."""
     files = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
     if len(files) <= max_files:
         return
@@ -41,13 +41,12 @@ def handle_files(pattern: str, max_files: int, archive_subdir: str):
 def main():
     logger.info(f"🚀 Starting cleanup in mode: {CLEANUP_MODE}")
 
-    # Dashboards
-    handle_files(os.path.join(RESULTS_DIR, "dashboard_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
-    handle_files(os.path.join(RESULTS_DIR, "weekly_dashboard_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
-    handle_files(os.path.join(RESULTS_DIR, "monthly_dashboard_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
-    handle_files(os.path.join(RESULTS_DIR, "combined_dashboard_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
+    # Daily Dashboard Images
+    dashboard_dir = RESULTS_DIR / "dashboard"
+    handle_files(str(dashboard_dir / "bankroll_*.png"), MAX_DASHBOARD_IMAGES, "dashboards")
+    handle_files(str(dashboard_dir / "bankroll_*.csv"), MAX_DASHBOARD_IMAGES, "dashboards")
 
-    # Logs
+    # Pipeline Logs
     handle_files(os.path.join(RESULTS_DIR, "pipeline_run_*.log"), MAX_LOG_FILES, "logs")
 
     logger.info("✅ Cleanup complete")

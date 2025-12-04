@@ -22,18 +22,20 @@ from notifications import send_telegram_message, send_photo
 
 logger = init_global_logger()
 
+ensure_dirs(strict=False)
+BASE_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
 def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker update",
                    notify=False, avoid_threshold=0.4, watch_threshold=0.6):
-    ensure_dirs(strict=False)
-    log_config_snapshot()   
+    """Update AI tracker with team/player stats from a backtest file."""
+    log_config_snapshot()
 
     if not backtest_file.exists():
         logger.warning(f"⚠️ Backtest file not found: {backtest_file}")
         return
 
     df = pd.read_csv(backtest_file)
-
-    # Validate required columns
     required_cols = {"team_id", "correct"}
     if not required_cols.issubset(df.columns):
         logger.error(f"❌ Missing required columns in {backtest_file}")
@@ -48,13 +50,12 @@ def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker up
     team_stats["win_rate"] = team_stats["wins"] / team_stats["total"]
     team_stats["avoid_flag"] = team_stats["win_rate"] < avoid_threshold
 
-    # Player-level aggregation (if player_id present)
+    # Player-level aggregation
     player_stats = None
     if "player_id" in df.columns:
         group_cols = ["player_id"]
         if "player_name" in df.columns:
             group_cols.append("player_name")
-
         player_stats = df.groupby(group_cols).agg(
             wins=("correct", "sum"),
             total=("correct", "count")
@@ -64,7 +65,7 @@ def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker up
         player_stats["watch_flag"] = player_stats["win_rate"] > watch_threshold
         player_stats["avoid_flag"] = player_stats["win_rate"] < avoid_threshold
 
-    # Save separate tracker CSVs
+    # Save trackers
     team_stats.to_csv(AI_TRACKER_TEAMS_FILE, index=False)
     logger.info(f"📑 Team tracker updated → {AI_TRACKER_TEAMS_FILE}")
 
@@ -88,7 +89,7 @@ def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker up
         f.write(insight)
     logger.info(f"AI insight saved → {AI_TRACKER_INSIGHT_FILE}")
 
-    # Append to pipeline_summary CSV
+    # Append to pipeline summary
     run_time = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
     summary_row = {
         "timestamp": run_time,
@@ -106,7 +107,7 @@ def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker up
         index=False
     )
 
-    # Append to dedicated AI tracker summary log
+    # Append to dedicated AI tracker summary
     try:
         AI_TRACKER_SUMMARY_FILE.parent.mkdir(parents=True, exist_ok=True)
         pd.DataFrame([summary_row]).to_csv(
@@ -128,11 +129,9 @@ def update_tracker(backtest_file: Path, season="aggregate", notes="AI tracker up
 def plot_team_dashboard(team_stats: pd.DataFrame, season="aggregate") -> Path:
     """Generate a bar chart of team win rates with avoid flags highlighted."""
     fig, ax = plt.subplots(figsize=(12, 6))
-
     colors = team_stats["win_rate"].apply(
         lambda x: "green" if x >= 0.6 else ("orange" if x >= 0.4 else "red")
     )
-
     ax.bar(team_stats["team_id"].astype(str), team_stats["win_rate"], color=colors)
     ax.set_title(f"AI Tracker — Team Win Rates ({season})")
     ax.set_xlabel("Team ID")
@@ -140,7 +139,7 @@ def plot_team_dashboard(team_stats: pd.DataFrame, season="aggregate") -> Path:
     ax.set_ylim(0, 1)
     ax.grid(True, axis="y", linestyle="--", alpha=0.7)
 
-    # Annotate bars with wins-losses
+    # Annotate bars
     for x, row in zip(team_stats["team_id"].astype(str), team_stats.itertuples()):
         ax.text(x, row.win_rate + 0.02, f"{row.wins}-{row.losses}", ha="center", fontsize=8)
 
@@ -148,13 +147,9 @@ def plot_team_dashboard(team_stats: pd.DataFrame, season="aggregate") -> Path:
     plt.savefig(AI_TRACKER_DASHBOARD_FILE)
     plt.close()
     logger.info(f"📊 AI tracker dashboard saved → {AI_TRACKER_DASHBOARD_FILE}")
-
     return AI_TRACKER_DASHBOARD_FILE
 
 
-# ======================
-# Example usage
-# ======================
 if __name__ == "__main__":
     backtest_file = BASE_RESULTS_DIR / "backtest_results.csv"
     update_tracker(backtest_file, season="2025-2026", notes="Daily run", notify=True)

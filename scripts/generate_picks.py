@@ -20,10 +20,9 @@ from core.config import (
     PICKS_FILE,
     log_config_snapshot,
 )
-from notifications import send_telegram_message, send_ev_summary
+from notifications import send_telegram_message, send_ev_summary, send_photo
 
 logger = init_global_logger()
-
 
 # Ensure results directory exists
 ensure_dirs(strict=False)
@@ -38,13 +37,12 @@ def update_bankroll(picks_df: pd.DataFrame):
     total_stake = picks_df["stake_amount"].sum() if "stake_amount" in picks_df.columns else 0
     avg_ev = picks_df["ev"].mean() if "ev" in picks_df.columns else None
 
+    bankroll_change = 0
     if "ev" in picks_df.columns:
         if "stake_amount" in picks_df.columns:
             bankroll_change = (picks_df["ev"] * picks_df["stake_amount"]).sum()
         else:
             bankroll_change = picks_df["ev"].sum()
-    else:
-        bankroll_change = 0
 
     record = {
         "Date": today,
@@ -52,19 +50,22 @@ def update_bankroll(picks_df: pd.DataFrame):
         "Avg_EV": avg_ev,
         "Bankroll_Change": bankroll_change,
     }
-    if Path(PICKS_BANKROLL_FILE).exists():
+
+    if PICKS_BANKROLL_FILE.exists():
         hist = pd.read_csv(PICKS_BANKROLL_FILE)
         hist = pd.concat([hist, pd.DataFrame([record])], ignore_index=True)
     else:
         hist = pd.DataFrame([record])
+
     hist.to_csv(PICKS_BANKROLL_FILE, index=False)
     logger.info(f"💰 Bankroll updated → {PICKS_BANKROLL_FILE}")
 
     # Notify Telegram bankroll update
+    avg_ev_str = f"{avg_ev:.3f}" if avg_ev is not None else "N/A"
     msg = (
         f"🏀 Bankroll Update ({today})\n"
         f"💰 Total Stake: {total_stake:.2f}\n"
-        f"📈 Avg EV: {avg_ev:.3f if avg_ev is not None else 'N/A'}\n"
+        f"📈 Avg EV: {avg_ev_str}\n"
         f"💵 Bankroll Change: {bankroll_change:+.2f}"
     )
     send_telegram_message(msg)
@@ -165,23 +166,12 @@ def generate_picks(preds_file=TODAY_PREDICTIONS_FILE,
     except Exception as e:
         logger.warning(f"Failed to append to dedicated picks summary log: {e}")
 
+    # Optional: send bankroll trend chart
+    trend_img = plot_bankroll_trend()
+    if trend_img:
+        send_photo(trend_img, caption="📈 Cumulative Bankroll Trend")
+
     return df
-
-
-def print_latest_summary():
-    """Print the latest picks summary entry without regenerating picks."""
-    if not PICKS_SUMMARY_FILE.exists():
-        logger.error("No picks summary log found.")
-        return
-    try:
-        df = pd.read_csv(PICKS_SUMMARY_FILE)
-        if df.empty:
-            logger.warning("Picks summary log is empty.")
-            return
-        latest = df.tail(1).iloc[0].to_dict()
-        logger.info(f"📊 Latest picks summary: {latest}")
-    except Exception as e:
-        logger.error(f"Failed to read picks summary log: {e}")
 
 
 def plot_bankroll_trend() -> str:
@@ -212,9 +202,27 @@ def plot_bankroll_trend() -> str:
     return str(trend_path)
 
 
+def print_latest_summary():
+    """Print the latest picks summary entry without regenerating picks."""
+    if not PICKS_SUMMARY_FILE.exists():
+        logger.error("No picks summary log found.")
+        return
+    try:
+        df = pd.read_csv(PICKS_SUMMARY_FILE)
+        if df.empty:
+            logger.warning("Picks summary log is empty.")
+            return
+        latest = df.tail(1).iloc[0].to_dict()
+        logger.info(f"📊 Latest picks summary: {latest}")
+    except Exception as e:
+        logger.error(f"Failed to read picks summary log: {e}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate picks from predictions")
     parser.add_argument("--preds", default=TODAY_PREDICTIONS_FILE, help="Path to predictions file")
     parser.add_argument("--out", default=PICKS_FILE, help="Path to save picks")
     parser.add_argument("--export-json", action="store_true", help="Also export picks to JSON format")
-   
+    args = parser.parse_args()
+
+    generate_picks(preds_file=args.preds, out_file=args.out, export_json=args.export_json)

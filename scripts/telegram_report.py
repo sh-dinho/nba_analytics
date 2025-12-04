@@ -9,7 +9,6 @@ import pandas as pd
 import argparse
 import matplotlib.pyplot as plt
 from pathlib import Path
-
 from core.log_config import init_global_logger
 from core.exceptions import PipelineError, DataError
 
@@ -20,21 +19,20 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 REQUIRED_COLS = {"Model", "Final_Bankroll", "Win_Rate", "Avg_EV", "Avg_Stake", "Total_Bets"}
 
+# Unified aggregation file paths
 SUMMARY_MAP = {
-    "daily": Path("results/summary.csv"),
-    "weekly": Path("results/bankroll_simulation_weekly.csv"),
-    "monthly": Path("results/bankroll_simulation_monthly.csv"),
+    "daily": Path("results/unified_summary_daily.csv"),
+    "weekly": Path("results/unified_summary_weekly.csv"),
+    "monthly": Path("results/unified_summary_monthly.csv"),
 }
 
 CHART_MAP = {
-    "daily": Path("results/bankroll.png"),
-    "weekly": Path("results/weekly_bankroll_chart.png"),
-    "monthly": Path("results/monthly_bankroll_chart.png"),
+    "daily": Path("results/unified_daily_bankroll.png"),
+    "weekly": Path("results/unified_weekly_bankroll.png"),
+    "monthly": Path("results/unified_monthly_bankroll.png"),
 }
 
-
 # === Telegram Helpers ===
-
 def send_message(text: str):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         logger.warning("⚠️ Telegram credentials not set. Skipping report.")
@@ -48,7 +46,6 @@ def send_message(text: str):
     except Exception as e:
         logger.error(f"❌ Failed to send Telegram text report: {e}")
         raise PipelineError(f"Telegram message failed: {e}")
-
 
 def send_photo(photo_path: str, caption: str = None):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -69,9 +66,7 @@ def send_photo(photo_path: str, caption: str = None):
             logger.error(f"❌ Failed to send Telegram chart: {e}")
             raise PipelineError(f"Telegram photo failed: {e}")
 
-
 # === Data Helpers ===
-
 def load_summary(summary_path: Path) -> pd.DataFrame:
     if not summary_path.exists():
         logger.warning(f"⚠️ No summary file found at {summary_path}. Skipping report.")
@@ -88,25 +83,17 @@ def load_summary(summary_path: Path) -> pd.DataFrame:
         raise DataError(f"Missing expected columns in summary: {missing}")
     return df
 
-
 def generate_chart(df: pd.DataFrame, chart_path: Path):
-    if "Final_Bankroll" in df.columns:
-        plt.figure(figsize=(8, 5))
-        if "Date" in df.columns:
-            x = df["Date"]
-        elif "timestamp" in df.columns:
-            x = df["timestamp"]
-        else:
-            x = range(len(df))
-        plt.plot(x, df["Final_Bankroll"], marker="o")
-        plt.title("Bankroll Trajectory")
-        plt.xlabel("Date")
-        plt.ylabel("Final Bankroll")
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig(chart_path)
-        logger.info(f"📊 Chart generated at {chart_path}")
-
+    plt.figure(figsize=(8, 5))
+    x = df.index
+    plt.plot(x, df["Final_Bankroll"], marker="o")
+    plt.title("Bankroll Trajectory")
+    plt.xlabel("Bet Index")
+    plt.ylabel("Final Bankroll")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(chart_path)
+    logger.info(f"📊 Chart generated at {chart_path}")
 
 def format_message(df: pd.DataFrame, summary_type: str) -> str:
     message = f"*🏀 NBA Bankroll Report ({summary_type.capitalize()})*\n\n"
@@ -122,20 +109,11 @@ def format_message(df: pd.DataFrame, summary_type: str) -> str:
     try:
         best_model = df.loc[df["Final_Bankroll"].fillna(0).idxmax()]
         message += f"📈 *Trend Analysis:* {best_model['Model']} leads with bankroll {best_model['Final_Bankroll']:.2f}."
-        if len(df) > 1:
-            delta = df["Final_Bankroll"].iloc[-1] - df["Final_Bankroll"].iloc[-2]
-            message += f"\n📉 Change since last run: {delta:+.2f}"
-        if "Cumulative_Bankroll" in df.columns:
-            last_val = df["Cumulative_Bankroll"].iloc[-1]
-            prev_val = df["Cumulative_Bankroll"].iloc[-2] if len(df) > 1 else last_val
-            delta_cum = last_val - prev_val
-            message += f"\n💹 Cumulative bankroll progression: {last_val:.2f} ({delta_cum:+.2f} since last period)"
     except Exception as e:
         logger.warning(f"⚠️ Trend analysis failed: {e}")
     if len(message) > 4000:
         message = message[:4000] + "\n... (truncated)"
     return message
-
 
 def send_report(summary_type: str, export_json: bool = False):
     summary_path = SUMMARY_MAP[summary_type]
@@ -156,14 +134,12 @@ def send_report(summary_type: str, export_json: bool = False):
         except Exception as e:
             logger.warning(f"Failed to export summary to JSON: {e}")
 
-
 def main(summary_type: str, export_json: bool = False, all_reports: bool = False):
     if all_reports:
         for stype in ["daily", "weekly", "monthly"]:
             send_report(stype, export_json=export_json)
     else:
         send_report(summary_type, export_json=export_json)
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Send bankroll summary report to Telegram")

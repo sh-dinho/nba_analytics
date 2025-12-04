@@ -9,6 +9,14 @@ name: NBA Aggregation & Reporting Pipeline
 
 on:
   workflow_dispatch:
+    inputs:
+      triggered_by:
+        description: "Source workflow"
+        required: false
+        default: "manual"
+      run_id:
+        description: "Upstream run ID"
+        required: false
   workflow_run:
     workflows: ["NBA Model Training Pipeline"]
     types: [completed]
@@ -22,6 +30,8 @@ jobs:
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/core
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      TRIGGERED_BY: ${{ github.event.inputs.triggered_by }}
+      UPSTREAM_RUN_ID: ${{ github.event.inputs.run_id }}
 
     steps:
       - name: Checkout repo
@@ -57,6 +67,8 @@ jobs:
       - name: Aggregate results
         run: |
           mkdir -p results
+          echo "Triggered by: $TRIGGERED_BY"
+          echo "Upstream run ID: $UPSTREAM_RUN_ID"
           python scripts/aggregate_results.py
 
       - name: Monthly aggregation

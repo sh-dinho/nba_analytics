@@ -1,13 +1,21 @@
 # ============================================================
 # File: .github/workflows/train.yml
 # Purpose: Train NBA prediction models (logistic, XGB, NN),
-#          run bankroll strategy, and trigger aggregation.
+#          run bankroll strategy, and trigger aggregation once.
 # ============================================================
 
 name: NBA Model Training Pipeline
 
 on:
   workflow_dispatch:
+    inputs:
+      triggered_by:
+        description: "Source workflow"
+        required: false
+        default: "manual"
+      run_id:
+        description: "Upstream run ID"
+        required: false
   workflow_run:
     workflows: ["NBA Data Fetch & Feature Pipeline"]
     types: [completed]
@@ -16,7 +24,6 @@ jobs:
   train-models:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         model_type: [logistic, xgb, nn]
@@ -90,13 +97,19 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: logs-${{ matrix.model_type }}
-          path: logs/pipeline.log
+          path: logs/pipeline_${{ matrix.model_type }}.log
           if-no-files-found: ignore
           retention-days: 7
 
+  aggregate:
+    needs: train-models
+    runs-on: ubuntu-latest
+    steps:
       - name: Trigger Aggregation Pipeline
-        if: ${{ success() }}
-        uses: peter-evans/workflow-dispatch@v1
+        uses: peter-evans/workflow-dispatch@v2
         with:
           workflow: "aggregate.yml"
           ref: main
+          inputs:
+            triggered_by: ${{ github.event_name }}
+              run_id: ${{ github.run_id }}

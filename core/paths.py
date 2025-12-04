@@ -4,6 +4,7 @@
 # ============================================================
 
 from pathlib import Path
+from datetime import date
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -39,3 +40,7 @@ CONFIG_LOG_FILE = LOGS_DIR / "config_summary.csv"
 SUMMARY_FILE = RESULTS_DIR / "pipeline_summary.csv"
 PICKS_FILE = RESULTS_DIR / "picks.csv"
 PICKS_BANKROLL_FILE = RESULTS_DIR / "bankroll.csv"
+
+# Daily dashboard outputs
+DAILY_DASHBOARD_CSV_TEMPLATE = RESULTS_DIR / f"daily_dashboard_{date.today().isoformat()}.csv"
+DAILY_DASHBOARD_PNG_TEMPLATE = RESULTS_DIR / f"daily_dashboard_{date.today().isoformat()}.png"

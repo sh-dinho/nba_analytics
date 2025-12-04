@@ -87,10 +87,56 @@
 
 # if __name__ == "__main__":
 #     main()
-from notifications import send_telegram_message
-send_telegram_message("Hello from NBA Analytics 🚀")
-import os
-print(os.getenv("TELEGRAM_BOT_TOKEN"))
-print(os.getenv("TELEGRAM_CHAT_ID"))
+# from notifications import send_telegram_message
+# send_telegram_message("Hello from NBA Analytics 🚀")
+# import os
+# print(os.getenv("TELEGRAM_BOT_TOKEN"))
+# print(os.getenv("TELEGRAM_CHAT_ID"))
 import sys
 print(sys.path[0])
+import requests
+import os
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Ensure your API key for Odds-API is loaded from the environment
+ODDS_API_KEY = os.getenv("ODDS_API_KEY")
+if not ODDS_API_KEY:
+    raise ValueError("ODDS_API_KEY is missing from the .env file")
+
+# Function to fetch odds data
+def fetch_odds_data(season_label):
+    try:
+        odds_url = f"https://api.odds-api.com/v4/sports/basketball_nba/odds"
+        odds_params = {
+            "apiKey": ODDS_API_KEY,
+            "date": season_label,  # Use the season_label as the date filter if necessary
+            "regions": "us",  # Adjust for specific regions as required
+        }
+
+        print("Requesting odds data...")
+        response = requests.get(odds_url, params=odds_params)
+        
+        # Check for connection or HTTP issues
+        response.raise_for_status()
+
+        if response.status_code == 200:
+            odds_data = response.json()
+            return odds_data
+        else:
+            print(f"Error fetching odds data: {response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Request error: {e}")
+        return None
+
+# Example usage
+season_label = "2023-24"  # Example season
+odds_data = fetch_odds_data(season_label)
+
+if odds_data:
+    print("Odds data successfully fetched!")
+else:
+    print("Failed to fetch odds data.")
