@@ -33,19 +33,16 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Restore venv cache
         id: cache-venv
         uses: actions/cache@v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-
       - name: Install dependencies
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
@@ -53,18 +50,15 @@ jobs:
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt
           echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
-
       - name: Download data artifacts
         uses: actions/download-artifact@v4
         with:
           name: nba-daily-data
           path: data
-
       - name: Train model
         run: |
           mkdir -p models logs results
           python scripts/train_model.py --model_type ${{ matrix.model_type }}
-
       - name: Run prediction pipeline & bankroll tracker
         run: |
           python app/prediction_pipeline.py \
@@ -72,7 +66,6 @@ jobs:
             --strategy kelly \
             --max_fraction 0.05 \
             --model_type ${{ matrix.model_type }}
-
       - name: Upload model artifact
         uses: actions/upload-artifact@v4
         with:
@@ -82,14 +75,12 @@ jobs:
             models/game_predictor.h5
           if-no-files-found: ignore
           retention-days: 30
-
       - name: Upload bankroll results
         uses: actions/upload-artifact@v4
         with:
           name: bankroll-${{ matrix.model_type }}
           path: results/picks_bankroll_${{ matrix.model_type }}.csv
           retention-days: 30
-
       - name: Upload logs
         uses: actions/upload-artifact@v4
         with:
