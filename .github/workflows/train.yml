@@ -1,7 +1,6 @@
 # ============================================================
 # File: .github/workflows/train.yml
-# Purpose: Train NBA prediction models (logistic, XGB, NN),
-#          run bankroll strategy, and trigger aggregation
+# Purpose: Train NBA prediction models (logistic, XGB, NN), run bankroll strategy, and trigger aggregation
 # ============================================================
 
 name: NBA Model Training Pipeline
