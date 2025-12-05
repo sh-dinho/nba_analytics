@@ -16,6 +16,7 @@ from core.paths import (
     FEATURES_FILE,       
     FEATURES_LOG_FILE,
     CONFIG_LOG_FILE,
+    RESULTS_DIR,
 )
 
 # === Simulation defaults ===
