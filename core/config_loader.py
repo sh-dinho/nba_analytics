@@ -6,7 +6,8 @@
 import toml
 import re
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
+from datetime import date, datetime
 
 
 class ConfigLoader:
@@ -31,11 +32,9 @@ class ConfigLoader:
     # ---------------------------------------------------------
 
     def get_section(self, section: str) -> Dict[str, Any]:
-        """Return a section (e.g., 'get-data', 'get-odds-data', 'create-games')."""
         return self.config.get(section, {})
 
     def get_season(self, section: str, season: str) -> Dict[str, Any]:
-        """Return a specific season block under a given section."""
         block = self.get_section(section).get(season)
         if block is None:
             raise KeyError(f"Season '{season}' not found under section '{section}'")
@@ -46,7 +45,6 @@ class ConfigLoader:
     # ---------------------------------------------------------
 
     def validate_season(self, season_data: Dict[str, Any]) -> bool:
-        """Validate a season block for consistency and correctness."""
         missing = self.REQUIRED_SEASON_KEYS - season_data.keys()
         if missing:
             raise ValueError(f"Season block missing required fields: {missing}")
@@ -58,17 +56,13 @@ class ConfigLoader:
             end_year = int(season_data["end_year"])
             season_label = season_data["season_label"]
 
-            # Validate YYYY-MM-DD format
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", start_date):
                 raise ValueError(f"Invalid start_date format '{start_date}'")
             if not re.match(r"^\d{4}-\d{2}-\d{2}$", end_date):
                 raise ValueError(f"Invalid end_date format '{end_date}'")
-
-            # Validate season label YYYY-YY
             if not re.match(r"^\d{4}-\d{2}$", season_label):
                 raise ValueError(f"Invalid season_label format '{season_label}'")
 
-            # Chronological consistency
             if start_year > end_year:
                 raise ValueError(f"start_year > end_year for '{season_label}'")
             if start_date >= end_date:
@@ -81,56 +75,88 @@ class ConfigLoader:
             return False
 
     # ---------------------------------------------------------
+    # Auto‑generate current season blocks
+    # ---------------------------------------------------------
+
+    def ensure_current_season_blocks(self) -> str:
+        """
+        Ensure the current season blocks exist in config.toml.
+        Auto‑generate [get-data], [get-odds-data], [create-games] if missing.
+        Logs events to pipeline.log.
+        """
+        today = date.today()
+        year = today.year
+        month = today.month
+
+        if month >= 10:
+            start_year = year
+            end_year = year + 1
+        else:
+            start_year = year - 1
+            end_year = year
+
+        season_label = f"{start_year}-{str(end_year)[-2:]}"
+        start_date = f"{start_year}-10-21"
+        end_date   = f"{end_year}-06-15"
+
+        generated_sections = []
+
+        for section in ["get-data", "get-odds-data", "create-games"]:
+            section_data = self.config.setdefault(section, {})
+            if season_label not in section_data:
+                section_data[season_label] = {
+                    "season_label": season_label,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "start_year": str(start_year),
+                    "end_year": str(end_year),
+                }
+                generated_sections.append(section)
+
+        if generated_sections:
+            with open(self.config_path, "w") as f:
+                toml.dump(self.config, f)
+
+            log_entry = (
+                f"[{datetime.now().isoformat()}] "
+                f"Auto‑generated season block '{season_label}' in sections: {', '.join(generated_sections)}\n"
+            )
+            with open("pipeline.log", "a") as log_file:
+                log_file.write(log_entry)
+
+            print(f"⚠️ Auto‑generated season block '{season_label}' under {', '.join(generated_sections)}")
+
+        return season_label
+
+    # ---------------------------------------------------------
     # URL Builder
     # ---------------------------------------------------------
 
     def build_data_url(self, season_data: Dict[str, Any]) -> str:
-        """
-        Construct an NBA API URL using named placeholders from config.toml.
-
-        Example in config.toml:
-        data_url = "https://api.nba.com/data?season={season_label}&start={start_date}&end={end_date}"
-        """
-
         url_template = self.config.get("data_url")
         if not url_template:
             raise ValueError("Missing 'data_url' in config.toml")
 
-        allowed_keys = {
-            "season_label",
-            "start_date", "end_date",
-            "start_year", "end_year",
-        }
-
-        missing = [k for k in allowed_keys if k not in season_data]
-        if missing:
-            raise ValueError(f"URL cannot be built; missing keys in season block: {missing}")
-
+        from datetime import datetime as dt
         try:
-            return url_template.format(
-                season_label=season_data["season_label"],
-                start_date=season_data["start_date"],
-                end_date=season_data["end_date"],
-                start_year=season_data["start_year"],
-                end_year=season_data["end_year"],
-            )
-        except KeyError as e:
-            raise ValueError(
-                f"URL template references missing placeholder: {e}. "
-                f"Available placeholders: {list(season_data.keys())}"
-            )
+            start_dt = dt.strptime(season_data["start_date"], "%Y-%m-%d")
+            end_dt = dt.strptime(season_data["end_date"], "%Y-%m-%d")
+
+            start_month = start_dt.strftime("%m")
+            start_day   = start_dt.strftime("%d")
+            end_month   = end_dt.strftime("%m")
+            end_day     = end_dt.strftime("%d")
         except Exception as e:
-            raise ValueError(f"Failed to build URL: {e}")
+            raise ValueError(f"❌ Could not parse dates for month/day: {e}")
 
-
-# ---------------------------------------------------------
-# CLI Runner
-# ---------------------------------------------------------
-
-if __name__ == "__main__":
-    loader = ConfigLoader("config.toml")
-    season = loader.get_season("get-data", "2023-24")
-
-    if loader.validate_season(season):
-        url = loader.build_data_url(season)
-        print(f"✅ URL for {season['season_label']}: {url}")
+        return url_template.format(
+            season_label=season_data["season_label"],
+            start_date=season_data["start_date"],
+            end_date=season_data["end_date"],
+            start_year=season_data["start_year"],
+            end_year=season_data["end_year"],
+            start_month=start_month,
+            start_day=start_day,
+            end_month=end_month,
+            end_day=end_day
+        )
