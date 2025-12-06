@@ -39,3 +39,7 @@ class FileError(PipelineError):
     def __init__(self, message: str = "File operation failed", file_path: str = None):
         super().__init__(message)
         self.file_path = file_path
+
+class DataError(Exception):
+    """Custom exception for data-related issues."""
+    pass

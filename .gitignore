@@ -38,6 +38,8 @@ models/
 data/
 data/player_stats.csv
 data/training_features.csv
+data/run_history.csv
+archives/
 
 # -------------------------
 # Jupyter & notebooks
@@ -50,6 +52,9 @@ data/training_features.csv
 # -------------------------
 .pytest_cache/
 .mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
 
 # -------------------------
 # OS-specific
@@ -62,5 +67,17 @@ Thumbs.db
 # -------------------------
 .vscode/
 .idea/
-# Logs
-logs/
+
+# -------------------------
+# Build artifacts
+# -------------------------
+build/
+dist/
+*.egg-info/
+
+# -------------------------
+# Temp files
+# -------------------------
+*.tmp
+*.bak
+*.swp

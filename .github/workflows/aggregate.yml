@@ -55,7 +55,9 @@ jobs:
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt
-          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+
+      - name: Add venv to PATH
+        run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -65,9 +67,9 @@ jobs:
       - name: Organize artifacts
         run: |
           mkdir -p results models logs
-          mv results_all/bankroll-* results/ || true
-          mv results_all/model-* models/ || true
-          mv results_all/logs-* logs/ || true
+          mv results_all/bankroll-* results/ 2>/dev/null || true
+          mv results_all/model-* models/ 2>/dev/null || true
+          mv results_all/logs-* logs/ 2>/dev/null || true
 
       - name: Aggregate results
         run: |
