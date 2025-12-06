@@ -1,17 +1,28 @@
 # ============================================================
 # File: .github/workflows/nba_pipeline.yml
-# Purpose: End-to-end NBA pipeline: fetch data, train models,
-#          aggregate results, build dashboards, and report
+# Purpose: End-to-end NBA pipeline with refinements
 # ============================================================
 
 name: NBA End-to-End Pipeline
 
 on:
   schedule:
-    # Noon Toronto time (EST = UTC-5 → 17:00 UTC, EDT = UTC-4 → 16:00 UTC)
     - cron: "0 17 * * *"   # 12:00 EST (winter)
     - cron: "0 16 * * *"   # 12:00 EDT (summer)
   workflow_dispatch:
+    inputs:
+      threshold:
+        description: "Prediction threshold"
+        default: "0.6"
+        required: false
+      strategy:
+        description: "Bankroll strategy"
+        default: "kelly"
+        required: false
+      max_fraction:
+        description: "Max bankroll fraction"
+        default: "0.05"
+        required: false
   push:
     branches:
       - main
@@ -26,40 +37,30 @@ jobs:
   # -------------------------------
   fetch-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Cache venv
+      - uses: actions/cache@v4
         id: cache-venv
-        uses: actions/cache@v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-py3.12-${{ hashFiles('requirements.txt') }}
 
       - name: Install dependencies
-        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt
 
-      - name: Add venv to PATH
-        run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+      - run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+      - run: python scripts/fetch_data.py
+      - run: python scripts/feature_pipeline.py
 
-      - name: Fetch NBA data
-        run: python scripts/fetch_data.py
-
-      - name: Feature engineering
-        run: python scripts/feature_pipeline.py
-
-      - name: Upload data artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: nba-daily-data
           path: data/
@@ -71,79 +72,64 @@ jobs:
   train-models:
     needs: fetch-data
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       matrix:
         model_type: [logistic, xgb, nn]
     env:
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/core
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Restore venv cache
+      - uses: actions/cache@v4
         id: cache-venv
-        uses: actions/cache@v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-py3.12-${{ hashFiles('requirements.txt') }}
 
       - name: Install dependencies
-        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt
 
-      - name: Add venv to PATH
-        run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+      - run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
-      - name: Download data artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: nba-daily-data
           path: data
 
-      - name: Train model
-        run: |
+      - run: |
           mkdir -p models logs results
           python scripts/train_model.py --model_type ${{ matrix.model_type }}
 
-      - name: Run prediction pipeline & bankroll tracker
-        run: |
+      - run: |
           python app/prediction_pipeline.py \
-            --threshold 0.6 \
-            --strategy kelly \
-            --max_fraction 0.05 \
+            --threshold ${{ github.event.inputs.threshold || '0.6' }} \
+            --strategy ${{ github.event.inputs.strategy || 'kelly' }} \
+            --max_fraction ${{ github.event.inputs.max_fraction || '0.05' }} \
             --model_type ${{ matrix.model_type }}
 
-      - name: Upload model artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: model-${{ matrix.model_type }}
-          path: |
-            models/game_predictor.pkl
-            models/game_predictor.h5
-          if-no-files-found: ignore
+          path: models/
           retention-days: 30
 
-      - name: Upload bankroll results
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: bankroll-${{ matrix.model_type }}
           path: results/picks_bankroll_${{ matrix.model_type }}.csv
           retention-days: 30
 
-      - name: Upload logs
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: logs-${{ matrix.model_type }}
-          path: logs/pipeline_${{ matrix.model_type }}.log
-          if-no-files-found: ignore
+          path: logs/
           retention-days: 14
 
   # -------------------------------
@@ -152,71 +138,57 @@ jobs:
   aggregate:
     needs: train-models
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/core
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Restore venv cache
+      - uses: actions/cache@v4
         id: cache-venv
-        uses: actions/cache@v4
         with:
           path: .venv
           key: venv-${{ runner.os }}-py3.12-${{ hashFiles('requirements.txt') }}
 
       - name: Install dependencies
-        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
           python -m venv .venv
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install -r requirements.txt
 
-      - name: Add venv to PATH
-        run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+      - run: echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
 
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: results_all
 
-      - name: Organize artifacts
-        run: |
+      - run: |
           mkdir -p results models logs
           mv results_all/bankroll-* results/ 2>/dev/null || true
           mv results_all/model-* models/ 2>/dev/null || true
           mv results_all/logs-* logs/ 2>/dev/null || true
 
-      - name: Aggregate results
-        run: python scripts/aggregate_results.py
-
-      - name: Monthly aggregation
-        run: python scripts/monthly_aggregate.py
-
-      - name: Build dashboard
-        run: python scripts/dashboard.py
+      - run: python scripts/aggregate_results.py
+      - run: python scripts/monthly_aggregate.py
+      - run: python scripts/dashboard.py
 
       - name: Send Telegram report
-        if: ${{ secrets.TELEGRAM_BOT_TOKEN && secrets.TELEGRAM_CHAT_ID }}
+        if: ${{ env.TELEGRAM_BOT_TOKEN != '' && env.TELEGRAM_CHAT_ID != '' }}
         run: python scripts/telegram_report.py
 
-      - name: Upload summary
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: final-aggregate-summary
           path: results/aggregate_summary.csv
           retention-days: 30
 
-      - name: Upload logs (on failure)
+      - uses: actions/upload-artifact@v4
         if: failure()
-        uses: actions/upload-artifact@v4
         with:
           name: aggregate-logs
           path: logs/
