@@ -204,7 +204,12 @@ jobs:
         run: python scripts/dashboard.py
 
       - name: Send Telegram report
+        # The 'if' condition is good practice to skip if secrets are missing
         if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
+        env:
+          # Explicitly set environment variables for the script
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python scripts/telegram_report.py
 
       - name: Upload summary
