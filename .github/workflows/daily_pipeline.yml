@@ -151,7 +151,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/core
-      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - name: Checkout repo
@@ -201,7 +201,7 @@ jobs:
         run: python scripts/dashboard.py
 
       - name: Send Telegram report
-        if: ${{ secrets.TELEGRAM_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
+        if: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
         run: python scripts/telegram_report.py
 
       - name: Upload summary
