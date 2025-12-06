@@ -1,79 +1,75 @@
 # ============================================================
 # File: features/feature_builder.py
-# Purpose: Build training features from player stats
+# Purpose: Feature engineering for NBA Analytics
 # ============================================================
 
 import pandas as pd
-import numpy as np
-from pathlib import Path
-
 from core.log_config import init_global_logger
-from core.exceptions import DataError, FileError
-from core.paths import TRAINING_FEATURES_FILE
-from core.training_cache import archive_training
-from core.player_stats_cache import load_player_stats
+from core.paths import (
+    HISTORICAL_GAMES_FILE,
+    NEW_GAMES_FILE,
+    TRAINING_FEATURES_FILE,
+    NEW_GAMES_FEATURES_FILE,
+)
 
 logger = init_global_logger()
+logger.info("Feature builder module loaded.")
 
-def build_features(season: str = "2024-25", out_file: Path = TRAINING_FEATURES_FILE):
-    # Load player stats (from cache/file)
-    stats_df = load_player_stats()
+def build_features(training: bool, player: bool):
+    """
+    Builds features for training or prediction.
 
-    # Normalize columns expected from nba_api to lowercase aliases for feature aggregation
-    # nba_api columns typically: TEAM_ABBREVIATION, PTS, AST, REB
-    if not {"TEAM_ABBREVIATION", "PTS", "AST", "REB"}.issubset(set(stats_df.columns)):
-        raise DataError("Missing required player stat columns for feature building", dataset="player_stats.csv")
+    Parameters
+    ----------
+    training : bool
+        Flag to indicate if training features are being built.
+    player : bool
+        Flag to indicate if player features are being built.
+    """
+    logger.info(f"Building features: training={training}, player={player}")
 
-    stats_df = stats_df.rename(columns={
-        "TEAM_ABBREVIATION": "team",
-        "PTS": "pts",
-        "AST": "ast",
-        "REB": "reb"
-    })
+    if training:
+        logger.info("Building training features...")
+        try:
+            df = pd.read_csv(HISTORICAL_GAMES_FILE)
 
-    team_stats = stats_df.groupby("team").agg({"pts": "mean", "ast": "mean", "reb": "mean"}).reset_index()
-    team_stats.columns = ["team", "avg_pts", "avg_ast", "avg_reb"]
+            # Example engineered feature
+            if "PTS" in df.columns:
+                df["point_diff"] = df["PTS"] - df["PTS"].shift(1, fill_value=0)
 
-    games = []
-    teams = team_stats["team"].unique()
-    np.random.shuffle(teams)
+            # ✅ Add target column for training
+            if "PTS_home" in df.columns and "PTS_away" in df.columns:
+                df["home_win"] = (df["PTS_home"] > df["PTS_away"]).astype(int)
+            elif "WL" in df.columns:  # NBA API often has Win/Loss flag
+                df["home_win"] = df["WL"].apply(lambda x: 1 if x == "W" else 0)
+            else:
+                logger.warning("⚠️ No explicit score columns found; target may be missing.")
 
-    for i in range(0, len(teams), 2):
-        if i + 1 >= len(teams):
-            break
-        home_team, away_team = teams[i], teams[i + 1]
-        home_stats = team_stats[team_stats["team"] == home_team].iloc[0]
-        away_stats = team_stats[team_stats["team"] == away_team].iloc[0]
+            # Save training features
+            df.to_csv(TRAINING_FEATURES_FILE, index=False)
+            logger.info(f"Training features saved → {TRAINING_FEATURES_FILE}")
+        except Exception as e:
+            logger.error(f"❌ Failed to build training features: {e}")
 
-        features = {
-            "game_id": int(np.random.randint(100000, 999999)),
-            "home_team": home_team,
-            "away_team": away_team,
-            "home_avg_pts": home_stats["avg_pts"],
-            "away_avg_pts": away_stats["avg_pts"],
-            "home_avg_ast": home_stats["avg_ast"],
-            "away_avg_ast": away_stats["avg_ast"],
-            "home_avg_reb": home_stats["avg_reb"],
-            "away_avg_reb": away_stats["avg_reb"],
-            "home_win": 1 if np.random.rand() < 0.55 else 0,
-        }
-        games.append(features)
+    if not training:
+        logger.info("Building upcoming game features...")
+        try:
+            df = pd.read_csv(NEW_GAMES_FILE)
 
-    features_df = pd.DataFrame(games)
+            # Example placeholder engineered feature
+            df["home_advantage"] = 1
 
-    # Validate required columns
-    expected = {"game_id", "home_team", "away_team", "home_win"}
-    missing = expected - set(features_df.columns)
-    if missing:
-        raise DataError(f"Features missing required columns: {missing}", dataset="training_features")
+            # Save new game features
+            df.to_csv(NEW_GAMES_FEATURES_FILE, index=False)
+            logger.info(f"Upcoming game features saved → {NEW_GAMES_FEATURES_FILE}")
+        except Exception as e:
+            logger.error(f"❌ Failed to build upcoming game features: {e}")
 
-    # Archive before saving and persist
-    try:
-        archive_training()
-        out_file.parent.mkdir(parents=True, exist_ok=True)
-        features_df.to_csv(out_file, index=False)
-        logger.info(f"✅ Built features for {len(features_df)} games → {out_file}")
-    except Exception as e:
-        raise FileError(f"Failed to save training features: {out_file}", file_path=str(out_file)) from e
+    if player:
+        logger.info("Building player features...")
+        # Add player-specific feature engineering here
+        # Example placeholder
+        # if "PTS" in df.columns and "MIN" in df.columns:
+        #     df["player_efficiency"] = df["PTS"] / (df["MIN"] + 1)
 
-    return features_df
+    logger.info("Feature building completed.")

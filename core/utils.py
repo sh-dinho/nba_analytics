@@ -1,17 +1,25 @@
-# core/utils.py
-import os
-import json
-from datetime import datetime
+# ============================================================
+# File: core/utils.py
+# Purpose: Utility functions for NBA analytics project
+# ============================================================
 
-def get_timestamp() -> str:
-    return datetime.now().strftime("%Y%m%d_%H%M%S")
+import pandas as pd
 
-def ensure_columns(df, required_cols, name):
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        raise ValueError(f"{name} is missing columns: {missing}")
+def convert_object_to_category(df: pd.DataFrame, exclude: list = None) -> pd.DataFrame:
+    """
+    Convert all object columns in a DataFrame to category dtype, except those in `exclude`.
 
-def save_json(obj, path):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        json.dump(obj, f, indent=2)
+    Args:
+        df (pd.DataFrame): Input DataFrame
+        exclude (list, optional): List of column names to skip conversion. Defaults to None.
+
+    Returns:
+        pd.DataFrame: Updated DataFrame with categorical columns
+    """
+    if exclude is None:
+        exclude = []
+
+    for col in df.select_dtypes(include="object").columns:
+        if col not in exclude:
+            df[col] = df[col].astype("category")
+    return df

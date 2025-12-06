@@ -1,6 +1,10 @@
 # ============================================================
 # File: core/config_loader.py
 # Purpose: Load and validate TOML configuration for NBA pipeline
+#          - Handles reading and parsing of the TOML config file
+#          - Validates configuration blocks, including season data
+#          - Ensures current season configuration is available
+#          - Provides utility to build a data URL for fetching external data
 # ============================================================
 
 import toml
@@ -11,6 +15,17 @@ from datetime import date, datetime
 
 
 class ConfigLoader:
+    """
+    ConfigLoader handles the loading, validation, and auto-generation of configuration data
+    from the TOML file for the NBA pipeline.
+
+    Key functionality includes:
+    - Loading the config file and parsing the TOML format.
+    - Validating season data to ensure all required fields are present and correct.
+    - Ensuring the current season block is available in the config and auto-generating it if missing.
+    - Constructing data URLs for API calls based on season information.
+    """
+    
     REQUIRED_SEASON_KEYS = {
         "start_date", "end_date",
         "start_year", "end_year",
@@ -18,6 +33,16 @@ class ConfigLoader:
     }
 
     def __init__(self, config_path: str = "config.toml"):
+        """
+        Initializes the ConfigLoader and loads the configuration from a TOML file.
+
+        Args:
+        - config_path (str): Path to the TOML configuration file. Defaults to 'config.toml'.
+
+        Raises:
+        - FileNotFoundError: If the config file does not exist.
+        - ValueError: If the config file cannot be parsed.
+        """
         self.config_path = Path(config_path)
         if not self.config_path.exists():
             raise FileNotFoundError(f"Config file not found: {self.config_path}")
@@ -32,9 +57,31 @@ class ConfigLoader:
     # ---------------------------------------------------------
 
     def get_section(self, section: str) -> Dict[str, Any]:
+        """
+        Retrieves the data for a given section from the config.
+
+        Args:
+        - section (str): The name of the section to retrieve.
+
+        Returns:
+        - dict: The section data or an empty dictionary if not found.
+        """
         return self.config.get(section, {})
 
     def get_season(self, section: str, season: str) -> Dict[str, Any]:
+        """
+        Retrieves the season block for a specific season under a section.
+
+        Args:
+        - section (str): The section (e.g., 'get-data', 'create-games') containing the season data.
+        - season (str): The season label (e.g., '2025-2026').
+
+        Returns:
+        - dict: The season data.
+
+        Raises:
+        - KeyError: If the season is not found under the specified section.
+        """
         block = self.get_section(section).get(season)
         if block is None:
             raise KeyError(f"Season '{season}' not found under section '{section}'")
@@ -45,6 +92,18 @@ class ConfigLoader:
     # ---------------------------------------------------------
 
     def validate_season(self, season_data: Dict[str, Any]) -> bool:
+        """
+        Validates the provided season data to ensure required fields are correct.
+
+        Args:
+        - season_data (dict): The season data to validate.
+
+        Returns:
+        - bool: True if the season data is valid, False otherwise.
+        
+        Raises:
+        - ValueError: If required keys are missing or data is invalid.
+        """
         missing = self.REQUIRED_SEASON_KEYS - season_data.keys()
         if missing:
             raise ValueError(f"Season block missing required fields: {missing}")
@@ -80,9 +139,16 @@ class ConfigLoader:
 
     def ensure_current_season_blocks(self) -> str:
         """
-        Ensure the current season blocks exist in config.toml.
-        Auto‑generate [get-data], [get-odds-data], [create-games] if missing.
-        Logs events to pipeline.log.
+        Ensures the current season blocks exist in config.toml. 
+        If missing, auto-generates blocks under [get-data], [get-odds-data], [create-games].
+
+        Args:
+        - None
+        
+        Returns:
+        - str: The current season label in 'YYYY-YY' format (e.g., '2025-26').
+
+        Logs events to 'pipeline.log' and prints a warning when blocks are auto-generated.
         """
         today = date.today()
         year = today.year
@@ -101,6 +167,7 @@ class ConfigLoader:
 
         generated_sections = []
 
+        # Auto-generate missing sections for the current season
         for section in ["get-data", "get-odds-data", "create-games"]:
             section_data = self.config.setdefault(section, {})
             if season_label not in section_data:
@@ -113,6 +180,7 @@ class ConfigLoader:
                 }
                 generated_sections.append(section)
 
+        # Write the updated config back to the file
         if generated_sections:
             with open(self.config_path, "w") as f:
                 toml.dump(self.config, f)
@@ -133,6 +201,18 @@ class ConfigLoader:
     # ---------------------------------------------------------
 
     def build_data_url(self, season_data: Dict[str, Any]) -> str:
+        """
+        Builds a URL for fetching data based on the season's start and end dates.
+
+        Args:
+        - season_data (dict): The season data containing start_date, end_date, and other details.
+
+        Returns:
+        - str: The constructed URL based on the provided template in config.toml.
+        
+        Raises:
+        - ValueError: If the URL template is missing or dates are invalid.
+        """
         url_template = self.config.get("data_url")
         if not url_template:
             raise ValueError("Missing 'data_url' in config.toml")
