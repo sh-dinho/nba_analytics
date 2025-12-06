@@ -3,45 +3,57 @@
 # Purpose: Safely generate team & player feature CSVs for modeling
 # ============================================================
 
-import pandas as pd
-from pathlib import Path
-from core.config import HISTORICAL_GAMES_FILE, PLAYER_GAMES_FILE, TRAINING_FEATURES_FILE, PLAYER_FEATURES_FILE
-from core.log_config import init_global_logger
-from features.feature_builder import build_team_features, build_player_features
+from nba_core.paths import (
+    TRAINING_FEATURES_FILE,
+    PLAYER_FEATURES_FILE,
+    NEW_GAMES_FEATURES_FILE,
+    ensure_dirs,
+)
+from nba_core.log_config import init_global_logger
+from nba_core.exceptions import FileError, DataError
+from features.feature_builder import (
+    build_training_features,
+    build_upcoming_features,
+    build_player_features,
+)
 
 logger = init_global_logger()
+ensure_dirs(strict=False)
 
 # ---------------- Entrypoint ----------------
 def main():
     logger.info("🏀 Generating NBA Features...")
 
-    # Generate team features
+    # Generate training (team) features
     try:
-        generate_team_features()
-    except Exception as e:
-        logger.error(f"Error generating team features: {e}")
+        team_df = build_training_features()
+    except (FileError, DataError) as e:
+        logger.error(f"❌ Error generating training features: {e}")
+        team_df = None
+
+    # Generate upcoming game features
+    try:
+        upcoming_df = build_upcoming_features()
+    except (FileError, DataError) as e:
+        logger.error(f"❌ Error generating upcoming game features: {e}")
+        upcoming_df = None
 
     # Generate player features
     try:
-        generate_player_features()
-    except Exception as e:
-        logger.error(f"Error generating player features: {e}")
-    
+        player_df = build_player_features()
+    except (FileError, DataError) as e:
+        logger.error(f"❌ Error generating player features: {e}")
+        player_df = None
+
     logger.info("✅ Feature generation complete.")
+    logger.info(
+        f"Summary → Training: {TRAINING_FEATURES_FILE}, "
+        f"Upcoming: {NEW_GAMES_FEATURES_FILE}, "
+        f"Player: {PLAYER_FEATURES_FILE}"
+    )
 
-# ---------------- Team Features ----------------
-def generate_team_features():
-    """Generate and save team features."""
-    df_features = build_team_features(out_file=TRAINING_FEATURES_FILE)
-    logger.info(f"📂 Team features saved → {TRAINING_FEATURES_FILE}")
-    return df_features
+    return {"training": team_df, "upcoming": upcoming_df, "player": player_df}
 
-# ---------------- Player Features ----------------
-def generate_player_features():
-    """Generate and save player features."""
-    df_features = build_player_features(out_file=PLAYER_FEATURES_FILE)
-    logger.info(f"📂 Player features saved → {PLAYER_FEATURES_FILE}")
-    return df_features
 
 if __name__ == "__main__":
     main()

@@ -6,7 +6,7 @@
 import pandas as pd
 from pathlib import Path
 
-from core.paths import (
+from nba_core.paths import (
     DATA_DIR,
     TRAINING_FEATURES_FILE,
     PLAYER_FEATURES_FILE,
@@ -14,9 +14,9 @@ from core.paths import (
     PLAYER_GAMES_FILE,
     ensure_dirs,
 )
-from core.config import USE_ROLLING_AVG, ROLLING_WINDOW
-from core.log_config import init_global_logger
-from core.exceptions import DataError
+from nba_core.config import USE_ROLLING_AVG, ROLLING_WINDOW
+from nba_core.log_config import init_global_logger
+from nba_core.exceptions import DataError
 
 # Import new feature builder
 from features.feature_builder import build_features

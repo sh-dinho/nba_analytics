@@ -8,7 +8,7 @@ from datetime import datetime, date
 from pathlib import Path
 import os, shutil
 
-from core.config_loader import ConfigLoader
+from nba_core.config_loader import ConfigLoader
 
 # ---------------------------------------------------------
 # Dummy fetchers (replace with real API calls)

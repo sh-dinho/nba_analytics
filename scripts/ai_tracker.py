@@ -8,8 +8,8 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import datetime
 
-from core.config import BASE_RESULTS_DIR, SUMMARY_FILE as PIPELINE_SUMMARY_FILE, log_config_snapshot
-from core.paths import (
+from nba_core.config import BASE_RESULTS_DIR, SUMMARY_FILE as PIPELINE_SUMMARY_FILE, log_config_snapshot
+from nba_core.paths import (
     AI_TRACKER_TEAMS_FILE,
     AI_TRACKER_PLAYERS_FILE,
     AI_TRACKER_INSIGHT_FILE,
@@ -17,7 +17,7 @@ from core.paths import (
     AI_TRACKER_SUMMARY_FILE,
     ensure_dirs,
 )
-from core.log_config import init_global_logger
+from nba_core.log_config import init_global_logger
 from notifications import send_telegram_message, send_photo
 
 logger = init_global_logger()

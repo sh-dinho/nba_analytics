@@ -1,158 +1,147 @@
 # ============================================================
-# File: scripts/telegram_report.py
-# Purpose: Send bankroll summary + chart + trend analysis to Telegram
+# Telegram reporting utilities for NBA Analytics
 # ============================================================
 
-import os
+import re
 import requests
-import pandas as pd
-import argparse
-import matplotlib.pyplot as plt
-from pathlib import Path
-from core.log_config import init_global_logger
-from core.exceptions import PipelineError, DataError
+from nba_core.config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, SEND_NOTIFICATIONS
+from nba_core.log_config import init_global_logger
 
-logger = init_global_logger()
+logger = init_global_logger("telegram")
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# ---------------- Markdown Escaping ----------------
+def escape_markdown(text: str) -> str:
+    """
+    Escape special characters for Telegram MarkdownV2.
+    """
+    return re.sub(r'([_*[\]()~`>#+-=|{}.!])', r'\\\1', text)
 
-REQUIRED_COLS = {"Model", "Final_Bankroll", "Win_Rate", "Avg_EV", "Avg_Stake", "Total_Bets"}
-
-# Unified aggregation file paths
-SUMMARY_MAP = {
-    "daily": Path("results/unified_summary_daily.csv"),
-    "weekly": Path("results/unified_summary_weekly.csv"),
-    "monthly": Path("results/unified_summary_monthly.csv"),
-}
-
-CHART_MAP = {
-    "daily": Path("results/unified_daily_bankroll.png"),
-    "weekly": Path("results/unified_weekly_bankroll.png"),
-    "monthly": Path("results/unified_monthly_bankroll.png"),
-}
-
-# === Telegram Helpers ===
-def send_message(text: str):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("⚠️ Telegram credentials not set. Skipping report.")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "Markdown"}
-    try:
-        resp = requests.post(url, json=payload, timeout=10)
-        resp.raise_for_status()
-        logger.info("📲 Telegram text report sent successfully")
-    except Exception as e:
-        logger.error(f"❌ Failed to send Telegram text report: {e}")
-        raise PipelineError(f"Telegram message failed: {e}")
-
-def send_photo(photo_path: str, caption: str = None):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        logger.warning("⚠️ Telegram credentials not set. Skipping photo upload.")
-        return
-    if not os.path.exists(photo_path):
-        logger.warning(f"⚠️ Chart not found at {photo_path}. Skipping photo upload.")
-        return
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    with open(photo_path, "rb") as photo:
-        files = {"photo": photo}
-        data = {"chat_id": TELEGRAM_CHAT_ID, "caption": caption or ""}
-        try:
-            resp = requests.post(url, data=data, files=files, timeout=10)
-            resp.raise_for_status()
-            logger.info("📸 Telegram chart sent successfully")
-        except Exception as e:
-            logger.error(f"❌ Failed to send Telegram chart: {e}")
-            raise PipelineError(f"Telegram photo failed: {e}")
-
-# === Data Helpers ===
-def load_summary(summary_path: Path) -> pd.DataFrame:
-    if not summary_path.exists():
-        logger.warning(f"⚠️ No summary file found at {summary_path}. Skipping report.")
-        return pd.DataFrame()
-    try:
-        df = pd.read_csv(summary_path)
-    except Exception as e:
-        raise DataError(f"Failed to read {summary_path}: {e}")
-    if df.empty:
-        logger.warning("⚠️ Summary file is empty. Skipping report.")
-        return pd.DataFrame()
-    missing = REQUIRED_COLS - set(df.columns)
-    if missing:
-        raise DataError(f"Missing expected columns in summary: {missing}")
-    return df
-
-def generate_chart(df: pd.DataFrame, chart_path: Path):
-    plt.figure(figsize=(8, 5))
-    x = df.index
-    plt.plot(x, df["Final_Bankroll"], marker="o")
-    plt.title("Bankroll Trajectory")
-    plt.xlabel("Bet Index")
-    plt.ylabel("Final Bankroll")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.savefig(chart_path)
-    logger.info(f"📊 Chart generated at {chart_path}")
-
-def format_message(df: pd.DataFrame, summary_type: str) -> str:
-    message = f"*🏀 NBA Bankroll Report ({summary_type.capitalize()})*\n\n"
-    for _, row in df.iterrows():
-        message += (
-            f"📌 Model: {row['Model']}\n"
-            f"🏦 Final Bankroll: {row['Final_Bankroll']:.2f}\n"
-            f"✅ Win Rate: {row['Win_Rate']:.2%}\n"
-            f"💰 Avg EV: {row['Avg_EV']:.2f}\n"
-            f"🎯 Avg Stake: {row['Avg_Stake']:.2f}\n"
-            f"📊 Total Bets: {int(row['Total_Bets'])}\n\n"
-        )
-    try:
-        best_model = df.loc[df["Final_Bankroll"].fillna(0).idxmax()]
-        message += f"📈 *Trend Analysis:* {best_model['Model']} leads with bankroll {best_model['Final_Bankroll']:.2f}."
-    except Exception as e:
-        logger.warning(f"⚠️ Trend analysis failed: {e}")
-    if len(message) > 4000:
-        message = message[:4000] + "\n... (truncated)"
-    return message
-
-def send_report(summary_type: str, export_json: bool = False):
-    summary_path = SUMMARY_MAP[summary_type]
-    chart_path = CHART_MAP[summary_type]
-    df = load_summary(summary_path)
-    if df.empty:
-        return
-    if not chart_path.exists():
-        generate_chart(df, chart_path)
-    message = format_message(df, summary_type)
-    send_message(message)
-    send_photo(str(chart_path), caption=f"📈 {summary_type.capitalize()} Bankroll Trajectories")
-    if export_json:
-        out_json = summary_path.with_suffix(".json")
-        try:
-            df.to_json(out_json, orient="records", indent=2)
-            logger.info(f"📑 Summary also exported to {out_json}")
-        except Exception as e:
-            logger.warning(f"Failed to export summary to JSON: {e}")
-
-def main(summary_type: str, export_json: bool = False, all_reports: bool = False):
-    if all_reports:
-        for stype in ["daily", "weekly", "monthly"]:
-            send_report(stype, export_json=export_json)
+# ---------------- Confidence Scoring ----------------
+def confidence_level(prob: float) -> str:
+    if prob >= 0.70:
+        return "🔥 High confidence"
+    elif prob >= 0.60:
+        return "⚖️ Medium confidence"
     else:
-        send_report(summary_type, export_json=export_json)
+        return "❄️ Low confidence"
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Send bankroll summary report to Telegram")
-    parser.add_argument("--summary-type", choices=["daily", "weekly", "monthly"], default="daily",
-                        help="Which summary to send (daily, weekly, monthly)")
-    parser.add_argument("--export-json", action="store_true",
-                        help="Also export summary to JSON format")
-    parser.add_argument("--all", action="store_true",
-                        help="Send all three reports (daily, weekly, monthly)")
-    args = parser.parse_args()
+# ---------------- Headline Generator ----------------
+def generate_headline(game_name: str, team_name: str, best_model: str, prob: float) -> str:
+    if best_model == "team":
+        return f"🔥 {team_name} favored strongly in {game_name}"
+    elif best_model == "ml":
+        return f"⚖️ Spread edge spotted: {game_name}"
+    elif best_model == "ou":
+        return f"📊 Totals play: {game_name} trending {'Over' if prob > 0.5 else 'Under'}"
+    elif best_model == "player":
+        return f"⭐ Player prop value in {game_name}"
+    else:
+        return f"🎲 Value detected in {game_name}"
+
+# ---------------- Formatter ----------------
+def format_top_picks_for_telegram(df, top_n=5):
+    """
+    Format DataFrame of predictions into a Telegram-friendly MarkdownV2 message.
+    """
+    stake_cols = [c for c in df.columns if c.startswith("stake_")]
+    df["max_stake"] = df[stake_cols].max(axis=1)
+    df["best_model"] = df[stake_cols].idxmax(axis=1).str.replace("stake_", "")
+
+    top_picks = df.sort_values("max_stake", ascending=False).head(top_n)
+
+    lines = ["🎯 *Top Picks (by Kelly stake)*\n"]
+    for _, row in top_picks.iterrows():
+        game_name = row.get("GAME_NAME") or f"Game {row.get('GAME_ID', '')}"
+        team_name = row.get("TEAM_NAME", row.get("TEAM_ID", ""))
+
+        best_model = row["best_model"]
+        best_stake = row["max_stake"]
+
+        # Probabilities
+        prob_team = row.get("prob_team_win", 0)
+        prob_player = row.get("prob_player_win", 0)
+        prob_ml = row.get("prob_ml_win", 0)
+        prob_ou = row.get("prob_ou_win", 0)
+
+        # Guidance
+        if best_stake > 0 and row.get(f"prob_{best_model}_win", 0) > 0.55:
+            guidance = "🟢 *Recommended*: Stake (Kelly fraction positive, edge vs odds)"
+        else:
+            guidance = "🔴 *Avoid*: No clear edge (probability too low or Kelly fraction ≈ 0)"
+
+        # Bet type explanation
+        if best_model == "team":
+            bet_type = "Moneyline (Team win)"
+        elif best_model == "player":
+            bet_type = "Player prop (PTS/REB/AST performance)"
+        elif best_model == "ml":
+            bet_type = "Spread bet (covering margin)"
+        elif best_model == "ou":
+            bet_type = "Over/Under total points"
+        else:
+            bet_type = "General outcome"
+
+        # Confidence score
+        conf = confidence_level(row.get(f"prob_{best_model}_win", 0))
+
+        # Headline
+        headline = generate_headline(game_name, team_name, best_model, row.get(f"prob_{best_model}_win", 0))
+
+        # Avoid note: weakest model
+        weakest_model = min(
+            ["team", "player", "ml", "ou"],
+            key=lambda m: row.get(f"prob_{m}_win", 0)
+        )
+        avoid_note = f"🔴 Avoid: {weakest_model.capitalize()} model (low probability)"
+
+        lines.append(
+            f"{headline}\n"
+            f"🏀 {game_name} | {team_name}\n"
+            f"👉 Best model: *{best_model.capitalize()}*\n"
+            f"💰 Stake: {best_stake:.2f} units\n"
+            f"🎲 Bet type: {bet_type}\n"
+            f"{guidance}\n"
+            f"{conf}\n"
+            f"{avoid_note}\n"
+            f"• Prob(team)={prob_team:.2f}, Prob(player)={prob_player:.2f}, "
+            f"Prob(ml)={prob_ml:.2f}, Prob(ou)={prob_ou:.2f}\n"
+            f"• Decimal odds={row.get('decimal_odds', 'N/A')}\n"
+        )
+
+    return "\n".join(lines)
+
+# ---------------- Sender with Fallback ----------------
+def send_telegram_message(text: str):
+    """
+    Send a message to Telegram with MarkdownV2 escaping.
+    If Markdown fails, retry with plain text.
+    """
+    if not SEND_NOTIFICATIONS:
+        logger.info("🔕 Notifications disabled (SEND_NOTIFICATIONS=False)")
+        return
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    safe_text = escape_markdown(text)
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": safe_text,
+        "parse_mode": "MarkdownV2"
+    }
 
     try:
-        main(summary_type=args.summary_type, export_json=args.export_json, all_reports=args.all)
+        r = requests.post(url, json=payload, timeout=10)
+        resp = r.json()
+        if resp.get("ok"):
+            logger.info("📨 Telegram notification sent successfully (MarkdownV2)")
+        else:
+            logger.warning(f"⚠️ MarkdownV2 failed, retrying as plain text. Error: {resp}")
+            # Retry without parse_mode
+            fallback_payload = {"chat_id": TELEGRAM_CHAT_ID, "text": text}
+            r2 = requests.post(url, json=fallback_payload, timeout=10)
+            resp2 = r2.json()
+            if resp2.get("ok"):
+                logger.info("📨 Telegram notification sent successfully (Plain text fallback)")
+            else:
+                logger.error(f"❌ Telegram API error even in fallback: {resp2}")
     except Exception as e:
-        logger.error(f"❌ Telegram report failed: {e}")
-        raise PipelineError(f"Telegram report failed: {e}")
+        logger.error(f"❌ Failed to send Telegram message: {e}")

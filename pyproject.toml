@@ -4,7 +4,7 @@
 # ============================================================
 
 [build-system]
-requires = ["setuptools>=65.0.0"]  # specify minimum setuptools version for pyproject support
+requires = ["setuptools>=65.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -38,3 +38,23 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*", "scripts*", "core*"]
+
+# ---------------------------
+# Tooling configuration
+# ---------------------------
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+skip-string-normalization = true
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [
+    ".git",
+    "__pycache__",
+    "build",
+    "dist",
+    ".venv"
+]

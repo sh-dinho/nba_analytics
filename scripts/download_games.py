@@ -15,9 +15,9 @@ import os
 
 from nba_api.stats.endpoints import leaguegamefinder
 
-from core.paths import DATA_DIR, HISTORICAL_GAMES_FILE, DOWNLOAD_SUMMARY_FILE, ARCHIVE_DIR, ensure_dirs
-from core.log_config import init_global_logger
-from core.exceptions import FileError, DataError
+from nba_core.paths import DATA_DIR, HISTORICAL_GAMES_FILE, DOWNLOAD_SUMMARY_FILE, ARCHIVE_DIR, ensure_dirs
+from nba_core.log_config import init_global_logger
+from nba_core.exceptions import FileError, DataError
 
 logger = init_global_logger()
 

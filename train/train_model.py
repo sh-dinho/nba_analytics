@@ -1,10 +1,10 @@
 # ============================================================
-# File: train/train_model.py
-# Purpose: Train individual team/player/ML/OU models safely
+# Train team/player/ml/ou models and save feature lists
 # ============================================================
 
 import sys
 from pathlib import Path
+import json
 import pandas as pd
 import joblib
 from sklearn.model_selection import train_test_split
@@ -13,13 +13,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.impute import SimpleImputer
 
-# --- Project Path Fix ---
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# --- Imports ---
-from core.paths import (
+from nba_core.paths import (
     TRAINING_FEATURES_FILE,
     TEAM_MODEL_FILE,
     PLAYER_MODEL_FILE,
@@ -27,7 +25,7 @@ from core.paths import (
     XGB_OU_MODEL_FILE,
     ensure_dirs,
 )
-from core.config import (
+from nba_core.config import (
     RANDOM_SEED,
     TEST_SIZE,
     EVAL_METRICS,
@@ -35,12 +33,13 @@ from core.config import (
     DEFAULT_LOGREG_PARAMS,
     log_config_snapshot,
 )
-from core.log_config import init_global_logger
-from core.exceptions import DataError
+from nba_core.log_config import init_global_logger
 
-logger = init_global_logger()
+logger = init_global_logger("train")
 
-# ---------------- Metric Map ----------------
+class DataError(Exception):
+    pass
+
 metrics_map = {
     "accuracy": accuracy_score,
     "f1": f1_score,
@@ -48,18 +47,15 @@ metrics_map = {
 }
 
 def evaluate_model(model, X_test, y_test):
-    """Evaluate model using config metrics."""
     if X_test.empty or y_test.empty:
         logger.warning("Empty test set. Skipping evaluation.")
         return {}
-    
     preds = model.predict(X_test)
     probs = None
     try:
         probs = model.predict_proba(X_test)[:, 1]
     except Exception:
         pass
-
     results = {}
     for m in EVAL_METRICS:
         func = metrics_map.get(m)
@@ -68,11 +64,10 @@ def evaluate_model(model, X_test, y_test):
                 score = func(y_test, probs)
             else:
                 score = func(y_test, preds)
-            results[m] = score
+            results[m] = float(score)
             logger.info(f"{m.upper()} = {score:.3f}")
     return results
 
-# ---------------- Safe CSV Loader ----------------
 def load_csv_safe(file_path: Path):
     if not file_path.exists():
         raise DataError(f"Feature file missing: {file_path}")
@@ -81,31 +76,28 @@ def load_csv_safe(file_path: Path):
         raise DataError(f"Feature file is empty: {file_path}")
     return df
 
-# ---------------- Train Function ----------------
 def train_model(model_type="team"):
     ensure_dirs(strict=False)
     log_config_snapshot()
 
     df = load_csv_safe(TRAINING_FEATURES_FILE)
-    # Determine target dynamically
-    if "home_win" in df.columns:
-        y_col = "home_win"
-    elif "label" in df.columns:
-        y_col = "label"
-    else:
-        raise DataError("No target column found in training data")
 
+    if "label" not in df.columns:
+        raise DataError("No target column 'label' found in training data")
+    y_col = "label"
+
+    # Drop non-feature columns commonly present
     X = df.drop(columns=[y_col, "game_id", "home_team", "away_team", "player_name"], errors="ignore")
     y = df[y_col]
 
     if X.empty:
         raise DataError("Training features are empty after dropping non-feature columns")
 
-    # 🔧 Convert object columns to numeric codes
+    # Encode categorical to numeric
     for col in X.select_dtypes(include=["object"]).columns:
         X[col] = X[col].astype("category").cat.codes
 
-    # 🔧 Handle NaN values (replace with column mean)
+    # Impute numeric
     imputer = SimpleImputer(strategy="mean")
     X = pd.DataFrame(imputer.fit_transform(X), columns=X.columns)
 
@@ -113,7 +105,6 @@ def train_model(model_type="team"):
         X, y, test_size=TEST_SIZE, random_state=RANDOM_SEED
     )
 
-    # Select model type
     if model_type == "team":
         model = XGBClassifier(**DEFAULT_XGB_PARAMS)
         save_path = TEAM_MODEL_FILE
@@ -129,20 +120,22 @@ def train_model(model_type="team"):
     else:
         raise ValueError(f"Unknown model type: {model_type}")
 
-    # Train
     model.fit(X_train, y_train)
     logger.info(f"✅ {model_type.capitalize()} model trained on {len(X_train)} rows")
 
-    # Evaluate
     results = evaluate_model(model, X_test, y_test)
 
-    # Save model
     joblib.dump(model, save_path)
     logger.info(f"📂 {model_type.capitalize()} model saved → {save_path}")
 
-    return results   # <-- return metrics
+    # Save feature list
+    feature_file = save_path.with_suffix(".features.json")
+    with open(feature_file, "w") as f:
+        json.dump(list(X.columns), f)
+    logger.info(f"📝 Feature list saved → {feature_file}")
 
-# ---------------- Entrypoint ----------------
+    return results
+
 def main():
     for mtype in ["team", "player", "ml", "ou"]:
         train_model(mtype)

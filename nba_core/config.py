@@ -38,10 +38,8 @@ DEFAULT_LOGREG_PARAMS = {
 }
 
 # ---------------- Evaluation Settings ----------------
-# Metrics to compute and log during training
 EVAL_METRICS = ["accuracy", "f1", "roc_auc"]
 
-# Thresholds for classification confidence (optional)
 CONFIDENCE_THRESHOLDS = {
     "high": 0.75,
     "medium": 0.55,
@@ -49,33 +47,58 @@ CONFIDENCE_THRESHOLDS = {
 }
 
 # ---------------- Bankroll ----------------
-# Default bankroll for the picks (used in stake calculations)
-DEFAULT_BANKROLL = 1000.0  # You can change this value to whatever makes sense for your project
+DEFAULT_BANKROLL = 1000.0
 
 # ---------------- Kelly Fraction ----------------
-# Maximum Kelly Fraction to determine stake size for bets
-MAX_KELLY_FRACTION = 0.05  # You can adjust this as needed
+MAX_KELLY_FRACTION = 0.05
 
 # ---------------- EV Threshold ----------------
-# Minimum expected value (EV) for a pick to be considered worth betting
-EV_THRESHOLD = 0.05  # You can adjust this threshold as needed
+EV_THRESHOLD = 0.05
 
 # ---------------- Minimum Kelly Stake ----------------
-# Minimum stake allowed for any bet, to avoid placing unreasonably small bets
-MIN_KELLY_STAKE = 10.0  # You can adjust this minimum stake as needed
+MIN_KELLY_STAKE = 10.0
 
 # ---------------- Paths ----------------
-HISTORICAL_GAMES_FILE = Path("path/to/your/historical_games.csv")  # Adjust this path to your actual CSV file
-PLAYER_GAMES_FILE = Path("path/to/your/player_games.csv")  # Same for player games file
+ROOT_DIR = Path(__file__).parent.parent.resolve()
+DATA_DIR = ROOT_DIR / "data"
+RESULTS_DIR = ROOT_DIR / "results"
+MODELS_DIR = ROOT_DIR / "models"
 
-# Feature Files
-TRAINING_FEATURES_FILE = Path("path/to/your/training_features.csv")  # Path for saving team features
-PLAYER_FEATURES_FILE = Path("path/to/your/player_features.csv")  # Path for saving player features
+# Data files
+HISTORICAL_GAMES_FILE = DATA_DIR / "historical_games.csv"
+PLAYER_GAMES_FILE = DATA_DIR / "player_games.csv"
+TRAINING_FEATURES_FILE = DATA_DIR / "training_features.csv"
+PLAYER_FEATURES_FILE = DATA_DIR / "player_features.csv"
+
+# Model files
+XGB_ML_MODEL_FILE = MODELS_DIR / "xgb_ml.json"
+XGB_OU_MODEL_FILE = MODELS_DIR / "xgb_ou.json"
+ENSEMBLE_MODEL_FILE = MODELS_DIR / "ensemble_model.pkl"
+TEAM_MODEL_FILE = MODELS_DIR / "team_model.pkl"
+PLAYER_MODEL_FILE = MODELS_DIR / "player_model.pkl"
+
+# Summary files
+MONTHLY_SUMMARY_FILE = RESULTS_DIR / "monthly_summary.csv"
+PIPELINE_SUMMARY_FILE = RESULTS_DIR / "pipeline_summary.csv"
+
+
+USE_ROLLING_AVG = True
+ROLLING_WINDOW = 5
+RANDOM_SEED = 42
+TEST_SIZE = 0.2
+EVAL_METRICS = ["accuracy", "f1", "roc_auc"]
+
+DEFAULT_BANKROLL = 1000
+
+# Telegram settings
+SEND_NOTIFICATIONS = True   # default toggle
+TELEGRAM_BOT_TOKEN = "your-bot-token-here"
+TELEGRAM_CHAT_ID = "your-chat-id-here"
 
 # ---------------- Logging ----------------
 def log_config_snapshot():
     """Log current configuration values for reproducibility."""
-    from core.log_config import init_global_logger
+    from nba_core.log_config import init_global_logger
     logger = init_global_logger()
     logger.info(
         f"Config snapshot → "
