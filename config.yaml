@@ -1,0 +1,18 @@
+# ============================================================
+# NBA Prediction Pipeline Configuration (v1.0)
+# ============================================================
+
+paths:
+  raw: data/raw          # raw API pulls (optional if you want to store raw responses)
+  cache: data/cache      # cached training features
+  history: data/history  # historical predictions
+  csv: data/csv          # daily CSV outputs
+  parquet: data/parquet  # daily Parquet outputs
+  logs: data/logs        # pipeline + error logs
+  models: models         # trained model files
+
+# Seasons to fetch for training
+seasons: [2022, 2023, 2024, 2025]
+
+# Model path (used by NBAPredictor)
+model_path: models/nba_logreg.pkl
