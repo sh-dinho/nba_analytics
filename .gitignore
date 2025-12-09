@@ -1,0 +1,52 @@
+# --- Python build artifacts ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Virtual environments ---
+env/
+.venv/
+.ENV/
+venv/
+
+# --- Logs & databases ---
+*.log
+logs/
+*.sqlite3
+*.db
+
+# --- Project outputs ---
+results/
+models/
+data/
+archives/
+
+# --- Jupyter notebooks ---
+.ipynb_checkpoints/
+*.ipynb
+
+# --- Testing & coverage ---
+.pytest_cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# --- OS-specific junk ---
+.DS_Store
+Thumbs.db
+
+# --- IDE/project files ---
+.vscode/
+.idea/
+
+# --- Build/distribution ---
+build/
+dist/
+*.egg-info/
+
+# --- Temporary files ---
+*.tmp
+*.bak
+*.swp
