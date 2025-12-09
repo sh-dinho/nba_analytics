@@ -1,14 +1,37 @@
+# ============================================================
+# Path: .github/workflows/ci.yml
+# Purpose: Continuous Integration workflow for NBA analytics pipeline
+# Version: 1.1
+# ============================================================
+
 name: CI
 on: [push, pull_request]
+
 jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
       - run: pip install --upgrade pip setuptools wheel
+
+      # Install project dependencies
       - run: pip install -r requirements.txt
-      - run: pip install "protobuf>=5.0,<7.0" "packaging>=24.2" mlflow==2.9.2
+
+      # Install MLflow 3.7.0 with protobuf >=5
+      - run: pip install "protobuf>=5.0,<7.0" "packaging>=24.2" mlflow==3.7.0
+
+      # Run pipeline CI tasks (lint, build, etc.)
       - run: make ci
+
+      # -----------------------------
+      # Run unit tests with pytest
+      # -----------------------------
+      - name: Run unit tests
+        run: |
+          pip install pytest
+          pytest -v --maxfail=1 --disable-warnings -q

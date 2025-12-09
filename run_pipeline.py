@@ -1,163 +1,274 @@
 # ============================================================
 # Path: run_pipeline.py
-# Purpose: NBA analytics pipeline with caching, incremental updates,
-#          progress logging, unique ID deduplication, and organized folders
+# Purpose: End-to-end NBA analytics pipeline for current season
+# Version: 3.0 (unified, automated, headers everywhere)
 # ============================================================
 
-import pandas as pd
-from datetime import date
-import logging
 import os
+import logging
+import datetime
+import pandas as pd
+import yaml
+import mlflow
+import joblib
+import matplotlib.pyplot as plt
 
-from src.prediction_engine.game_features import fetch_season_games, generate_features_for_games
-from src.model_training.train_logreg import train_logreg
-from src.prediction_engine.predictor import NBAPredictor
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, log_loss
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from xgboost import XGBClassifier
 
-# -----------------------------
-# Logging configuration
-# -----------------------------
-def configure_logging(log_file: str = "pipeline.log"):
+# ============================================================
+# Logging + Config
+# ============================================================
+
+def configure_logging(log_file="logs/pipeline.log"):
     os.makedirs(os.path.dirname(log_file) or ".", exist_ok=True)
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=[
-            logging.FileHandler(log_file, mode="w"),
-            logging.StreamHandler()
-        ]
+        handlers=[logging.FileHandler(log_file, mode="w", encoding="utf-8"),
+                  logging.StreamHandler()],
     )
     logging.info("Logging configured. Writing to %s", log_file)
-    return log_file
 
-# -----------------------------
-# Ensure data directories exist
-# -----------------------------
-def ensure_dirs():
-    os.makedirs("data/csv", exist_ok=True)
-    os.makedirs("data/parquet", exist_ok=True)
-    os.makedirs("data/cache", exist_ok=True)
-    os.makedirs("data/history", exist_ok=True)
+def load_config(config_file="config.yaml"):
+    if os.path.exists(config_file):
+        with open(config_file, "r") as f:
+            return yaml.safe_load(f)
+    return {"model_type": "logreg"}
 
-# -----------------------------
-# Helper: Add unique identifier
-# -----------------------------
+# ============================================================
+# Feature Generation
+# ============================================================
+
+def generate_features_for_games(game_data_list):
+    features = []
+    for i, game in enumerate(game_data_list):
+        df = pd.DataFrame([game])
+        if "GAME_ID" not in df.columns:
+            df["GAME_ID"] = f"unknown_game_{i}"
+        if "TEAM_ID" not in df.columns:
+            df["TEAM_ID"] = -1
+        features.append(df)
+    valid_features = [df for df in features if not df.empty]
+    return pd.concat(valid_features, ignore_index=True) if valid_features else pd.DataFrame()
+
 def add_unique_id(df):
-    if "GAME_ID" in df.columns and "TEAM_ID" in df.columns:
-        if "prediction_date" not in df.columns:
-            df["prediction_date"] = pd.to_datetime(date.today()).strftime("%Y-%m-%d")
-        df["unique_id"] = (
-            df["GAME_ID"].astype(str) + "_" +
-            df["TEAM_ID"].astype(str) + "_" +
-            df["prediction_date"].astype(str)
-        )
+    if "GAME_ID" not in df.columns:
+        df["GAME_ID"] = [f"unknown_game_{i}" for i in range(len(df))]
+    if "TEAM_ID" not in df.columns:
+        df["TEAM_ID"] = -1
+    if "prediction_date" not in df.columns:
+        df["prediction_date"] = datetime.date.today().isoformat()
+    df["unique_id"] = (
+        df["GAME_ID"].astype(str)
+        + "_"
+        + df["TEAM_ID"].astype(str)
+        + "_"
+        + df["prediction_date"].astype(str)
+    )
     return df
 
-# -----------------------------
-# Helper: Load cached features
-# -----------------------------
-def load_cached_features(cache_file="data/cache/features_full.parquet"):
-    if os.path.exists(cache_file):
-        logging.info("Loading cached features from %s", cache_file)
-        return pd.read_parquet(cache_file)
-    else:
-        logging.info("No cache found, starting fresh")
-        return None
+def fetch_season_games(season):
+    # Stub: replace with real API fetch
+    games = []
+    for i in range(50):  # demo: 50 games
+        games.append({
+            "GAME_ID": f"{season}{i:03d}",
+            "TEAM_ID": i % 30,
+            "Date": f"{season}-11-{(i % 28) + 1}",
+            "HomeTeam": f"Team{(i % 15)}",
+            "AwayTeam": f"Team{(i % 15)+1}",
+            "points": 90 + (i % 30),
+            "target": (i % 2)  # dummy win/loss
+        })
+    return games
 
-# -----------------------------
-# Helper: Save features to cache
-# -----------------------------
-def save_features_cache(df, cache_file="data/cache/features_full.parquet"):
-    df = add_unique_id(df)
-    df = df.drop_duplicates(subset=["unique_id"])
-    df.to_parquet(cache_file, index=False)
-    logging.info("Saved features cache to %s (rows=%d)", cache_file, len(df))
+def generate_current_season():
+    current_year = datetime.date.today().year
+    raw_games = fetch_season_games(season=current_year)
+    features_df = generate_features_for_games(raw_games)
+    features_df = add_unique_id(features_df)
+    features_df["Season"] = current_year
+    return features_df
 
-# -----------------------------
-# Main pipeline
-# -----------------------------
+# ============================================================
+# Training Functions
+# ============================================================
+
+def train_logreg(cache_file, out_dir="models"):
+    df = pd.read_parquet(cache_file)
+    X = df.drop(columns=["target"], errors="ignore")
+    y = df["target"] if "target" in df.columns else None
+    if y is None:
+        logging.error("Target column missing")
+        return {"metrics": {"accuracy": None}, "model_path": None}
+
+    numeric_features = X.select_dtypes(include=["number"]).columns
+    categorical_features = X.select_dtypes(exclude=["number"]).columns
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", SimpleImputer(strategy="mean"), numeric_features),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
+        ]
+    )
+
+    pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("clf", LogisticRegression(max_iter=1000))
+    ])
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    pipeline.fit(X_train, y_train)
+    acc = accuracy_score(y_test, pipeline.predict(X_test))
+
+    os.makedirs(out_dir, exist_ok=True)
+    model_path = f"{out_dir}/logreg.pkl"
+    joblib.dump(pipeline, model_path)
+
+    logging.info("Logistic Regression accuracy: %.3f", acc)
+    return {"metrics": {"accuracy": acc}, "model_path": model_path, "features": list(X.columns)}
+
+def train_xgb(cache_file, out_dir="models"):
+    df = pd.read_parquet(cache_file)
+    X = df.drop(columns=["target"], errors="ignore")
+    y = df["target"] if "target" in df.columns else None
+    if y is None:
+        logging.error("Target column missing")
+        return {"metrics": {"logloss": None}, "model_path": None}
+
+    numeric_features = X.select_dtypes(include=["number"]).columns
+    categorical_features = X.select_dtypes(exclude=["number"]).columns
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", SimpleImputer(strategy="mean"), numeric_features),
+            ("cat", OneHotEncoder(handle_unknown="ignore"), categorical_features),
+        ]
+    )
+
+    pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("clf", XGBClassifier(
+            n_estimators=200, max_depth=6, learning_rate=0.1,
+            subsample=0.8, colsample_bytree=0.8,
+            random_state=42, use_label_encoder=False,
+            eval_metric="logloss"
+        ))
+    ])
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    pipeline.fit(X_train, y_train)
+    loss = log_loss(y_test, pipeline.predict_proba(X_test))
+
+    os.makedirs(out_dir, exist_ok=True)
+    model_path = f"{out_dir}/nba_xgb.pkl"
+    joblib.dump(pipeline, model_path)
+
+    logging.info("XGBoost logloss: %.3f", loss)
+    return {"metrics": {"logloss": loss}, "model_path": model_path, "features": list(X.columns)}
+
+# ============================================================
+# Tracker + Visualization
+# ============================================================
+
+def build_game_tracker(features_df, predictions_df, player_info_df, used_features=None):
+    tracker = features_df.merge(predictions_df, on="GAME_ID", how="left")
+    tracker = tracker.merge(player_info_df, on=["GAME_ID", "TEAM_ID"], how="left")
+
+    def classify(row):
+        if row["prediction_confidence"] >= 0.75:
+            return "Stake"
+        elif row["prediction_confidence"] <= 0.55:
+            return "Avoid"
+        else:
+            return "Watch"
+
+    tracker["Recommendation"] = tracker.apply(classify, axis=1)
+
+    if used_features is not None:
+        tracker["FeaturesUsed"] = ", ".join(used_features)
+
+    return tracker[["Season", "GAME_ID", "Date", "HomeTeam", "AwayTeam", "PlayerNames", "Recommendation", "FeaturesUsed"]]
+
+def save_summary_chart(tracker, out_path):
+    counts = tracker["Recommendation"].value_counts()
+    plt.figure(figsize=(6,4))
+    counts.plot(kind="bar", color=["green","red","blue"])
+    plt.title("Recommendation Summary (Current Season)")
+    plt.ylabel("Number of Games")
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.close()
+
+# ============================================================
+# Main Pipeline
+# ============================================================
+
 def main():
-    log_file = configure_logging("pipeline.log")
-    ensure_dirs()
-    logging.info("Pipeline started")
-
+    configure_logging()
+    config = load_config()
+    model_type = config.get("model_type", "logreg")
     cache_file = "data/cache/features_full.parquet"
-    features_full = load_cached_features(cache_file)
 
-    # If no cache, fetch all seasons (2022–2024 + 2025 so far)
-    if features_full is None:
-        logging.info("Fetching full historical dataset (2022–2024 + 2025 so far)")
-        all_features = []
-        for season in [2022, 2023, 2024, 2025]:
-            game_ids = fetch_season_games(season, limit=None)
-            logging.info("Season %d: %d games to fetch", season, len(game_ids))
-            season_features = []
-            for i, gid in enumerate(game_ids, start=1):
-                season_features.append(generate_features_for_games([gid]))
-                if i % 100 == 0 or i == len(game_ids):
-                    logging.info("Season %d progress: %d/%d games fetched", season, i, len(game_ids))
-            season_df = pd.concat(season_features, ignore_index=True)
-            season_df = add_unique_id(season_df)
-            all_features.append(season_df)
-        features_full = pd.concat(all_features, ignore_index=True)
-        save_features_cache(features_full, cache_file)
-    else:
-        # Incremental update: fetch new 2025 games not in cache
-        logging.info("Checking for new 2025 games to append")
-        game_ids_2025 = fetch_season_games(2025, limit=None)
-        features_2025 = generate_features_for_games(game_ids_2025)
-        features_2025 = add_unique_id(features_2025)
+    logging.info("Pipeline started with model_type=%s", model_type)
 
-        features_full = pd.concat([features_full, features_2025], ignore_index=True)
-        features_full = features_full.drop_duplicates(subset=["unique_id"])
-        save_features_cache(features_full, cache_file)
+    # Step 1: Generate features for current season
+    features_df = generate_current_season()
+    os.makedirs("data/cache", exist_ok=True)
+    features_df.to_parquet(cache_file, index=False)
+    logging.info("Cache regenerated for season %s with %d rows", features_df["Season"].iloc[0], len(features_df))
 
-    logging.info("Training dataset size: %d rows", len(features_full))
+    # Step 2: Train model
+    with mlflow.start_run(run_name=f"{model_type}_pipeline_v3.0"):
+        if model_type == "logreg":
+            result = train_logreg(cache_file=cache_file, out_dir="models")
+            mlflow.log_metric("accuracy", result["metrics"]["accuracy"])
+        elif model_type == "xgb":
+            result = train_xgb(cache_file=cache_file, out_dir="models")
+            mlflow.log_metric("logloss", result["metrics"]["logloss"])
 
-    # Train model
-    result = train_logreg(cache_file, out_dir="models")
-    print("Training metrics:", result["metrics"])
-    logging.info("Training metrics: %s", result["metrics"])
+            # Step 3: Build tracker
+        predictions_df = pd.DataFrame({
+            "GAME_ID": features_df["GAME_ID"],
+            "prediction_confidence": 0.65  # demo confidence
+        })
+        player_info_df = pd.DataFrame({
+            "GAME_ID": features_df["GAME_ID"],
+            "TEAM_ID": features_df["TEAM_ID"],
+            "PlayerNames": ["LeBron James"] * len(features_df)  # demo player info
+        })
 
-    # Predict today’s games
-    today = date.today().strftime("%Y-%m-%d")
-    logging.info(f"Fetching games for {today}")
-    game_ids_today = fetch_season_games(2025, limit=5)
-    features_today = generate_features_for_games(game_ids_today)
+        tracker = build_game_tracker(
+            features_df,
+            predictions_df,
+            player_info_df,
+            used_features=result.get("features")
+        )
 
-    predictor = NBAPredictor(model_path="models/nba_logreg.pkl")
-    X_today = features_today.drop(columns=["win"])
-    labels_today = predictor.predict(X_today)
-    probas_today = predictor.predict_proba(X_today)
+        os.makedirs("data/tracker", exist_ok=True)
+        tracker_csv = "data/tracker/games_tracker.csv"
+        tracker.to_csv(tracker_csv, index=False)
+        mlflow.log_artifact(tracker_csv, artifact_path="tracker")
 
-    features_today["pred_label"] = labels_today
-    features_today["pred_proba"] = probas_today
-    features_today["prediction_date"] = today
-    features_today = add_unique_id(features_today)
-    features_today = features_today.drop_duplicates(subset=["unique_id"])
+        # Step 4: Save summary chart
+        summary_chart_path = "data/tracker/recommendation_summary.png"
+        save_summary_chart(tracker, summary_chart_path)
+        mlflow.log_artifact(summary_chart_path, artifact_path="tracker")
 
-    print("Today's games with predictions:")
-    print(features_today)
-
-    # Save outputs
-    features_today.to_csv("data/csv/predictions_today.csv", index=False)
-    features_today.to_parquet("data/parquet/predictions_today.parquet", index=False)
-    features_today.to_csv(f"data/csv/predictions_{today}.csv", index=False)
-    features_today.to_parquet(f"data/parquet/predictions_{today}.parquet", index=False)
-
-    # Append to history with deduplication
-    history_file = "data/history/predictions_history.parquet"
-    if os.path.exists(history_file):
-        history_df = pd.read_parquet(history_file)
-        history_df = pd.concat([history_df, features_today], ignore_index=True)
-        history_df = history_df.drop_duplicates(subset=["unique_id"])
-    else:
-        history_df = features_today
-    history_df.to_parquet(history_file, index=False)
-    logging.info("Appended today's predictions to %s (rows=%d)", history_file, len(history_df))
+        logging.info("Game tracker and summary chart saved and logged to MLflow")
 
     logging.info("Pipeline finished successfully")
 
-if __name__ == "__main__":
-    main()
+    # ============================================================
+    # Entry Point
+    # ============================================================
+
+    if __name__ == "__main__":
+        main()

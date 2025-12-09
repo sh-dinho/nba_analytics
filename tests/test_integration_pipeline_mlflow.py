@@ -10,7 +10,7 @@ import pytest
 import mlflow
 import pandas as pd
 from src.model_training.train_logreg import train_logreg
-from src.prediction_engine.game_features import (
+from features.game_features import (
     fetch_season_games,
     generate_features_for_games,
 )

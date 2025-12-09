@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 
 from src.model_training.training import train_logreg
-from src.prediction_engine.game_features import generate_features_for_games
+from features.game_features import generate_features_for_games
 from src.prediction_engine.predictor import NBAPredictor
 from src.utils.io import load_dataframe, save_dataframe
 from src.utils.logging import configure_logging

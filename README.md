@@ -66,3 +66,5 @@ project_root/
 ## - Version 1.0 → stick with logistic regression + clean pipeline (done).
     - Version 2.0 → migrate storage to SQLite/Postgres.
     - Version 3.0 → add AI models (XGBoost or neural nets) and integrate explainability.
+
+![Coverage](https://img.shields.io/codecov/c/github/your-org/your-repo?style=flat-square)

@@ -8,7 +8,7 @@
 
 import pytest
 import pandas as pd
-from src.prediction_engine.game_features import fetch_season_games, fetch_game_features
+from features.game_features import fetch_season_games, fetch_game_features
 
 @pytest.fixture(scope="function")
 def real_features(tmp_path):

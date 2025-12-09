@@ -9,7 +9,7 @@
 import click
 import pandas as pd
 from src.prediction_engine.predictor import NBAPredictor
-from src.prediction_engine.game_features import generate_features_for_games, fetch_season_games
+from features.game_features import generate_features_for_games, fetch_season_games
 from nba_api.stats.endpoints import leaguegamefinder
 
 def fetch_games_by_date(year: int, game_date: str) -> list[str]:

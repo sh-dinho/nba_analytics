@@ -6,9 +6,8 @@
 # Purpose: Tests for game_features functions using real NBA data
 # ============================================================
 
-import pytest
 import pandas as pd
-from src.prediction_engine.game_features import (
+from features.game_features import (
     fetch_season_games,
     fetch_game_features,
     generate_features_for_games,
