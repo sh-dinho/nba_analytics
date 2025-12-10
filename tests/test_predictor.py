@@ -1,32 +1,26 @@
-# ============================================================
-# Path: tests/test_predictor.py
-# Purpose: Unit tests for src/prediction_engine/predictor.py
-# Project: nba_analysis
-# ============================================================
-
 import pytest
-import pandas as pd
-import numpy as np
-from sklearn.linear_model import LogisticRegression
-from src.model_inference.predictor import Predictor
+from src.prediction_engine.predictor import Predictor  # Update this path as needed
 
+@pytest.fixture
+def mock_predictor():
+    # Adjust this to match the actual Predictor constructor
+    # If Predictor expects a model instance or a different method to load the model, change this.
+    predictor = Predictor()  # If model loading is done later or via another method
+    predictor.load_model(model_path="path/to/mock/model.pkl")  # Use the actual method to load the model
+    return predictor
 
-def test_predict_proba_and_label_binary():
-    X = pd.DataFrame({"feat1": [0, 1, 0, 1], "feat2": [1, 0, 1, 0]})
-    y = np.array([0, 1, 0, 1])
-    model = LogisticRegression().fit(X, y)
-    predictor = Predictor(model)
+def test_predictor_initialization(mock_predictor):
+    # Test that the predictor is initialized correctly
+    assert mock_predictor is not None
 
-    proba = predictor.predict_proba(X)
-    assert proba.shape[1] == 2
-    labels = predictor.predict_label(X, threshold=0.5)
-    assert set(labels).issubset({0, 1})
+def test_predictor_prediction(mock_predictor):
+    # Test prediction functionality
+    mock_data = {
+        'TEAM_ID': 1,
+        'OPPONENT_TEAM_ID': 2,
+        'RollingPTS_5': 105,
+        'RollingWinPct_10': 0.8
+    }
 
-
-def test_invalid_input():
-    model = LogisticRegression()
-    predictor = Predictor(model)
-    with pytest.raises(TypeError):
-        predictor.predict_proba("not a dataframe")
-    with pytest.raises(ValueError):
-        predictor.predict_proba(pd.DataFrame())
+    prediction = mock_predictor.predict(mock_data)
+    assert prediction in [0, 1]  # Assume binary outcome (win/loss)

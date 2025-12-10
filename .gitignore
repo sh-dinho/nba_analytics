@@ -3,6 +3,8 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+# Environmental variable
+.env
 
 # --- Virtual environments ---
 env/

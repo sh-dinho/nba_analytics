@@ -16,3 +16,4 @@ seasons: [2022, 2023, 2024, 2025]
 
 # Model path (used by NBAPredictor)
 model_path: models/nba_logreg.pkl
+model_type: xgb

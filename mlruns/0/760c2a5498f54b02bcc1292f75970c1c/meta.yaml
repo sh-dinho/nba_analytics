@@ -1,0 +1,15 @@
+artifact_uri: file:///C:/Users/Mohamadou/PycharmProjects/nba_analytics/mlruns/0/760c2a5498f54b02bcc1292f75970c1c/artifacts
+end_time: 1765312123227
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 760c2a5498f54b02bcc1292f75970c1c
+run_name: xgb_pipeline_v1.3
+run_uuid: 760c2a5498f54b02bcc1292f75970c1c
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1765312123197
+status: 4
+tags: []
+user_id: Mohamadou

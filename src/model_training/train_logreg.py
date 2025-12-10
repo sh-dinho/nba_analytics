@@ -1,53 +1,52 @@
 # ============================================================
-# Path: src/model_training/train_logreg.py
-# Filename: train_logreg.py
-# Author: Your Team
-# Date: December 9, 2025
-# Purpose: Train and log NBA logistic regression model
+# File: src/model_training/train_logreg.py
+# Purpose: Train Logistic Regression with preprocessing
 # ============================================================
 
 import pandas as pd
-import joblib
-import os
+import joblib, os, logging
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, f1_score
-import mlflow
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, log_loss
 
-def train_logreg(features_path: str, out_dir: str = "models") -> dict:
-    """
-    Train a logistic regression model on NBA features and log metrics.
+def train_logreg(cache_file, out_dir="models"):
+    df = pd.read_parquet(cache_file)
+    if "target" not in df.columns:
+        logging.error("Target column missing")
+        return
 
-    Args:
-        features_path (str): Path to parquet file with features.
-        out_dir (str): Directory to save model.
+    X = df.drop(columns=["target"], errors="ignore")
+    y = df["target"]
 
-    Returns:
-        dict: Training metrics and model path.
-    """
-    # Load features
-    df = pd.read_parquet(features_path)
-    X = df.drop(columns=["win"])
-    y = df["win"]
+    numeric_features = X.select_dtypes(include=["number"]).columns.tolist()
+    categorical_features = X.select_dtypes(exclude=["number"]).columns.tolist()
 
-    # Train model
-    model = LogisticRegression(max_iter=1000)
-    model.fit(X, y)
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ("num", SimpleImputer(strategy="mean"), numeric_features),
+            ("cat", OneHotEncoder(handle_unknown="ignore", sparse_output=False), categorical_features)
+        ]
+    )
 
-    # Evaluate
-    preds = model.predict(X)
-    acc = accuracy_score(y, preds)
-    f1 = f1_score(y, preds)
+    pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("clf", LogisticRegression(max_iter=1000))
+    ])
 
-    # Save model
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y if len(set(y)) > 1 else None
+    )
+
+    pipeline.fit(X_train, y_train)
+
+    acc = accuracy_score(y_test, pipeline.predict(X_test))
+    loss = log_loss(y_test, pipeline.predict_proba(X_test))
+
     os.makedirs(out_dir, exist_ok=True)
-    model_path = os.path.join(out_dir, "nba_logreg.pkl")
-    joblib.dump(model, model_path)
-
-    # Log metrics with MLflow
-    mlflow.log_metric("accuracy", acc)
-    mlflow.log_metric("f1_score", f1)
-
-    return {
-        "metrics": {"accuracy": acc, "f1_score": f1},
-        "model_path": model_path
-    }
+    model_path = os.path.join(out_dir, "logreg.pkl")
+    joblib.dump(pipeline, model_path)
+    logging.info(f"Model saved to {model_path}, Accuracy: {acc:.3f}, LogLoss: {loss:.3f}")

@@ -1,94 +1,91 @@
 # ============================================================
-# Path: src/prediction_engine/game_features.py
-# Filename: game_features.py
-# Author: Your Team
-# Date: December 2025
-# Purpose: Functions to fetch NBA game IDs and transform
-#          raw game stats into model-ready features.
+# File: src/prediction_engine/game_features.py
+# Purpose: Generate features for NBA games (rolling stats + betting + top scorers)
+# Project: nba_analysis
+# Version: 1.1
 # ============================================================
 
-import pathlib
 import pandas as pd
-from nba_api.stats.endpoints import boxscoretraditionalv2, leaguegamefinder
+import datetime
+import logging
 
-# -----------------------------
-# Local cache path (used in tests)
-# -----------------------------
-_cache_path = pathlib.Path("results/cache")
-_cache_path.mkdir(parents=True, exist_ok=True)
-
-# -----------------------------
-# Fetch game IDs for a season
-# -----------------------------
-def fetch_season_games(season_year: int, limit: int = 10):
+def generate_features_for_games(game_data_list):
     """
-    Fetch a list of NBA game IDs for a given season.
-
-    Args:
-        season_year (int): The starting year of the season (e.g., 2023 for 2023-24).
-        limit (int): Number of game IDs to return.
-
-    Returns:
-        list[str]: A list of game IDs.
+    Generate features for a list of games.
+    Includes rolling stats, point spread, over/under, top scorer 20+ pts.
     """
-    season_str = f"{season_year}-{str(season_year+1)[-2:]}"
-    gamefinder = leaguegamefinder.LeagueGameFinder(season_nullable=season_str)
-    games = gamefinder.get_data_frames()[0]
-    game_ids = games["GAME_ID"].unique().tolist()
-    return game_ids[:limit]
+    features = []
 
-# -----------------------------
-# Fetch features for a single game
-# -----------------------------
-def fetch_game_features(game_id: str) -> pd.DataFrame:
-    """
-    Fetch box score stats for a given game and return model-ready features.
+    for i, game in enumerate(game_data_list):
+        normalized = {k.upper(): v for k,v in game.items()}
+        df = pd.DataFrame([normalized])
 
-    Args:
-        game_id (str): NBA game ID.
+        # Required columns
+        df["GAME_ID"] = df.get("GAME_ID", f"unknown_game_{i}")
+        df["TEAM_ID"] = df.get("TEAM_ID", -1)
+        df["GAME_ID"] = df["GAME_ID"].astype(str)
+        df["TEAM_ID"] = df["TEAM_ID"].astype(int)
+        df["prediction_date"] = datetime.date.today().isoformat()
+        df["unique_id"] = df["GAME_ID"] + "_" + df["TEAM_ID"].astype(str) + "_" + df["prediction_date"]
 
-    Returns:
-        pd.DataFrame: DataFrame with selected features and win/loss label.
-    """
-    boxscore = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id)
-    stats = boxscore.get_data_frames()[0]
+        # Betting & top scorer features
+        df["PointSpread"] = df.get("POINT_SPREAD", 0)
+        df["OverUnder"] = df.get("OVER_UNDER", 0)
+        df["TopScorer20Pts"] = df.get("TOP_SCORER_20PTS", 0)
 
-    # Define the columns we want to aggregate
-    required_columns = ["PTS", "REB", "AST", "FG_PCT", "FT_PCT", "PLUS_MINUS", "TOV"]
+        features.append(df)
 
-    # Build aggregation dict only for columns that exist
-    agg_dict = {}
-    for col in required_columns:
-        if col in stats.columns:
-            if col in ["FG_PCT", "FT_PCT"]:
-                agg_dict[col] = "mean"
-            else:
-                agg_dict[col] = "sum"
+    if not features:
+        return pd.DataFrame(columns=[
+            "GAME_ID","TEAM_ID","unique_id","prediction_date",
+            "RollingPTS_5","RollingWinPct_10","RestDays",
+            "TeamWinPctToDate","OppWinPctToDate",
+            "PointSpread","OverUnder","TopScorer20Pts"
+        ])
 
-    team_stats = stats.groupby("TEAM_ID").agg(agg_dict).reset_index()
+    full_df = pd.concat(features, ignore_index=True)
 
-    # Ensure all required columns exist, fill with default if missing
-    for col in required_columns:
-        if col not in team_stats.columns:
-            team_stats[col] = 0
+    # Optional: compute rolling stats if DATE, POINTS, TARGET columns exist
+    if "DATE" in full_df.columns:
+        full_df["DATE"] = pd.to_datetime(full_df["DATE"], errors="coerce")
+        full_df = full_df.sort_values(["TEAM_ID","DATE"])
+        if "POINTS" in full_df.columns:
+            full_df["RollingPTS_5"] = full_df.groupby("TEAM_ID")["POINTS"].transform(
+                lambda x: x.rolling(5, min_periods=1).mean()
+            )
+        else:
+            full_df["RollingPTS_5"] = 0
+        if "TARGET" in full_df.columns:
+            full_df["RollingWinPct_10"] = full_df.groupby("TEAM_ID")["TARGET"].transform(
+                lambda x: x.rolling(10, min_periods=1).mean()
+            )
+        else:
+            full_df["RollingWinPct_10"] = 0
+        full_df["RestDays"] = full_df.groupby("TEAM_ID")["DATE"].diff().dt.days.fillna(0)
+        if "TARGET" in full_df.columns:
+            full_df["CumulativeWins"] = full_df.groupby("TEAM_ID")["TARGET"].cumsum()
+            full_df["CumulativeGames"] = full_df.groupby("TEAM_ID").cumcount() + 1
+            full_df["TeamWinPctToDate"] = (full_df["CumulativeWins"]/full_df["CumulativeGames"]).fillna(0)
+        else:
+            full_df["TeamWinPctToDate"] = 0
+        if "OPPONENT_TEAM_ID" in full_df.columns:
+            opp_df = full_df[["TEAM_ID","DATE","TeamWinPctToDate"]].rename(
+                columns={"TEAM_ID":"OPPONENT_TEAM_ID","TeamWinPctToDate":"OppWinPctToDate"}
+            )
+            full_df = pd.merge_asof(
+                full_df.sort_values("DATE"),
+                opp_df.sort_values("DATE"),
+                by="OPPONENT_TEAM_ID",
+                on="DATE",
+                direction="backward"
+            )
+        else:
+            full_df["OppWinPctToDate"] = 0
+    else:
+        full_df["RollingPTS_5"] = 0
+        full_df["RollingWinPct_10"] = 0
+        full_df["RestDays"] = 0
+        full_df["TeamWinPctToDate"] = 0
+        full_df["OppWinPctToDate"] = 0
 
-    # Add win/loss label: positive PLUS_MINUS → win
-    team_stats["win"] = (team_stats["PLUS_MINUS"] > 0).astype(int)
-
-    return team_stats
-
-# -----------------------------
-# Generate features for multiple games
-# -----------------------------
-def generate_features_for_games(game_ids: list[str]) -> pd.DataFrame:
-    """
-    Generate features for a list of game IDs.
-
-    Args:
-        game_ids (list[str]): List of NBA game IDs.
-
-    Returns:
-        pd.DataFrame: Concatenated features for all games.
-    """
-    features = pd.concat([fetch_game_features(gid) for gid in game_ids], ignore_index=True)
-    return features
+    return full_df.reset_index(drop=True)

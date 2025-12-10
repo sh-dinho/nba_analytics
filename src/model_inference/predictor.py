@@ -1,15 +1,7 @@
-# ============================================================
-# Path: src/model_inference/predictor.py
-# File: predictor.py
-# Purpose: Robust predictor wrapper for probability and label outputs
-# Project: nba_analysis
-# ============================================================
-
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator
-from scipy.special import softmax
-
+from scipy.special import softmax, expit
 
 class Predictor:
     """
@@ -23,8 +15,8 @@ class Predictor:
     def _validate_input(self, X):
         if not isinstance(X, (pd.DataFrame, np.ndarray)):
             raise TypeError("Input must be a pandas DataFrame or NumPy array.")
-        if len(X) == 0:
-            raise ValueError("Input data is empty.")
+        if X.shape[0] == 0:
+            raise ValueError("Input data has zero samples.")
 
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         """
@@ -33,14 +25,14 @@ class Predictor:
         self._validate_input(X)
 
         if hasattr(self.model, "predict_proba"):
-            return self.model.predict_proba(X)
+            return np.asarray(self.model.predict_proba(X))
 
         if hasattr(self.model, "decision_function"):
             scores = self.model.decision_function(X)
-            if scores.ndim == 1:  # binary
-                probs = (scores - scores.min()) / (scores.max() - scores.min() + 1e-9)
+            if scores.ndim == 1:  # binary classification
+                probs = expit(scores)
                 return np.vstack([1 - probs, probs]).T
-            else:  # multi-class
+            else:  # multi-class classification
                 return softmax(scores, axis=1)
 
         raise AttributeError("Model does not support predict_proba or decision_function")
@@ -50,8 +42,10 @@ class Predictor:
         Predict class labels. For binary classification, allows thresholding on probabilities.
         """
         self._validate_input(X)
-
         proba = self.predict_proba(X)
-        if proba.shape[1] == 2:  # binary
+
+        if proba.shape[1] == 2:  # binary classification
             return (proba[:, 1] >= threshold).astype(int)
-        return self.model.predict(X)
+
+        # multi-class: argmax of probabilities
+        return proba.argmax(axis=1)

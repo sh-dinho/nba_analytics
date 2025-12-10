@@ -16,19 +16,33 @@ A Python pipeline for fetching NBA game data, generating features, training a lo
 ```
 3. Outputs will be saved automatically into the data/ folder structure.
 ```bash
-project_root/
-│
-├── run_pipeline.py        # main pipeline script
-├── config.yaml            # configuration file
-├── models/                # trained model files
-├── data/
-│   ├── raw/               # raw API pulls (optional)
-│   ├── cache/             # cached training features
-│   ├── history/           # historical predictions
-│   ├── csv/               # daily CSV outputs
-│   ├── parquet/           # daily Parquet outputs
-│   └── logs/              # pipeline + error logs
-└── tests/                 # unit tests
+nba_project/
+├─ src/
+│  ├─ __init__.py
+│  ├─ utils/
+│  │   ├─ __init__.py
+│  │   ├─ io.py
+│  │   ├─ logging.py
+│  │   └─ nba_api_wrapper.py
+│  ├─ feature_engineering/
+│  │   ├─ __init__.py
+│  │   └─ feature_engineering.py
+│  ├─ model_training/
+│  │   ├─ __init__.py
+│  │   ├─ train_logreg.py
+│  │   ├─ train_xgb.py
+│  │   └─ training.py
+│  ├─ prediction_engine/
+│  │   ├─ __init__.py
+│  │   └─ predictor.py
+│  ├─ interpretability/
+│  │   ├─ __init__.py
+│  │   └─ shap_analysis.py
+│  └─ main_today.py
+├─ data/
+├─ models/
+├─ results/
+└─ run_today.sh
 ```
 4. Power Bi Integration
 - Connect to Historical Prediction
@@ -66,3 +80,5 @@ project_root/
 ## - Version 1.0 → stick with logistic regression + clean pipeline (done).
     - Version 2.0 → migrate storage to SQLite/Postgres.
     - Version 3.0 → add AI models (XGBoost or neural nets) and integrate explainability.
+
+![Coverage](https://img.shields.io/codecov/c/github/your-org/your-repo?style=flat-square)
