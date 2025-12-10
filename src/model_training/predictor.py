@@ -1,6 +1,8 @@
 # ============================================================
 # File: src/prediction_engine/predictor.py
 # Purpose: Predict win probabilities using trained model with logging + CLI
+# Project: nba_analysis
+# Version: 1.1 (robust feature alignment + CLI improvements)
 # ============================================================
 
 from pathlib import Path
@@ -8,7 +10,6 @@ import joblib
 import pandas as pd
 import argparse
 from src.utils.logging import configure_logging
-
 
 class NBAPredictor:
     def __init__(self, model_path: str, log_level="INFO", log_dir="logs"):
@@ -27,15 +28,30 @@ class NBAPredictor:
             raise
         self.logger.info("Model successfully loaded.")
 
-    def _validate_features(self, features: pd.DataFrame):
+        # Try to capture expected features if logged during training
+        self.expected_features = getattr(self.model, "feature_names_in_", None)
+
+    def _validate_features(self, features: pd.DataFrame) -> pd.DataFrame:
         if not isinstance(features, pd.DataFrame):
             raise TypeError("Features must be a pandas DataFrame.")
         if features.empty:
             raise ValueError("Features DataFrame is empty.")
 
+        drop_cols = ["win", "unique_id", "prediction_date"]
+        features = features.drop(columns=[c for c in drop_cols if c in features.columns], errors="ignore")
+
+        # Align to expected features if available
+        if self.expected_features is not None:
+            missing = [f for f in self.expected_features if f not in features.columns]
+            if missing:
+                self.logger.warning(f"Missing expected features: {missing}")
+            features = features.reindex(columns=self.expected_features, fill_value=0)
+
+        return features
+
     def predict_proba(self, features: pd.DataFrame) -> pd.Series:
         """Predict win probabilities for given features."""
-        self._validate_features(features)
+        features = self._validate_features(features)
         self.logger.info(f"Generating probability predictions for {len(features)} samples")
 
         try:
@@ -50,7 +66,7 @@ class NBAPredictor:
 
     def predict_label(self, features: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
         """Predict win/loss labels based on threshold."""
-        self._validate_features(features)
+        features = self._validate_features(features)
         self.logger.info(f"Generating label predictions with threshold={threshold}")
 
         proba = self.predict_proba(features)
@@ -58,7 +74,6 @@ class NBAPredictor:
         win_rate = labels.mean()
         self.logger.info(f"Predicted win rate: {win_rate:.3f}")
         return labels
-
 
 # -------------------------------
 # CLI Wrapper
@@ -73,19 +88,23 @@ def main():
     parser.add_argument("--output", help="Optional path to save predictions as CSV")
     args = parser.parse_args()
 
-    predictor = NBAPredictor(model_path=args.model)
-    features = pd.read_csv(args.features)
+    try:
+        predictor = NBAPredictor(model_path=args.model)
+        features = pd.read_csv(args.features)
 
-    if args.mode == "proba":
-        preds = predictor.predict_proba(features)
-    else:
-        preds = predictor.predict_label(features, threshold=args.threshold)
+        if args.mode == "proba":
+            preds = predictor.predict_proba(features)
+        else:
+            preds = predictor.predict_label(features, threshold=args.threshold)
 
-    print(preds)
-    if args.output:
-        preds.to_csv(args.output, index=True)
-        print(f"Predictions saved to {args.output}")
-
+        # Print summary + head
+        print(preds.head())
+        print(f"... total {len(preds)} predictions")
+        if args.output:
+            preds.to_csv(args.output, index=True)
+            print(f"Predictions saved to {args.output}")
+    except Exception as e:
+        print(f"❌ Prediction failed: {e}")
 
 if __name__ == "__main__":
     main()

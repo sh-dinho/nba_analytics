@@ -3,15 +3,14 @@
 # Purpose: Unified task runner for NBA AI project
 # ============================================================
 
-.PHONY: install precommit check ci clean docs serve_docs train features mlflow
+.PHONY: default install check ci clean docs serve_docs train features mlflow
+
+# --- Default target ---
+default: ci
 
 # --- Bootstrap project ---
 install:
 	./setup_project.sh
-
-# --- Pre-commit hooks ---
-precommit:
-	pre-commit run --all-files
 
 # --- Local validation pipeline ---
 check:

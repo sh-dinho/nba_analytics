@@ -14,20 +14,23 @@ def compute_team_rankings(history_file, out_dir="data/analytics"):
     """
     df = pd.read_parquet(history_file)
 
-    # Actual win % per team
+    # Precompute correct predictions
+    df["correct_pred"] = (df["pred_label"] == df["win"]).astype(int)
+
+    # Aggregate team stats
     team_stats = df.groupby("TEAM_ID").agg(
         games_played=("GAME_ID", "count"),
         wins=("win", "sum"),
         avg_pred_proba=("pred_proba", "mean"),
-        pred_accuracy=("pred_label", lambda x: (x == df.loc[x.index, "win"]).mean())
+        pred_accuracy=("correct_pred", "mean")
     ).reset_index()
 
     team_stats["win_pct"] = team_stats["wins"] / team_stats["games_played"]
 
     # Add conference info (requires mapping TEAM_ID → conference)
-    # Example: load mapping file
     conf_map = pd.read_csv("data/raw/team_conference_map.csv")  # TEAM_ID, Conference
     team_stats = team_stats.merge(conf_map, on="TEAM_ID", how="left")
+    team_stats["Conference"] = team_stats["Conference"].fillna("Unknown")
 
     # Top 6 per conference
     top_teams = team_stats.sort_values(["Conference", "win_pct"], ascending=[True, False])
@@ -43,7 +46,7 @@ def compute_team_rankings(history_file, out_dir="data/analytics"):
 def compute_player_rankings(player_box_file, out_dir="data/analytics"):
     """
     Compute top 6 performing players per conference.
-    Metrics: avg points, consistency, prop hit rate (20+ pts).
+    Metrics: avg points, consistency (lower std = more consistent), prop hit rate (20+ pts).
     """
     df = pd.read_parquet(player_box_file)
 
@@ -51,14 +54,15 @@ def compute_player_rankings(player_box_file, out_dir="data/analytics"):
         avg_points=("PTS", "mean"),
         games_played=("GAME_ID", "count"),
         prop_hit_rate=("PTS", lambda x: (x >= 20).mean()),
-        consistency=("PTS", "std")
+        points_std=("PTS", "std")
     ).reset_index()
 
-    # Add conference info (requires mapping PLAYER_ID → TEAM_ID → Conference)
+    # Add conference info (PLAYER_ID → TEAM_ID → Conference)
     team_map = pd.read_csv("data/raw/team_conference_map.csv")
     player_team_map = df[["PLAYER_ID", "TEAM_ID"]].drop_duplicates()
     player_stats = player_stats.merge(player_team_map, on="PLAYER_ID", how="left")
     player_stats = player_stats.merge(team_map, on="TEAM_ID", how="left")
+    player_stats["Conference"] = player_stats["Conference"].fillna("Unknown")
 
     # Top 6 per conference
     top_players = player_stats.sort_values(["Conference", "avg_points"], ascending=[True, False])
@@ -76,16 +80,17 @@ def betting_recommendations(team_rankings, threshold=0.55):
     Generate teams to bet on vs. avoid.
     Bet On: win_pct > threshold and pred_accuracy > threshold
     Avoid: win_pct < threshold or pred_accuracy < threshold
+    Returns DataFrames instead of just IDs for richer context.
     """
     bet_on = team_rankings[
         (team_rankings["win_pct"] > threshold) &
         (team_rankings["pred_accuracy"] > threshold)
-    ]["TEAM_ID"].tolist()
+    ]
 
     avoid = team_rankings[
         (team_rankings["win_pct"] < threshold) |
         (team_rankings["pred_accuracy"] < threshold)
-    ]["TEAM_ID"].tolist()
+    ]
 
     return {"bet_on": bet_on, "avoid": avoid}
 
@@ -93,6 +98,7 @@ def betting_recommendations(team_rankings, threshold=0.55):
 def track_winning_streaks(history_file, out_dir="data/analytics"):
     """
     Track team winning streaks from history.
+    Records both max streak and current streak.
     """
     df = pd.read_parquet(history_file)
     streaks = []
@@ -101,13 +107,15 @@ def track_winning_streaks(history_file, out_dir="data/analytics"):
         group = group.sort_values("prediction_date")
         current_streak = 0
         max_streak = 0
+        latest_streak = 0
         for win in group["win"]:
             if win == 1:
                 current_streak += 1
                 max_streak = max(max_streak, current_streak)
+                latest_streak = current_streak
             else:
                 current_streak = 0
-        streaks.append({"TEAM_ID": team_id, "max_streak": max_streak})
+        streaks.append({"TEAM_ID": team_id, "max_streak": max_streak, "current_streak": latest_streak})
 
     streaks_df = pd.DataFrame(streaks)
     os.makedirs(out_dir, exist_ok=True)
