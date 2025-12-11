@@ -2,7 +2,7 @@ name: Nightly Retrain, Predictions, and Comparison
 
 on:
   schedule:
-    - cron: "0 6 * * *"   # every day at 6:00 UTC
+    - cron: "0 12 * * *"   # every day at 6:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -20,8 +20,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Enrich schedule
-        run: python -m src.scripts.enrich_schedule --season 2025
+      - name: Enrich schedule (with backup)
+        run: |
+          python -m src.scripts.enrich_schedule --season 2025 || echo "Schedule enrichment failed"
+          mkdir -p data/backups
+          cp data/cache/schedule.csv data/backups/schedule_backup_$(date +%F).csv
+        continue-on-error: true
 
       - name: Generate features
         run: python -m src.scripts.generate_features
@@ -48,7 +52,7 @@ jobs:
       - name: Compare algorithms
         run: python -m src.model_training.compare_algorithms
 
-      - name: Commit updated results
+      - name: Commit updated results and backups
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
@@ -57,6 +61,8 @@ jobs:
                  data/results/player_info.csv \
                  data/results/model_metrics.csv \
                  data/results/feature_importance.csv \
-                 data/results/model_comparison.csv
-          git commit -m "chore: nightly retrain, predictions, player info, and algorithm comparison" || echo "No changes to commit"
+                 data/results/model_comparison.csv \
+                 data/cache/schedule.csv \
+                 data/backups/schedule_backup_*.csv
+          git commit -m "chore: nightly retrain, predictions, player info, algorithm comparison, and schedule backup" || echo "No changes to commit"
           git push
