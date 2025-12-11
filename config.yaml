@@ -1,5 +1,5 @@
 # ============================================================
-# NBA Prediction Pipeline Configuration (v1.2)
+# NBA Prediction Pipeline Configuration (v1.2 → v2.1)
 # Centralized configuration for API pulls, caching, model loading,
 # training periods, output formats, and runner defaults.
 # ============================================================
@@ -8,54 +8,54 @@
 # PATH CONFIGURATION
 # -----------------------------
 paths:
-  raw: data/raw                  # Raw API dumps (optional)
-  cache: data/cache              # Cached training features
-  history: data/history          # Historical predictions, logs
-  csv: data/csv                  # Daily prediction CSV files
-  parquet: data/parquet          # Daily prediction Parquet files
-  logs: data/logs                # Runner + error logs
-  models: models                 # Trained model directory
-  mlflow_artifacts: mlruns       # Optional: MLflow local artifact directory
+  raw: data/raw
+  cache: data/cache
+  history: data/history
+  csv: data/csv
+  parquet: data/parquet
+  logs: data/logs
+  models: models
+  mlflow_artifacts: mlruns
 
 # -----------------------------
 # NBA DATA SETTINGS
 # -----------------------------
 nba:
-  seasons: [2022-23, 2023-24, 2024-25, 2025-26]   # Canonical NBA season strings
-  default_year: 2025                               # Used by runners when --date is not provided
-  players_min_points: 20                           # For fetching standout players
-  fetch_retries: 3                                  # Retry count for API calls
-  retry_delay_ms: 1500                              # Delay between retries (in ms)
+  seasons: [2022-23, 2023-24, 2024-25, 2025-26]
+  default_year: 2025
+  players_min_points: 20
+  fetch_retries: 3
+  retry_delay_ms: 1500
 
 # -----------------------------
 # MODEL SETTINGS
 # -----------------------------
 model:
-  path: models/nba_logreg.pkl        # Primary model
-  type: xgb                          # e.g., 'logreg', 'xgb', 'rf', 'nn'
-  threshold: 0.5                     # Default probability threshold
-  device: cpu                        # cpu / cuda (optional)
-  feature_version: v1                # Tracking for feature schema versioning
+  path: models/nba_logreg.pkl
+  type: xgb
+  threshold: 0.5
+  device: cpu
+  feature_version: v1
 
 # -----------------------------
 # OUTPUT SETTINGS
 # -----------------------------
 output:
-  save_csv: true                     # Write daily predictions to CSV
-  save_parquet: false                # Save to Parquet
-  pretty_json: true                  # Pretty-print JSON
-  include_player_stats: true         # Attach 20+ point player list
-  include_betting_fields: true       # Attach spread & O/U placeholders
+  save_csv: true
+  save_parquet: false
+  pretty_json: true
+  include_player_stats: true
+  include_betting_fields: true
 
 # -----------------------------
 # LOGGING SETTINGS
 # -----------------------------
 logging:
-  level: INFO                        # DEBUG, INFO, WARNING, ERROR
-  file: data/logs/pipeline.log       # Default pipeline log
+  level: INFO
+  file: data/logs/pipeline.log
 
 # -----------------------------
-# MLFLOW SETTINGS (optional)
+# MLFLOW SETTINGS
 # -----------------------------
 mlflow:
   enabled: true
@@ -63,3 +63,10 @@ mlflow:
   run_prefix: daily_prediction_
   log_avg_probability: true
   log_model_path: true
+  tracking_uri: http://localhost:5000   # ✅ Added for validation
+  artifact_location: mlruns             # ✅ Optional, but good practice
+
+# -----------------------------
+# META
+# -----------------------------
+schema_version: "2.1"

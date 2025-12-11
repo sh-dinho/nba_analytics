@@ -1,45 +1,67 @@
 # ============================================================
 # File: src/prediction_engine/predictor.py
-# Purpose: Generic predictor wrapper with logging for scikit-learn style models
+# Purpose: Load trained model and run predictions
 # Project: nba_analysis
-# Version: 1.3 (adds logging hooks for probability stats and win rate)
+# Version: 2.0 (schedule-based features, safe preprocessing)
 # ============================================================
 
-import numpy as np
 import logging
-from scipy.special import expit, softmax
+import joblib
+import pandas as pd
+
+logger = logging.getLogger("prediction_engine.predictor")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
 
 class Predictor:
-    def __init__(self, model, log_level="INFO", log_name="Predictor"):
-        self.model = model
-        logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO),
-                            format="%(asctime)s [%(levelname)s] %(message)s")
-        self.logger = logging.getLogger(log_name)
+    def __init__(self, model_path: str):
+        """Load a trained model from disk."""
+        try:
+            self.model = joblib.load(model_path)
+            logger.info("Loaded model from %s", model_path)
+        except Exception as e:
+            logger.error("Failed to load model: %s", e)
+            raise
 
-    def _predict(self, X, output_type="label", threshold=0.5):
+    def _prepare_features(self, X: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ensure features are in the right format for prediction.
+        Handles categorical TEAM_NAME and numeric HOME_GAME/DAYS_SINCE_GAME.
+        """
+        df = X.copy()
+
+        # TEAM_NAME categorical encoding
+        if "TEAM_NAME" in df.columns:
+            df["TEAM_NAME"] = df["TEAM_NAME"].astype("category").cat.codes
+
+        # HOME_GAME numeric
+        if "HOME_GAME" in df.columns:
+            df["HOME_GAME"] = pd.to_numeric(df["HOME_GAME"], errors="coerce").fillna(0)
+
+        # DAYS_SINCE_GAME numeric
+        if "DAYS_SINCE_GAME" in df.columns:
+            df["DAYS_SINCE_GAME"] = pd.to_numeric(
+                df["DAYS_SINCE_GAME"], errors="coerce"
+            ).fillna(0)
+
+        return df
+
+    def predict_proba(self, X: pd.DataFrame):
+        """Return win probability predictions."""
+        df = self._prepare_features(X)
         if hasattr(self.model, "predict_proba"):
-            proba = self.model.predict_proba(X)
-        elif hasattr(self.model, "decision_function"):
-            scores = self.model.decision_function(X)
-            if scores.ndim > 1:  # multi-class
-                proba = softmax(scores, axis=1)
-            else:  # binary
-                p1 = expit(scores)
-                proba = np.column_stack([1 - p1, p1])
+            return self.model.predict_proba(df)[:, 1]
         else:
-            raise AttributeError(f"Model {type(self.model).__name__} does not support prediction")
+            logger.warning(
+                "Model does not support predict_proba, using predict instead."
+            )
+            return self.model.predict(df)
 
-        if output_type == "label":
-            labels = (proba[:, 1] >= threshold).astype(int)
-            win_rate = labels.mean()
-            self.logger.info(f"Predicted win rate: {win_rate:.3f}")
-            return labels
-
-        # Log probability stats
-        p1 = proba[:, 1] if proba.shape[1] > 1 else proba.ravel()
-        self.logger.info(f"Average win probability: {p1.mean():.3f}")
-        self.logger.info(f"Min: {p1.min():.3f}, Max: {p1.max():.3f}, Std: {p1.std():.3f}")
-        return proba
-
-    def predict(self, X, output_type="label", threshold=0.5):
-        return self._predict(X, output_type=output_type, threshold=threshold)
+    def predict_label(self, X: pd.DataFrame):
+        """Return win/loss label predictions."""
+        df = self._prepare_features(X)
+        return self.model.predict(df)

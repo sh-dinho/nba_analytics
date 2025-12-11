@@ -1,70 +1,43 @@
 # ============================================================
-# File: Makefile
-# Purpose: Unified task runner for NBA AI project
+# Project: nba_analysis
+# Purpose: Automate end-to-end pipeline (enrich → features → train → predict)
 # ============================================================
 
-.PHONY: default install check ci clean docs serve_docs train features mlflow help test run
+PYTHON := python
 
-INVOKE = invoke
+ENRICHED_FILE := data/cache/historical_schedule_with_results.parquet
+FEATURES_FILE := data/cache/features_full.parquet
+MODEL_FILE := models/nba_xgb.pkl
+PREDICTIONS_FILE := data/results/daily_predictions.csv
 
-# --- Default target ---
-default: ci
+# Default target
+run_all: enrich generate_features train predict
 
-# --- Bootstrap project ---
-install:
-	./setup_project.sh
+# Step 0: Enrich schedule with WL outcomes (skip future games)
+enrich:
+	$(PYTHON) -m src.scripts.enrich_schedule
 
-# --- Local validation pipeline ---
-check:
-	$(INVOKE) check
+# Step 1: Generate features from enriched schedule
+generate_features:
+	$(PYTHON) -m src.scripts.generate_features
 
-# --- Continuous Integration pipeline ---
-ci:
-	$(INVOKE) ci
-
-# --- Clean caches and temp files ---
-clean:
-	$(INVOKE) clean
-
-# --- Build documentation ---
-docs:
-	$(INVOKE) docs
-
-# --- Serve documentation locally ---
-serve_docs:
-	$(INVOKE) serve_docs
-
-# --- Model training ---
+# Step 2: Train model
 train:
-	$(INVOKE) train
+	$(PYTHON) -m src.model_training.trainer_cli \
+		--model xgb \
+		--season 2025 \
+		--features $(FEATURES_FILE) \
+		--out $(MODEL_FILE)
 
-# --- Feature generation ---
-features:
-	$(INVOKE) features
+# Step 3: Run daily predictions
+predict:
+	$(PYTHON) -m src.prediction_engine.daily_runner_cli \
+		--model $(MODEL_FILE) \
+		--season 2025 \
+		--limit 10 \
+		--out $(PREDICTIONS_FILE) \
+		--fmt csv
 
-# --- Launch MLflow UI ---
-mlflow:
-	$(INVOKE) mlflow
-
-# --- Run pipeline ---
-run:
-	python src/run_pipeline.py
-
-# --- Run tests ---
-test:
-	$(INVOKE) test
-
-# --- Show help ---
-help:
-	@echo "Available targets:"
-	@echo "  install       Bootstrap project"
-	@echo "  check         Run local validation pipeline"
-	@echo "  ci            Run CI pipeline"
-	@echo "  clean         Clean caches and temp files"
-	@echo "  docs          Build documentation"
-	@echo "  serve_docs    Serve documentation locally"
-	@echo "  train         Train model"
-	@echo "  features      Generate features"
-	@echo "  mlflow        Launch MLflow UI"
-	@echo "  run           Run pipeline script"
-	@echo "  test          Run unit tests"
+# Clean generated files
+clean:
+	rm -f $(ENRICHED_FILE) $(FEATURES_FILE) $(MODEL_FILE) $(PREDICTIONS_FILE)

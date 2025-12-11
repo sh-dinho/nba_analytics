@@ -1,103 +1,38 @@
-name: NBA Daily Prediction Pipeline
+name: Export Daily Predictions
 
 on:
-  push:
-    branches:
-      - main
   schedule:
-    - cron: '0 17 * * *'  # Runs every day at 17:00 UTC
+    - cron: "0 12 * * *"   # every day at 12:00 UTC
+  workflow_dispatch:        # allow manual trigger
 
 jobs:
-  fetch-data:
+  export_predictions:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.12'
-
-      - name: Cache pip
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          python-version: '3.11'
 
       - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run prediction pipeline
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m src.prediction_engine.daily_runner_cli \
+            --model models/nba_xgb.pkl \
+            --season 2025 \
+            --limit 10 \
+            --out data/results/daily_predictions.csv \
+            --fmt csv
 
-      - name: Fetch historical NBA data
+      - name: Commit updated predictions
         run: |
-          echo "Fetching historical NBA data..."
-          python src/scripts/generate_historical_schedule.py
-
-      - name: Generate Today's Schedule
-        run: |
-          echo "Generating today's NBA schedule..."
-          python -m src.scripts.generate_today_schedule
-
-  generate-features:
-    needs: fetch-data
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Cache pip
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Generate features for today's games
-        run: |
-          echo "Generating features for today's games..."
-          python -m src.scripts.generate_features
-
-  run-daily-predictions:
-    needs: generate-features
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Cache pip
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run Daily Prediction Runner
-        run: |
-          echo "Running NBA Daily Prediction Runner..."
-          python src/daily_runner/daily_runner_mflow.py --model models/nba_logreg.pkl --run_shap
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add data/results/daily_predictions.csv
+          git commit -m "chore: update daily predictions"
+          git push

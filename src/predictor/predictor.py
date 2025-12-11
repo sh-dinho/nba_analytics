@@ -1,24 +1,8 @@
 # ============================================================
 # File: src/predictor/predictor.py
-# Purpose: A wrapper class for scikit-learn models providing
-#          probability predictions, label predictions with
-#          thresholding, and batch prediction for large datasets.
-#          Also includes special handling for Logistic Regression
-#          and Support Vector Classification (SVC).
-#
-# Key Features:
-# 1. Support for `predict_proba` and `decision_function` fallbacks.
-# 2. Predicts class labels based on customizable probability thresholds.
-# 3. Batch processing of large datasets to improve performance.
-# 4. Special handling for Logistic Regression to use log probabilities.
-# 5. Ensures SVC models are trained with `probability=True` to output probabilities.
-# 6. Model metadata retrieval for logging or debugging purposes.
-#
-# Dependencies:
-# - numpy
-# - pandas
-# - scipy
-# - scikit-learn
+# Purpose: Wrapper class for scikit-learn models with proba, labels, batch prediction
+# Project: nba_analysis
+# Version: 1.4 (named logger, multi-class logging, sparse batch handling)
 # ============================================================
 
 import numpy as np
@@ -30,16 +14,23 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
 from scipy import sparse
 
+logger = logging.getLogger("predictor.Predictor")
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+
+
 class Predictor:
-    def __init__(self, model: BaseEstimator, log_level="INFO", log_name="Predictor"):
+    def __init__(self, model: BaseEstimator):
         self.model = model
-        logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO),
-                            format="%(asctime)s [%(levelname)s] %(message)s")
-        self.logger = logging.getLogger(log_name)
 
     def _validate_input(self, X):
         if not isinstance(X, (pd.DataFrame, np.ndarray, sparse.spmatrix)):
-            raise TypeError("Input must be a pandas DataFrame, NumPy array, or scipy sparse matrix.")
+            raise TypeError(
+                "Input must be a pandas DataFrame, NumPy array, or scipy sparse matrix."
+            )
         if X.shape[0] == 0:
             raise ValueError("Input data has zero samples.")
 
@@ -55,13 +46,19 @@ class Predictor:
             else:  # multi-class
                 proba = softmax(scores, axis=1)
         else:
-            raise AttributeError(f"Model {type(self.model).__name__} does not support predict_proba or decision_function")
+            raise AttributeError(
+                f"Model {type(self.model).__name__} does not support predict_proba or decision_function"
+            )
 
         # Log stats
         if proba.shape[1] == 2:
             p1 = proba[:, 1]
-            self.logger.info(f"Average win probability: {p1.mean():.3f}")
-            self.logger.info(f"Min: {p1.min():.3f}, Max: {p1.max():.3f}, Std: {p1.std():.3f}")
+            logger.info("Average win probability: %.3f", p1.mean())
+            logger.info("Min: %.3f, Max: %.3f, Std: %.3f", p1.min(), p1.max(), p1.std())
+        else:
+            logger.info("Multi-class probabilities; logging per-class means.")
+            for i in range(proba.shape[1]):
+                logger.info("Class %d mean probability: %.3f", i, proba[:, i].mean())
         return proba
 
     def predict_label(self, X, threshold: float = 0.5) -> np.ndarray:
@@ -69,7 +66,7 @@ class Predictor:
         proba = self.predict_proba(X)
         if proba.shape[1] == 2:
             labels = (proba[:, 1] >= threshold).astype(int)
-            self.logger.info(f"Predicted win rate: {labels.mean():.3f}")
+            logger.info("Predicted win rate: %.3f", labels.mean())
             return labels
         return proba.argmax(axis=1)
 
@@ -84,7 +81,12 @@ class Predictor:
         n_samples = X.shape[0]
         all_probs = []
         for i in range(0, n_samples, batch_size):
-            batch = X.iloc[i:i+batch_size] if isinstance(X, pd.DataFrame) else X[i:i+batch_size]
+            if isinstance(X, pd.DataFrame):
+                batch = X.iloc[i : i + batch_size]
+            elif sparse.issparse(X):
+                batch = X[i : i + batch_size, :]
+            else:
+                batch = X[i : i + batch_size]
             all_probs.append(self.predict_proba(batch))
         return np.vstack(all_probs)
 
@@ -114,5 +116,7 @@ class SVCWithProbabilities(Predictor):
         if not isinstance(model, SVC):
             raise TypeError("Expected an SVC model.")
         if not model.probability:
-            raise ValueError("SVC must be initialized with probability=True to support predict_proba.")
+            raise ValueError(
+                "SVC must be initialized with probability=True to support predict_proba."
+            )
         super().__init__(model)

@@ -1,7 +1,7 @@
 # ============================================================
 # File: src/interpretability/shap_analysis.py
 # Purpose: SHAP interpretability for XGBoost model
-# Version: 1.1 (fixes mean abs calc, adds logging, nested MLflow)
+# Version: 1.3 (numeric coercion, safer SHAP calls, metrics logging)
 # ============================================================
 
 import os
@@ -13,8 +13,12 @@ import pandas as pd
 import shap
 import numpy as np
 
+logger = logging.getLogger("interpretability.shap")
 
-def run_shap(model_path, cache_file, out_dir="results/interpretability", top_n=3, clf_step="clf"):
+
+def run_shap(
+    model_path, cache_file, out_dir="results/interpretability", top_n=3, clf_step="clf"
+):
     """
     Run SHAP analysis for an XGBoost model inside a sklearn pipeline.
     Args:
@@ -28,7 +32,9 @@ def run_shap(model_path, cache_file, out_dir="results/interpretability", top_n=3
 
     pipeline = joblib.load(model_path)
     if clf_step not in pipeline.named_steps:
-        raise KeyError(f"Classifier step '{clf_step}' not found in pipeline steps: {list(pipeline.named_steps.keys())}")
+        raise KeyError(
+            f"Classifier step '{clf_step}' not found in pipeline steps: {list(pipeline.named_steps.keys())}"
+        )
     xgb_model = pipeline.named_steps[clf_step]
 
     # Load dataset
@@ -39,7 +45,9 @@ def run_shap(model_path, cache_file, out_dir="results/interpretability", top_n=3
     else:
         raise ValueError(f"Unsupported cache file format: {cache_file}")
 
-    X = df.drop(columns=["target"], errors="ignore")
+    # Drop target column(s) and coerce all features to numeric
+    X = df.drop(columns=["target", "TARGET"], errors="ignore")
+    X = X.apply(pd.to_numeric, errors="coerce")
 
     explainer = shap.TreeExplainer(xgb_model)
     shap_values = explainer(X)
@@ -52,14 +60,14 @@ def run_shap(model_path, cache_file, out_dir="results/interpretability", top_n=3
 
     # Top features by mean absolute SHAP
     mean_abs = pd.Series(
-        np.abs(shap_values.values).mean(axis=0), index=X.columns
+        np.abs(np.asarray(shap_values.values)).mean(axis=0), index=X.columns
     ).sort_values(ascending=False)
     top_features = mean_abs.index[:top_n].tolist()
     dep_paths = []
 
     for feat in top_features:
         dep_path = os.path.join(out_dir, f"shap_dependence_{feat}.png")
-        shap.dependence_plot(feat, shap_values.values, X, show=False)
+        shap.dependence_plot(feat, shap_values, X, show=False)
         plt.savefig(dep_path, bbox_inches="tight")
         plt.close()
         dep_paths.append(dep_path)
@@ -69,5 +77,8 @@ def run_shap(model_path, cache_file, out_dir="results/interpretability", top_n=3
         mlflow.log_artifact(summary_path, artifact_path="interpretability")
         for p in dep_paths:
             mlflow.log_artifact(p, artifact_path="interpretability")
+        # Log mean SHAP values for top features
+        for feat in top_features:
+            mlflow.log_metric(f"shap_mean_abs_{feat}", float(mean_abs[feat]))
 
-    logging.info(f"✅ SHAP report logged. Top features: {top_features}")
+    logger.info("✅ SHAP report logged. Top features: %s", top_features)

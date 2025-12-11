@@ -1,41 +1,38 @@
 #!/bin/bash
-# ============================================================
-# File: run_today.sh
-# Purpose: Automate daily NBA picks pipeline, generate schedule, and copy outputs
-# Author: nba_analysis
-# ============================================================
-
 set -euo pipefail
 
-# --- Config ---
-PYTHON_ENV="nba_env"                     # conda environment name
+PYTHON_ENV="nba_env"
 PROJECT_DIR="$HOME/nba_project"
-OUTPUT_DIR="$PROJECT_DIR/results"
-PBI_DIR="$HOME/pbi_folder"               # where Power BI reads CSVs
+TODAY=$(date +%Y-%m-%d)
+OUTPUT_DIR="$PROJECT_DIR/results/$TODAY"
+PBI_DIR="$HOME/pbi_folder"
 
-# --- Activate Python environment ---
+mkdir -p "$PROJECT_DIR/data/cache" "$OUTPUT_DIR" "$PBI_DIR"
+
+LOG_FILE="$OUTPUT_DIR/run_today.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
 echo "[INFO] Activating Python environment..."
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate "$PYTHON_ENV"
 
-# --- Navigate to project ---
 cd "$PROJECT_DIR" || { echo "[ERROR] Project dir not found"; exit 1; }
 
-# --- Ensure cache/output dirs exist ---
-mkdir -p "$PROJECT_DIR/data/cache" "$OUTPUT_DIR"
-
-# --- Generate today's schedule/features ---
 echo "[INFO] Generating today's schedule/features..."
 python -m src.scripts.generate_today_schedule || { echo "[ERROR] Schedule generation failed"; exit 1; }
 
-# --- Run today's NBA picks pipeline ---
+MODEL_PATH="$PROJECT_DIR/models/logreg.pkl"
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "[ERROR] Model file not found at $MODEL_PATH"
+    exit 1
+fi
+
 echo "[INFO] Running today's pipeline..."
 python -m src.main_today \
     --schedule_file "$PROJECT_DIR/data/cache/schedule.parquet" \
-    --model_path "$PROJECT_DIR/models/logreg.pkl" \
+    --model_path "$MODEL_PATH" \
     --out_dir "$OUTPUT_DIR"
 
-# --- Copy CSVs for Power BI ---
 echo "[INFO] Copying outputs to Power BI folder..."
 for f in todays_picks.csv bet_on.csv avoid.csv; do
     if [ -f "$OUTPUT_DIR/$f" ]; then

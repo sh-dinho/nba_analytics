@@ -1,118 +1,107 @@
 # ============================================================
 # File: src/features/feature_engineering.py
-# Purpose: Generate NBA game features for prediction
-# Project: nba_analysis
-# Version: 2.0 (merged game_features + feature_engineering)
+# Purpose: Generate features for NBA games with rolling stats + home/away flag + sanity checks + CSV append
 # ============================================================
 
-import datetime
-import logging
 import pandas as pd
-import numpy as np
+import logging
+import os
+from datetime import datetime
+
+logger = logging.getLogger("features.feature_engineering")
 
 
-def generate_features_for_games(game_data_list, players_min_points: int = 20):
+def generate_features_for_games(
+    df: pd.DataFrame, stats_out="data/results/feature_stats.csv"
+) -> pd.DataFrame:
     """
-    Generate features for a list of games.
-    Ensures GAME_ID and TEAM_ID columns are always present.
-    Adds rolling team features, betting features, and player-level features.
-    Returns a DataFrame with the full expected schema.
+    Generate features for NBA games.
+    Handles TEAM_NAME/TEAM_ABBREVIATION gracefully, adds rolling stats, home/away flag,
+    logs sanity checks, and appends distributions to CSV for historical tracking.
     """
-    features = []
 
-    for i, game in enumerate(game_data_list):
-        normalized = {k.upper(): v for k, v in game.items()}
-        df = pd.DataFrame([normalized])
-
-        # Required columns
-        df["GAME_ID"] = df.get("GAME_ID", f"unknown_game_{i}")
-        df["TEAM_ID"] = df.get("TEAM_ID", -1)
-        df["GAME_ID"] = df["GAME_ID"].astype(str)
-        df["TEAM_ID"] = df["TEAM_ID"].astype(int)
-        df["prediction_date"] = datetime.date.today().isoformat()
-        df["unique_id"] = (
-            df["GAME_ID"] + "_" + df["TEAM_ID"].astype(str) + "_" + df["prediction_date"]
-        )
-
-        # Betting & player features
-        df["PointSpread"] = df.get("POINT_SPREAD", np.nan)
-        df["OverUnder"] = df.get("OVER_UNDER", np.nan)
-
-        # Handle player scoring (dict/list or simple flag)
-        if "PLAYER_POINTS" in df.columns:
-            def count_20pts(pp):
-                if isinstance(pp, dict):
-                    return sum(1 for p in pp.values() if p >= players_min_points)
-                elif isinstance(pp, list):
-                    return sum(1 for p in pp if p >= players_min_points)
-                return 0
-            df["Players20PlusPts"] = df["PLAYER_POINTS"].apply(count_20pts)
-        else:
-            df["Players20PlusPts"] = df.get("TOP_SCORER_20PTS", np.nan)
-
-        features.append(df)
-
-    if not features:
-        logging.warning("No valid features generated.")
-        return pd.DataFrame(
-            columns=[
-                "GAME_ID", "TEAM_ID", "unique_id", "prediction_date",
-                "RollingPTS_5", "RollingWinPct_10", "RestDays",
-                "TeamWinPctToDate", "OppWinPctToDate",
-                "PointSpread", "OverUnder", "Players20PlusPts",
-            ]
-        )
-
-    full_df = pd.concat(features, ignore_index=True)
-
-    # --- Rolling team features ---
-    if "DATE" in full_df.columns:
-        full_df["DATE"] = pd.to_datetime(full_df["DATE"], errors="coerce")
-        full_df = full_df.sort_values(["TEAM_ID", "DATE"])
-
-        if "POINTS" in full_df.columns:
-            full_df["RollingPTS_5"] = full_df.groupby("TEAM_ID")["POINTS"].transform(
-                lambda x: x.rolling(5, min_periods=1).mean()
-            )
-        else:
-            full_df["RollingPTS_5"] = np.nan
-
-        if "TARGET" in full_df.columns:
-            full_df["RollingWinPct_10"] = full_df.groupby("TEAM_ID")["TARGET"].transform(
-                lambda x: x.rolling(10, min_periods=1).mean()
-            )
-        else:
-            full_df["RollingWinPct_10"] = np.nan
-
-        full_df["RestDays"] = full_df.groupby("TEAM_ID")["DATE"].diff().dt.days.fillna(0)
-
-        if "TARGET" in full_df.columns:
-            full_df["CumulativeWins"] = full_df.groupby("TEAM_ID")["TARGET"].cumsum()
-            full_df["CumulativeGames"] = full_df.groupby("TEAM_ID").cumcount() + 1
-            full_df["TeamWinPctToDate"] = (
-                full_df["CumulativeWins"] / full_df["CumulativeGames"]
-            ).fillna(0)
-        else:
-            full_df["TeamWinPctToDate"] = np.nan
-
-        if "OPPONENT_TEAM_ID" in full_df.columns:
-            opp_df = full_df[["TEAM_ID", "DATE", "TeamWinPctToDate"]].rename(
-                columns={"TEAM_ID": "OPPONENT_TEAM_ID", "TeamWinPctToDate": "OppWinPctToDate"}
-            )
-            full_df = pd.merge_asof(
-                full_df.sort_values("DATE"),
-                opp_df.sort_values("DATE"),
-                by="OPPONENT_TEAM_ID",
-                on="DATE",
-                direction="backward",
-            ).reset_index(drop=True)
-        else:
-            full_df["OppWinPctToDate"] = np.nan
+    # --- Target column ---
+    if "WL" in df.columns:
+        df["win"] = df["WL"].apply(lambda x: 1 if str(x).upper() == "W" else 0)
+        logger.info("Using WL column to generate win target.")
+    elif "win" in df.columns:
+        logger.info("Win column already present.")
     else:
-        full_df["RollingPTS_5"] = np.nan
-        full_df["RollingWinPct_10"] = np.nan
-        full_df["RestDays"] = np.nan
-        full_df["TeamWinPctToDate"] = np.nan
-        full_df["OppWinPctToDate"] = np.nan
+        logger.error("No WL or win column found. Cannot generate target.")
+        return pd.DataFrame()
 
-    return full_df.reset_index(drop=True)
+    # --- Team identifier ---
+    team_col = None
+    if "TEAM_NAME" in df.columns:
+        team_col = "TEAM_NAME"
+    elif "TEAM_ABBREVIATION" in df.columns:
+        team_col = "TEAM_ABBREVIATION"
+
+    # --- Base features ---
+    features = pd.DataFrame()
+    features["GAME_ID"] = df["GAME_ID"]
+    if team_col:
+        features["TEAM"] = df[team_col]
+    if "MATCHUP" in df.columns:
+        features["MATCHUP"] = df["MATCHUP"]
+        # Home/away flag: '@' means away, otherwise home
+        features["home_game"] = df["MATCHUP"].apply(lambda x: 0 if "@" in str(x) else 1)
+        # Log distribution
+        home_counts = features["home_game"].value_counts().to_dict()
+        logger.info("Home/Away distribution: %s", home_counts)
+    if "GAME_DATE" in df.columns:
+        features["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"], errors="coerce")
+    features["win"] = df["win"]
+
+    # --- Sanity check: wins vs losses ---
+    win_counts = features["win"].value_counts().to_dict()
+    logger.info("Win/Loss distribution: %s", win_counts)
+
+    # --- Export sanity checks (append mode) ---
+    stats = pd.DataFrame(
+        [
+            {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "metric": "home_game",
+                "home": home_counts.get(1, 0),
+                "away": home_counts.get(0, 0),
+            },
+            {
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "metric": "win",
+                "wins": win_counts.get(1, 0),
+                "losses": win_counts.get(0, 0),
+            },
+        ]
+    )
+
+    os.makedirs(os.path.dirname(stats_out), exist_ok=True)
+    if os.path.exists(stats_out):
+        stats.to_csv(stats_out, mode="a", header=False, index=False)
+    else:
+        stats.to_csv(stats_out, index=False)
+    logger.info("Feature sanity stats appended to %s", stats_out)
+
+    # --- Rolling stats ---
+    if "PTS" in df.columns:
+        df = df.sort_values(["TEAM_ID", "GAME_DATE"])
+        df["rolling_pts"] = df.groupby("TEAM_ID")["PTS"].transform(
+            lambda x: x.shift().rolling(5, min_periods=1).mean()
+        )
+        features["rolling_pts"] = df["rolling_pts"]
+
+    if "PTS_OPP" in df.columns:
+        df = df.sort_values(["TEAM_ID", "GAME_DATE"])
+        df["rolling_pts_allowed"] = df.groupby("TEAM_ID")["PTS_OPP"].transform(
+            lambda x: x.shift().rolling(5, min_periods=1).mean()
+        )
+        features["rolling_pts_allowed"] = df["rolling_pts_allowed"]
+
+    # Win streak feature
+    df["win_streak"] = df.groupby("TEAM_ID")["win"].transform(
+        lambda x: x.shift().rolling(5, min_periods=1).sum()
+    )
+    features["win_streak"] = df["win_streak"]
+
+    logger.info("Generated features with shape %s", features.shape)
+    return features
