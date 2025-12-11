@@ -33,3 +33,7 @@ mypy==1.11.2
 
 # Testing (optional)
 pytest==7.4.0
+
+click
+
+xgboost
