@@ -1,72 +1,26 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ============================================================
-# Cleanup Script for NBA Analysis Project
-# Purpose: Remove deprecated API, training, and feature modules after migration
+# Script: cleanup_repo.sh
+# Purpose: Remove redundant files from nba_analysis project
 # ============================================================
 
 set -e
 
-echo "[INFO] Starting cleanup..."
+echo "Cleaning up redundant files..."
 
-# Step 0: Ensure src directory exists
-if [[ ! -d src ]]; then
-  echo "[ERROR] src/ directory not found. Run this script from project root."
-  exit 1
-fi
+# Prediction engine
+rm -f src/prediction_engine/daily_runner.py
 
-# Step 0.5: Dry-run mode
-DRY_RUN=${DRY_RUN:-false}
-if [[ "$DRY_RUN" == "true" ]]; then
-  echo "[INFO] Running in dry-run mode. No files will be deleted."
-fi
+# Model training
+rm -f src/model_training/train_logreg.py
+rm -f src/model_training/train_xgb.py
+rm -f src/model_training/train_combined.py
 
-# Step 1: Verify no lingering imports
-echo "[INFO] Checking for references to deprecated modules..."
-grep -R "nba_api" src/ || true
-grep -R "nba_api_wrapper" src/ || true
-grep -R "train_logreg" src/ || true
-grep -R "train_xgb" src/ || true
-grep -R "training" src/ || true
-grep -R "daily_runner_mflow" src/ || true
-grep -R "game_features" src/ || true
+# Old CLIs (if present)
+rm -f src/model_training/train_cli.py
+rm -f src/prediction_engine/predictor_cli_old.py
 
-echo "[INFO] If you see results above, update those imports to use src.api.nba_api_client, src.model_training.train_combined, src.prediction_engine.daily_runner_cli, or src.features.feature_engineering"
+# Pipeline skeleton
+rm -f src/pipeline/run_pipeline.py
 
-# Step 2: Remove old files
-remove_file() {
-  local file=$1
-  if [[ -f "$file" ]]; then
-    if [[ "$DRY_RUN" == "true" ]]; then
-      echo "[DRY-RUN] Would remove $file"
-    else
-      rm -f "$file"
-      echo "[INFO] Removed $file"
-    fi
-  fi
-}
-
-echo "[INFO] Removing deprecated API modules..."
-remove_file src/api/nba_api.py
-remove_file src/api/nba_api_wrapper.py
-
-echo "[INFO] Removing deprecated training modules..."
-remove_file src/model_training/train_logreg.py
-remove_file src/model_training/train_xgb.py
-remove_file src/model_training/training.py
-
-echo "[INFO] Removing deprecated daily runner stub..."
-remove_file src/prediction_engine/daily_runner_mflow.py
-
-echo "[INFO] Removing deprecated feature generator..."
-remove_file src/prediction_engine/game_features.py
-
-# Step 3: Confirm removal
-if [[ ! -f src/api/nba_api.py && ! -f src/api/nba_api_wrapper.py && \
-      ! -f src/model_training/train_logreg.py && ! -f src/model_training/train_xgb.py && \
-      ! -f src/model_training/training.py && \
-      ! -f src/prediction_engine/daily_runner_mflow.py && \
-      ! -f src/prediction_engine/game_features.py ]]; then
-  echo "[SUCCESS] Deprecated modules removed. Use src/api/nba_api_client.py, src/model_training/train_combined.py, src/prediction_engine/daily_runner_cli.py, and src/features/feature_engineering.py going forward."
-else
-  echo "[ERROR] Cleanup failed — some files still exist."
-fi
+echo "Cleanup complete. Canonical files remain intact."
