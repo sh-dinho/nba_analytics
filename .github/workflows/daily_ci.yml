@@ -1,12 +1,12 @@
-name: Export Daily Predictions
+name: Nightly Retrain, Predictions, and Comparison
 
 on:
   schedule:
-    - cron: "0 12 * * *"   # every day at 12:00 UTC
-  workflow_dispatch:        # allow manual trigger
+    - cron: "0 6 * * *"   # every day at 6:00 UTC
+  workflow_dispatch:
 
 jobs:
-  export_predictions:
+  retrain_and_predict:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -20,7 +20,23 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run prediction pipeline
+      - name: Enrich schedule
+        run: python -m src.scripts.enrich_schedule --season 2025
+
+      - name: Generate features
+        run: python -m src.scripts.generate_features
+
+      - name: Retrain model and log metrics
+        run: |
+          python -m src.model_training.trainer_cli \
+            --model xgb \
+            --season 2025 \
+            --features data/cache/features_full.parquet \
+            --out models/nba_xgb.pkl \
+            --metrics_out data/results/model_metrics.csv \
+            --importance_out data/results/feature_importance.csv
+
+      - name: Generate predictions and player info
         run: |
           python -m src.prediction_engine.daily_runner_cli \
             --model models/nba_xgb.pkl \
@@ -29,10 +45,18 @@ jobs:
             --out data/results/daily_predictions.csv \
             --fmt csv
 
-      - name: Commit updated predictions
+      - name: Compare algorithms
+        run: python -m src.model_training.compare_algorithms
+
+      - name: Commit updated results
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
-          git add data/results/daily_predictions.csv
-          git commit -m "chore: update daily predictions"
+          git add models/nba_xgb.pkl \
+                 data/results/daily_predictions.csv \
+                 data/results/player_info.csv \
+                 data/results/model_metrics.csv \
+                 data/results/feature_importance.csv \
+                 data/results/model_comparison.csv
+          git commit -m "chore: nightly retrain, predictions, player info, and algorithm comparison" || echo "No changes to commit"
           git push
