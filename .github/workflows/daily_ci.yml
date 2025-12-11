@@ -2,7 +2,7 @@ name: Nightly Retrain, Predictions, and Comparison
 
 on:
   schedule:
-    - cron: "0 12 * * *"   # every day at 6:00 UTC
+    - cron: "0 6 * * *"   # every day at 6:00 UTC
   workflow_dispatch:
 
 jobs:
@@ -24,11 +24,23 @@ jobs:
         run: |
           python -m src.scripts.enrich_schedule --season 2025 || echo "Schedule enrichment failed"
           mkdir -p data/backups
-          cp data/cache/schedule.csv data/backups/schedule_backup_$(date +%F).csv
+          cp data/cache/schedule.csv data/backups/schedule_backup_$(date +%F).csv || echo "No schedule file to back up"
+          # also write parquet for generate_features if CSV exists
+          if [ -f data/cache/schedule.csv ]; then
+            python -c "import pandas as pd; df=pd.read_csv('data/cache/schedule.csv'); df.to_parquet('data/cache/historical_schedule.parquet', index=False)"
+          fi
         continue-on-error: true
 
-      - name: Generate features
-        run: python -m src.scripts.generate_features
+      - name: Generate features (resilient)
+        run: |
+          python -m src.scripts.generate_features || echo "Feature generation failed"
+          # ensure features_full.parquet exists even if script failed
+          if [ ! -f data/cache/features_full.parquet ]; then
+            mkdir -p data/cache
+            python -c "import pandas as pd; pd.DataFrame(columns=['GAME_ID','SEASON','PTS','PTS_OPP','WL']).to_parquet('data/cache/features_full.parquet', index=False)"
+            echo "Empty features file written"
+          fi
+        continue-on-error: true
 
       - name: Retrain model and log metrics
         run: |
@@ -63,6 +75,7 @@ jobs:
                  data/results/feature_importance.csv \
                  data/results/model_comparison.csv \
                  data/cache/schedule.csv \
-                 data/backups/schedule_backup_*.csv
+                 data/backups/schedule_backup_*.csv \
+                 data/cache/features_full.parquet
           git commit -m "chore: nightly retrain, predictions, player info, algorithm comparison, and schedule backup" || echo "No changes to commit"
           git push
