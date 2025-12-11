@@ -1,57 +1,89 @@
 # ============================================================
 # File: src/prediction_engine/daily_runner.py
-# Purpose: Run daily NBA predictions using schedule-based features
-# Project: nba_analysis
-# Version: 2.1 (aligned with schedule features)
+# Purpose: Core logic for daily predictions
 # ============================================================
 
 import logging
 import pandas as pd
-
+from nba_api.stats.endpoints import commonteamroster
 from src.api.nba_api_client import fetch_today_games
-from src.features.feature_engineering import generate_features_for_games
-from src.prediction_engine.predictor import Predictor
+from src.model_training.utils import load_model, build_features
 
 logger = logging.getLogger("prediction_engine.daily_runner")
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
-    logger.addHandler(handler)
-    logger.setLevel(logging.INFO)
 
 
-def run_daily_predictions(model_path, season=2025, limit=10):
+def fetch_team_roster(team_id: int, season: int) -> pd.DataFrame:
     """
-    Fetch today's games, generate schedule-based features, run predictions.
-    Returns (features_df, predictions_df).
+    Fetch roster info for a given team and season.
+    Returns DataFrame with PLAYER_ID, PLAYER, POSITION, HEIGHT, WEIGHT, BIRTH_DATE, EXP.
     """
-    games = fetch_today_games()
-    if games is None or games.empty:
-        logger.warning("No games found for today.")
-        return None, None
+    try:
+        roster = commonteamroster.CommonTeamRoster(team_id=team_id, season=season)
+        df = roster.get_data_frames()[0]
+        return df[
+            ["PLAYER_ID", "PLAYER", "POSITION", "HEIGHT", "WEIGHT", "BIRTH_DATE", "EXP"]
+        ]
+    except Exception as e:
+        logger.warning("Failed to fetch roster for team %s: %s", team_id, e)
+        return pd.DataFrame()
 
-    if limit:
-        games = games.head(limit)
 
-    features = generate_features_for_games(games)
-    if features is None or features.empty:
-        logger.warning("No features generated.")
-        return None, None
+def run_daily_predictions(model: str, season: int, limit: int = 10):
+    """
+    Run daily predictions.
+    Always returns 3 DataFrames: (features_df, predictions_df, player_info_df).
+    If no games are found, returns empty DataFrames.
+    """
+    try:
+        # --- Fetch today's games (or next available) ---
+        games_df = fetch_today_games()
+        if games_df.empty:
+            logger.warning("No games found today. Returning empty DataFrames.")
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    predictor = Predictor(model_path=model_path)
+        # --- Build features ---
+        features_df = build_features(games_df, season=season)
 
-    # Drop target if present
-    X = features.drop(columns=["win"], errors="ignore")
+        # --- Load model ---
+        model_obj = load_model(model)
 
-    predictions_df = pd.DataFrame(
-        {
-            "GAME_DATE": features["GAME_DATE"],
-            "TEAM_NAME": features["TEAM_NAME"],
-            "HOME_GAME": features.get("HOME_GAME", None),
-            "win_proba": predictor.predict_proba(X),
-            "win_pred": predictor.predict_label(X),
-        }
-    )
+        # --- Generate predictions ---
+        y_pred = model_obj.predict(features_df)
+        y_prob = None
+        try:
+            y_prob = model_obj.predict_proba(features_df)[:, 1]
+        except Exception:
+            pass
 
-    logger.info("Generated predictions for %d games", len(predictions_df))
-    return features, predictions_df
+        predictions_df = games_df.copy()
+        predictions_df["PREDICTED_WIN"] = y_pred
+        if y_prob is not None:
+            predictions_df["WIN_PROBABILITY"] = y_prob
+
+        # --- Player info (rosters for all teams in games) ---
+        player_info_frames = []
+        if "HOME_TEAM_ID" in games_df.columns and "VISITOR_TEAM_ID" in games_df.columns:
+            team_ids = pd.concat(
+                [games_df["HOME_TEAM_ID"], games_df["VISITOR_TEAM_ID"]]
+            ).unique()
+            for team_id in team_ids:
+                roster_df = fetch_team_roster(int(team_id), season)
+                if not roster_df.empty:
+                    roster_df["TEAM_ID"] = team_id
+                    player_info_frames.append(roster_df)
+
+        player_info_df = (
+            pd.concat(player_info_frames, ignore_index=True)
+            if player_info_frames
+            else pd.DataFrame()
+        )
+
+        # --- Limit results ---
+        if limit:
+            predictions_df = predictions_df.head(limit)
+
+        return features_df, predictions_df, player_info_df
+
+    except Exception as e:
+        logger.error("Daily predictions failed: %s", e)
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
