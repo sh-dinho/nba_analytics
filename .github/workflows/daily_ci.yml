@@ -17,18 +17,18 @@ jobs:
       - name: Set up Python environment
         uses: actions/setup-python@v2
         with:
-          python-version: '12.0'  # Updated Python version to 12.0
+          python-version: '3.12'  # Use a valid Python version (3.12 or 3.11)
 
       - name: Install dependencies
         run: |
           python -m venv venv
           source venv/bin/activate
-          pip install -r requirements.txt  # Ensures all dependencies including pandas are installed
+          pip install -r requirements.txt
 
       - name: Fetch historical NBA data
         run: |
           echo "Fetching historical NBA data..."
-          python src/scripts/generate_historical_schedule.py  # Running your script
+          python src/scripts/generate_historical_schedule.py
 
       - name: Generate Today's Schedule
         run: |
@@ -45,7 +45,7 @@ jobs:
       - name: Set up Python environment
         uses: actions/setup-python@v2
         with:
-          python-version: '12.0'  # Updated Python version to 12.0
+          python-version: '3.12'  # Use a valid Python version (3.12 or 3.11)
 
       - name: Install dependencies
         run: |
@@ -57,56 +57,3 @@ jobs:
         run: |
           echo "Generating features for today's games..."
           python -m src.scripts.generate_features
-
-  model-prediction:
-    needs: generate-features
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Set up Python environment
-        uses: actions/setup-python@v2
-        with:
-          python-version: '12.0'  # Updated Python version to 12.0
-
-      - name: Install dependencies
-        run: |
-          python -m venv venv
-          source venv/bin/activate
-          pip install -r requirements.txt
-
-      - name: Make predictions for today's NBA games
-        run: |
-          echo "Running model to make predictions..."
-          python -m src.daily_runner_mflow
-
-      - name: Log predictions to MLflow
-        run: |
-          echo "Logging predictions to MLflow..."
-          python -m mlflow.log_artifacts --artifact-path ${{ github.workspace }}/results/interpretability
-
-  upload-to-pbi:
-    needs: model-prediction
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Set up Python environment
-        uses: actions/setup-python@v2
-        with:
-          python-version: '12.0'  # Updated Python version to 12.0
-
-      - name: Install dependencies
-        run: |
-          python -m venv venv
-          source venv/bin/activate
-          pip install -r requirements.txt
-
-      - name: Upload outputs to Power BI folder
-        run: |
-          echo "Copying prediction results to Power BI folder..."
-          cp ${{ github.workspace }}/results/todays_picks.csv /path/to/pbi_folder
-          cp ${{ github.workspace }}/results/bet_on.csv /path/to/pbi_folder
-          cp ${{ github.workspace }}/results/avoid.csv /path/to/pbi_folder
