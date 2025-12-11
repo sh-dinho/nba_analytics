@@ -30,3 +30,6 @@ sphinx==7.1.2
 # Dev tools (optional)
 flake8==7.1.1
 mypy==1.11.2
+
+# Testing (optional)
+pytest==7.4.0
