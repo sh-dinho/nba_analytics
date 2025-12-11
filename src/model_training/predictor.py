@@ -2,14 +2,18 @@
 # File: src/prediction_engine/predictor.py
 # Purpose: Predict win probabilities using trained model with logging + CLI
 # Project: nba_analysis
-# Version: 1.1 (robust feature alignment + CLI improvements)
+# Version: 1.2 (adds parquet support, summary stats, optional MLflow logging)
 # ============================================================
 
+import argparse
 from pathlib import Path
 import joblib
 import pandas as pd
-import argparse
+import logging
+import mlflow
+
 from src.utils.logging import configure_logging
+
 
 class NBAPredictor:
     def __init__(self, model_path: str, log_level="INFO", log_dir="logs"):
@@ -28,7 +32,6 @@ class NBAPredictor:
             raise
         self.logger.info("Model successfully loaded.")
 
-        # Try to capture expected features if logged during training
         self.expected_features = getattr(self.model, "feature_names_in_", None)
 
     def _validate_features(self, features: pd.DataFrame) -> pd.DataFrame:
@@ -40,7 +43,6 @@ class NBAPredictor:
         drop_cols = ["win", "unique_id", "prediction_date"]
         features = features.drop(columns=[c for c in drop_cols if c in features.columns], errors="ignore")
 
-        # Align to expected features if available
         if self.expected_features is not None:
             missing = [f for f in self.expected_features if f not in features.columns]
             if missing:
@@ -50,7 +52,6 @@ class NBAPredictor:
         return features
 
     def predict_proba(self, features: pd.DataFrame) -> pd.Series:
-        """Predict win probabilities for given features."""
         features = self._validate_features(features)
         self.logger.info(f"Generating probability predictions for {len(features)} samples")
 
@@ -65,7 +66,6 @@ class NBAPredictor:
         return pd.Series(proba, index=features.index, name="win_proba")
 
     def predict_label(self, features: pd.DataFrame, threshold: float = 0.5) -> pd.Series:
-        """Predict win/loss labels based on threshold."""
         features = self._validate_features(features)
         self.logger.info(f"Generating label predictions with threshold={threshold}")
 
@@ -75,6 +75,7 @@ class NBAPredictor:
         self.logger.info(f"Predicted win rate: {win_rate:.3f}")
         return labels
 
+
 # -------------------------------
 # CLI Wrapper
 # -------------------------------
@@ -82,29 +83,46 @@ class NBAPredictor:
 def main():
     parser = argparse.ArgumentParser(description="NBA Predictor CLI")
     parser.add_argument("--model", required=True, help="Path to trained model file (.pkl)")
-    parser.add_argument("--features", required=True, help="Path to CSV file with features")
+    parser.add_argument("--features", required=True, help="Path to CSV or Parquet file with features")
     parser.add_argument("--mode", choices=["proba", "label"], default="proba")
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--output", help="Optional path to save predictions as CSV")
+    parser.add_argument("--mlflow", is_flag=True, help="Log predictions to MLflow")
     args = parser.parse_args()
 
     try:
         predictor = NBAPredictor(model_path=args.model)
-        features = pd.read_csv(args.features)
+
+        if args.features.endswith(".parquet"):
+            features = pd.read_parquet(args.features)
+        else:
+            features = pd.read_csv(args.features)
 
         if args.mode == "proba":
             preds = predictor.predict_proba(features)
         else:
             preds = predictor.predict_label(features, threshold=args.threshold)
 
-        # Print summary + head
         print(preds.head())
         print(f"... total {len(preds)} predictions")
+        print(f"Summary: mean={preds.mean():.3f}, min={preds.min():.3f}, max={preds.max():.3f}")
+
         if args.output:
             preds.to_csv(args.output, index=True)
             print(f"Predictions saved to {args.output}")
+
+        if args.mlflow:
+            with mlflow.start_run(run_name="predictor_cli", nested=True):
+                mlflow.log_param("model_path", args.model)
+                mlflow.log_param("features_file", args.features)
+                mlflow.log_metric("mean_prediction", preds.mean())
+                mlflow.log_artifact(args.model, artifact_path="model")
+                if args.output:
+                    mlflow.log_artifact(args.output, artifact_path="predictions")
+
     except Exception as e:
         print(f"❌ Prediction failed: {e}")
+
 
 if __name__ == "__main__":
     main()

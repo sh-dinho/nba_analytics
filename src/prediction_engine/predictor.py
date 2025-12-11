@@ -1,38 +1,45 @@
 # ============================================================
 # File: src/prediction_engine/predictor.py
-# Purpose: Wrap model for predictions with probabilities and labels
+# Purpose: Generic predictor wrapper with logging for scikit-learn style models
+# Project: nba_analysis
+# Version: 1.3 (adds logging hooks for probability stats and win rate)
 # ============================================================
 
-import pandas as pd
 import numpy as np
-from sklearn.base import BaseEstimator
+import logging
 from scipy.special import expit, softmax
 
 class Predictor:
-    def __init__(self, model: BaseEstimator):
+    def __init__(self, model, log_level="INFO", log_name="Predictor"):
         self.model = model
+        logging.basicConfig(level=getattr(logging, log_level.upper(), logging.INFO),
+                            format="%(asctime)s [%(levelname)s] %(message)s")
+        self.logger = logging.getLogger(log_name)
 
-    def _validate_input(self, X):
-        if not isinstance(X, (pd.DataFrame, np.ndarray)):
-            raise TypeError("Input must be DataFrame or ndarray")
-        if X.shape[0] == 0:
-            raise ValueError("Input data has zero samples")
-
-    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
-        self._validate_input(X)
+    def _predict(self, X, output_type="label", threshold=0.5):
         if hasattr(self.model, "predict_proba"):
-            return np.asarray(self.model.predict_proba(X))
-        if hasattr(self.model, "decision_function"):
+            proba = self.model.predict_proba(X)
+        elif hasattr(self.model, "decision_function"):
             scores = self.model.decision_function(X)
-            if scores.ndim == 1:
-                probs = expit(scores)
-                return np.vstack([1 - probs, probs]).T
-            else:
-                return softmax(scores, axis=1)
-        raise AttributeError("Model does not support probability prediction")
+            if scores.ndim > 1:  # multi-class
+                proba = softmax(scores, axis=1)
+            else:  # binary
+                p1 = expit(scores)
+                proba = np.column_stack([1 - p1, p1])
+        else:
+            raise AttributeError(f"Model {type(self.model).__name__} does not support prediction")
 
-    def predict_label(self, X: pd.DataFrame, threshold=0.5) -> np.ndarray:
-        proba = self.predict_proba(X)
-        if proba.shape[1] == 2:
-            return (proba[:, 1] >= threshold).astype(int)
-        return proba.argmax(axis=1)
+        if output_type == "label":
+            labels = (proba[:, 1] >= threshold).astype(int)
+            win_rate = labels.mean()
+            self.logger.info(f"Predicted win rate: {win_rate:.3f}")
+            return labels
+
+        # Log probability stats
+        p1 = proba[:, 1] if proba.shape[1] > 1 else proba.ravel()
+        self.logger.info(f"Average win probability: {p1.mean():.3f}")
+        self.logger.info(f"Min: {p1.min():.3f}, Max: {p1.max():.3f}, Std: {p1.std():.3f}")
+        return proba
+
+    def predict(self, X, output_type="label", threshold=0.5):
+        return self._predict(X, output_type=output_type, threshold=threshold)

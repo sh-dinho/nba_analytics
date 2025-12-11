@@ -4,19 +4,23 @@
 # Purpose: Bootstrap NBA AI project structure and hygiene tools.
 # ============================================================
 
-set -e
+set -euo pipefail
 
 echo "🚀 Setting up NBA AI project..."
 
 # --- Check prerequisites ---
-command -v python >/dev/null 2>&1 || { echo "❌ Python not found"; exit 1; }
-command -v pip >/dev/null 2>&1 || { echo "❌ pip not found"; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "❌ Python3 not found, please install it"; exit 1; }
+command -v pip >/dev/null 2>&1 || { echo "❌ pip not found, please install it"; exit 1; }
 
 # --- Create directories ---
-mkdir -p src/prediction_engine src/model_training src/utils tests data results models logs docs
+mkdir -p src/prediction_engine src/model_training src/utils src/features tests data results models logs docs
 
 # --- Create placeholder files ---
-touch src/prediction_engine/__init__.py src/model_training/__init__.py src/utils/__init__.py tests/__init__.py
+touch src/prediction_engine/__init__.py \
+      src/model_training/__init__.py \
+      src/utils/__init__.py \
+      src/features/__init__.py \
+      tests/__init__.py
 
 # --- Initialize Git repo if not already ---
 if [ ! -d ".git" ]; then
@@ -50,7 +54,7 @@ coverage.xml
 htmlcov/
 .DS_Store
 Thumbs.db
-.VS Code/
+.vscode/
 .idea/
 build/
 dist/
@@ -83,7 +87,6 @@ insert_final_newline = true
 [*.{yml,yaml,json}]
 indent_style = space
 indent_size = 2
-quote_type = double
 
 [*.toml]
 indent_style = space
@@ -98,13 +101,23 @@ end_of_line = lf
 indent_style = tab
 EOF
 
+# --- Setup virtual environment ---
+if [ ! -d ".venv" ]; then
+  python3 -m venv .venv
+fi
+source .venv/bin/activate
+
 # --- Install dependencies ---
 pip install --upgrade pip setuptools wheel
-pip install -r requirements.txt || true
+if [ -f requirements.txt ]; then
+  pip install -r requirements.txt
+else
+  echo "❌ No requirements.txt found. Please ensure dependencies are listed."
+  exit 1
+fi
 
 # --- Fix common dependency conflicts ---
-pip install --upgrade "protobuf>=5.0,<7.0"
-pip install --upgrade "packaging>=24.2"
+pip install --upgrade "protobuf>=5.0,<7.0" "packaging>=24.2"
 
 # --- Ensure pinned mlflow version ---
 pip uninstall -y mlflow mlflow-skinny || true
@@ -112,8 +125,11 @@ pip install mlflow==2.9.2
 
 # --- Initialize pre-commit ---
 pip install pre-commit
-pre-commit install
-pre-commit install --hook-type pre-push
+if ! command -v pre-commit >/dev/null 2>&1; then
+  echo "❌ pre-commit installation failed."
+  exit 1
+fi
+pre-commit install --hook-type pre-push --install-hooks
 
 # --- Initialize GitHub Actions workflow ---
 mkdir -p .github/workflows
@@ -129,14 +145,14 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install --upgrade pip setuptools wheel
-      - run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt || true
       - run: pip install "protobuf>=5.0,<7.0" "packaging>=24.2" mlflow==2.9.2
       - run: make ci
 EOF
 
 # --- Compatibility check ---
 echo "🔍 Verifying installed versions..."
-python -c "import mlflow, packaging, google.protobuf as pb; \
+python3 -c "import mlflow, packaging, google.protobuf as pb; \
 print(f'MLflow version: {mlflow.__version__}'); \
 print(f'Packaging version: {packaging.__version__}'); \
 print(f'Protobuf version: {pb.__version__}')"
