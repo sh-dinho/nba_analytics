@@ -1,22 +1,19 @@
 import pytest
-
-from src.prediction_engine.predictor import Predictor  # Update this path as needed
+from src.prediction_engine.predictor import Predictor
 
 
 @pytest.fixture
 def mock_predictor():
-    # Adjust this to match the actual Predictor constructor
-    # If Predictor expects a model instance or a different method to load the model, change this.
-    predictor = Predictor()  # If model loading is done later or via another method
-    predictor.load_model(
-        model_path="path/to/mock/model.pkl"
-    )  # Use the actual method to load the model
-    return predictor
+    # Create an instance of the predictor class with a mock model path
+    return Predictor(model_path="path/to/mock/model.pkl")
 
 
 def test_predictor_initialization(mock_predictor):
     # Test that the predictor is initialized correctly
     assert mock_predictor is not None
+    assert callable(
+        mock_predictor.model
+    )  # Ensure the model is callable (like a function)
 
 
 def test_predictor_prediction(mock_predictor):
