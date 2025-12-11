@@ -28,7 +28,7 @@ jobs:
       - name: Fetch historical NBA data
         run: |
           echo "Fetching historical NBA data..."
-          python src/scripts/fetch_historical_data.py
+          python src/scripts/generate_historical_schedule.py
 
       - name: Generate Today's Schedule
         run: |

@@ -1,84 +1,210 @@
-# NBA Prediction Pipeline
-
-A Python pipeline for fetching NBA game data, generating features, training a logistic regression model, and producing daily win probability predictions. Outputs are saved locally in organized folders and can be connected directly to Power BI for dashboards.
+# 📘 NBA Prediction Pipeline — Clean & Production-Ready README (v1.3)
+*A modular Python pipeline for fetching NBA game data, generating features, training ML models, and producing daily win-probability predictions. Fully compatible with Power BI.*
 
 ---
 
-## 🚀 How to Run
+# 🚀 Quick Start
 
-1. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. Run the pipeline
+### **1. Install requirements**
 ```bash
-  python run_pipeline.py
+pip install -r requirements.txt
 ```
-3. Outputs will be saved automatically into the data/ folder structure.
+### 2.Run the daily prediction runner
 ```bash
-nba_project/
-├─ src/
-│  ├─ __init__.py
-│  ├─ utils/
-│  │   ├─ __init__.py
-│  │   ├─ io.py
-│  │   ├─ logging.py
-│  │   └─ nba_api_wrapper.py
-│  ├─ feature_engineering/
-│  │   ├─ __init__.py
-│  │   └─ feature_engineering.py
-│  ├─ model_training/
-│  │   ├─ __init__.py
-│  │   ├─ train_logreg.py
-│  │   ├─ train_xgb.py
-│  │   └─ training.py
-│  ├─ prediction_engine/
-│  │   ├─ __init__.py
-│  │   └─ predictor.py
-│  ├─ interpretability/
-│  │   ├─ __init__.py
-│  │   └─ shap_analysis.py
-│  └─ main_today.py
-├─ data/
-├─ models/
-├─ results/
-└─ run_today.sh
+python run_pipeline.py --model models/nba_logreg.pkl
 ```
-4. Power Bi Integration
-- Connect to Historical Prediction
-  - Open Power BI Desktop
-  - Go to Home -> Get Data -> Parquet
-  - Select data/history/predictions_history.parquet
-  - Load the table into Power BI.
+### 3.  Optional) Run the MLflow-enabled runner
+```bash
+python daily_runner_mflow.py --model models/nba_logreg.pkl
+```
+### 4. View outputs
+All outputs are saved automatically into the standardized folder structure:
+```bash
+data/
+  raw/           # raw NBA API dumps (optional)
+  cache/         # cached training features
+  history/       # historical predictions
+  csv/           # daily CSV predictions
+  parquet/       # daily Parquet predictions
+  logs/          # runner logs + API failure logs
+models/
+results/
+```
+Your predictions are now ready for Power BI dashboards.
 
-5. Connect to Multiple Daily Files
-  - Use the Folder connector:
-    - for CSVs -> data/csv/
-    - for Parquet -> data/parquet/
-    - Load the table into Power BI
+# 🏗 Project Structure
 
-## Example Dashboards
-  - Accuracy trend → Line chart with prediction_date vs. accuracy.
-  - Team analytics → Bar chart with TEAM_ID vs. average pred_proba.
-  - Game drill_downs → Table with stats + predictions.
+```
+nba_analysis/
+│
+├── src/
+│   ├── api/
+│   │   └── nba_api_wrapper.py
+│   ├── features/
+│   ├── model_training/
+│   ├── prediction_engine/
+│   ├── tracker/
+│   │   └── game_tracker.py
+│   ├── utils/
+│   │   ├── add_unique_id.py
+│   │   ├── io.py
+│   │   ├── logging.py
+│   │   ├── logging_config.py
+│   │   ├── mapping.py
+│   │   ├── nba_api_wrapper.py
+│   │   ├── validation.py
+│   └── scripts/
+│       ├── generate_historical_schedule.py
+│       └── generate_today_schedule.py
+├── data/
+│   ├── cache/
+│   └── results/
+├── logs/
+├── models/
+├── tests/
+├── docs/
+├── .editorconfig
+├── .gitignore
+├── requirements.txt
+├── setup_project.sh
+└── Makefile
 
-6. 🛠 Features- Data Quality Checks → Validates critical columns, drops nulls, logs anomalies.
-   - Error Handling → Retries API calls with exponential backoff, logs errors separately.
-   - Configurable → Paths, seasons, and model path defined in config.yaml.
-   - Environment Separation → Raw, cache, history, CSV, Parquet, logs all in distinct folders.
-   - Deduplication → Unique IDs prevent duplicate rows.
-   - Performance → Batch feature generation speeds up initial fetch.
-   - Unit Tests → Core functions tested with pytest.
+```
+📊 Power BI Integration
+1. Load Historical Prediction Data
 
-## 👥 Contributors- Developed in Python with ❤️ for NBA analytics.
-  - Designed for easy integration with Power BI.
+Power BI → Get Data → Parquet
 
-## 📈 Roadmap- v1.0 → Local Parquet/CSV storage, Power BI dashboards.
-  - v2.0 → Optional migration to SQLite/PostgreSQL for larger datasets.
-  - Future → Cloud integration (Azure Synapse, BigQuery, etc.).
+Select:
+````
+data/history/predictions_history.parquet
+````
+2. Load Multiple Daily Prediction Files
 
-## - Version 1.0 → stick with logistic regression + clean pipeline (done).
-    - Version 2.0 → migrate storage to SQLite/Postgres.
-    - Version 3.0 → add AI models (XGBoost or neural nets) and integrate explainability.
+- Use the Folder connector:
 
-![Coverage](https://img.shields.io/codecov/c/github/your-org/your-repo?style=flat-square)
+  -For CSVs: data/csv/
+
+- For Parquet: data/parquet/
+
+Power BI automatically appends all files.
+
+🛠 Key Pipeline Features
+1. Data Quality Checks
+
+validates required columns
+
+ensures correct data types
+
+detects anomalies
+
+logs issues to data/logs/
+
+2. Error Handling
+
+automatic retry logic with backoff
+
+safe API wrappers
+
+separate error logs
+
+3. Config-Driven
+
+config.yaml controls:
+
+seasons
+
+model paths
+
+thresholds
+
+save locations
+
+retry settings
+
+MLflow parameters
+
+4. File Structure Organization
+
+Separate folders for:
+
+raw API data
+
+feature cache
+
+prediction history
+
+CSV & Parquet daily outputs
+
+logs
+
+5. Deduplication
+
+Unified ID prevents duplicate rows:
+
+GAME_ID
+
+TEAM_ID
+
+prediction_date
+
+6. Performance
+
+Vectorized feature engineering
+
+Batch operations
+
+Cached repeated lookups
+
+7. Tested with pytest
+
+Core components include tests:
+
+feature generation
+
+API wrapper
+
+predictor logic
+
+data cleaning
+
+👥 Contributors
+
+Developed in Python with ❤️ for NBA analytics, reproducible ML pipelines, and Power BI integration.
+
+🗺 Roadmap
+v1.0 — Complete
+
+Logistic regression baseline
+
+Clean pipeline
+
+CSV/Parquet outputs
+
+Power BI dashboards
+
+v2.0 — Coming Soon
+
+Migrate storage to SQLite/Postgres
+
+Historical rollups
+
+Scheduled ETL jobs
+
+v3.0 — ML Enhancements
+
+XGBoost / Random Forest / Neural Net models
+
+SHAP explainability
+
+MLflow model versioning
+
+v4.0 — Cloud Integration
+
+Azure Synapse
+
+BigQuery
+
+AWS Glue
+
+cloud-based MLflow

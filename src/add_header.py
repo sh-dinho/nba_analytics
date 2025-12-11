@@ -1,55 +1,48 @@
-# ============================================================
-# Path: scripts/add_header.py
-# File: add_header.py
-# Purpose: Pre-commit hook script to enforce standardized headers in Python files
-# Project: nba_analysis
-# ============================================================
+import os
+from datetime import datetime
 
-import pathlib
-import sys
-
-HEADER_TEMPLATE = """# ============================================================
-# Path: {path}
-# File: {file}
-# Purpose: <add short description here>
-# Project: nba_analysis
+# Template for header
+header_template = """
 # ============================================================
-
+# File: {filename}
+# Purpose: {purpose}
+# Version: 1.2
+# Author: Your Team
+# Date: {date}
+# ============================================================
 """
 
-EXPECTED_START = "# ============================================================"
-EXPECTED_PROJECT = "# Project: nba_analysis"
+
+def add_header_to_script(script_path, purpose):
+    """
+    Adds the header to the script if it's not already present.
+    """
+    date = datetime.now().strftime("%B %Y")
+    filename = os.path.basename(script_path)
+    header = header_template.format(filename=filename, purpose=purpose, date=date)
+
+    # Read the content of the script
+    with open(script_path, 'r') as file:
+        content = file.read()
+
+    # If the header is already present, do nothing
+    if not content.startswith(
+        "# =========================================================="):
+        with open(script_path, 'w') as file:
+            # Prepend the header and then the rest of the content
+            file.write(header + content)
 
 
-def has_valid_header(content: list[str]) -> bool:
-    """Check if the file already has a valid standardized header."""
-    return (
-        len(content) >= 5
-        and content[0].startswith(EXPECTED_START)
-        and any(EXPECTED_PROJECT in line for line in content[:6])
-    )
+def process_directory(directory, purpose="Automated header insertion"):
+    """
+    Walk through all files in the given directory and insert header into Python files.
+    """
+    for subdir, _, files in os.walk(directory):
+        for file in files:
+            if file.endswith('.py'):
+                script_path = os.path.join(subdir, file)
+                add_header_to_script(script_path, purpose)
 
 
-def ensure_header(file_path: pathlib.Path):
-    """Ensure the file has a standardized header, fixing malformed ones if needed."""
-    content = file_path.read_text(encoding="utf-8").splitlines()
-
-    if has_valid_header(content):
-        # Already valid, do nothing
-        return
-
-    # Always replace with a fresh header
-    header = HEADER_TEMPLATE.format(path=file_path.as_posix(), file=file_path.name)
-    new_content = header + "\n".join(content)
-    file_path.write_text(new_content, encoding="utf-8")
-
-
-def main():
-    for filename in sys.argv[1:]:
-        path = pathlib.Path(filename)
-        if path.suffix == ".py":
-            ensure_header(path)
-
-
-if __name__ == "__main__":
-    main()
+# Specify the root directory where your scripts are located
+process_directory("src")  # You can change this to any other directory if needed

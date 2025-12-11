@@ -1,28 +1,59 @@
 # ============================================================
 # File: src/interpretability/shap_analysis.py
 # Purpose: SHAP interpretability for XGBoost model
+# Version: 1.1 (fixes mean abs calc, adds logging, nested MLflow)
 # ============================================================
 
-import shap, joblib, os, pandas as pd, matplotlib.pyplot as plt
+import os
+import logging
+import joblib
+import matplotlib.pyplot as plt
 import mlflow
-from datetime import datetime
+import pandas as pd
+import shap
+import numpy as np
 
-def run_shap(model_path, cache_file, out_dir="results/interpretability", top_n=3):
+
+def run_shap(model_path, cache_file, out_dir="results/interpretability", top_n=3, clf_step="clf"):
+    """
+    Run SHAP analysis for an XGBoost model inside a sklearn pipeline.
+    Args:
+        model_path (str): Path to saved pipeline (joblib).
+        cache_file (str): Path to cached dataset (parquet or csv).
+        out_dir (str): Directory to save SHAP plots.
+        top_n (int): Number of top features for dependence plots.
+        clf_step (str): Name of classifier step in pipeline.
+    """
     os.makedirs(out_dir, exist_ok=True)
+
     pipeline = joblib.load(model_path)
-    xgb_model = pipeline.named_steps["clf"]
-    df = pd.read_parquet(cache_file)
+    if clf_step not in pipeline.named_steps:
+        raise KeyError(f"Classifier step '{clf_step}' not found in pipeline steps: {list(pipeline.named_steps.keys())}")
+    xgb_model = pipeline.named_steps[clf_step]
+
+    # Load dataset
+    if cache_file.endswith(".parquet"):
+        df = pd.read_parquet(cache_file)
+    elif cache_file.endswith(".csv"):
+        df = pd.read_csv(cache_file)
+    else:
+        raise ValueError(f"Unsupported cache file format: {cache_file}")
+
     X = df.drop(columns=["target"], errors="ignore")
 
     explainer = shap.TreeExplainer(xgb_model)
     shap_values = explainer(X)
 
+    # Summary plot
     summary_path = os.path.join(out_dir, "shap_summary.png")
     shap.summary_plot(shap_values, X, show=False)
     plt.savefig(summary_path, bbox_inches="tight")
     plt.close()
 
-    mean_abs = pd.Series(shap_values.values.mean(axis=0).abs(), index=X.columns).sort_values(ascending=False)
+    # Top features by mean absolute SHAP
+    mean_abs = pd.Series(
+        np.abs(shap_values.values).mean(axis=0), index=X.columns
+    ).sort_values(ascending=False)
     top_features = mean_abs.index[:top_n].tolist()
     dep_paths = []
 
@@ -33,10 +64,10 @@ def run_shap(model_path, cache_file, out_dir="results/interpretability", top_n=3
         plt.close()
         dep_paths.append(dep_path)
 
-    # Log to MLflow
-    with mlflow.start_run(run_name="shap_analysis"):
+    # Log to MLflow (nested run)
+    with mlflow.start_run(run_name="shap_analysis", nested=True):
         mlflow.log_artifact(summary_path, artifact_path="interpretability")
         for p in dep_paths:
             mlflow.log_artifact(p, artifact_path="interpretability")
 
-    print(f"✅ SHAP report logged. Top features: {top_features}")
+    logging.info(f"✅ SHAP report logged. Top features: {top_features}")

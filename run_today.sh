@@ -5,22 +5,28 @@
 # Author: nba_analysis
 # ============================================================
 
+set -euo pipefail
+
 # --- Config ---
-PYTHON_ENV="/path/to/your/python/env"   # e.g., conda activate nba_env
-PROJECT_DIR="/path/to/nba_project"
+PYTHON_ENV="nba_env"                     # conda environment name
+PROJECT_DIR="$HOME/nba_project"
 OUTPUT_DIR="$PROJECT_DIR/results"
-PBI_DIR="/path/to/pbi_folder"           # where Power BI reads CSVs
+PBI_DIR="$HOME/pbi_folder"               # where Power BI reads CSVs
 
 # --- Activate Python environment ---
 echo "[INFO] Activating Python environment..."
-source $PYTHON_ENV
+source ~/miniconda3/etc/profile.d/conda.sh
+conda activate "$PYTHON_ENV"
 
 # --- Navigate to project ---
-cd $PROJECT_DIR || exit
+cd "$PROJECT_DIR" || { echo "[ERROR] Project dir not found"; exit 1; }
+
+# --- Ensure cache/output dirs exist ---
+mkdir -p "$PROJECT_DIR/data/cache" "$OUTPUT_DIR"
 
 # --- Generate today's schedule/features ---
 echo "[INFO] Generating today's schedule/features..."
-python -m src.scripts.generate_today_schedule
+python -m src.scripts.generate_today_schedule || { echo "[ERROR] Schedule generation failed"; exit 1; }
 
 # --- Run today's NBA picks pipeline ---
 echo "[INFO] Running today's pipeline..."
@@ -31,8 +37,13 @@ python -m src.main_today \
 
 # --- Copy CSVs for Power BI ---
 echo "[INFO] Copying outputs to Power BI folder..."
-cp $OUTPUT_DIR/todays_picks.csv $PBI_DIR/ 2>/dev/null || true
-cp $OUTPUT_DIR/bet_on.csv $PBI_DIR/ 2>/dev/null || true
-cp $OUTPUT_DIR/avoid.csv $PBI_DIR/ 2>/dev/null || true
+for f in todays_picks.csv bet_on.csv avoid.csv; do
+    if [ -f "$OUTPUT_DIR/$f" ]; then
+        cp "$OUTPUT_DIR/$f" "$PBI_DIR/"
+        echo "[INFO] Copied $f to Power BI folder"
+    else
+        echo "[WARN] $f not found in $OUTPUT_DIR"
+    fi
+done
 
 echo "[INFO] Daily NBA pipeline completed. Outputs ready for Power BI."

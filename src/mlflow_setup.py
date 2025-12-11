@@ -1,22 +1,29 @@
 # ============================================================
 # File: mlflow_setup.py
-# Purpose: Configure MLflow tracking for nba_analysis experiments.
+# Purpose: Configure MLflow tracking for nba_analysis experiments
 # Project: nba_analysis
+# Version: 1.1 (Improved metadata logging and safety)
 # ============================================================
 
-import os
-import sys
-import mlflow
 import datetime
-import subprocess
+import os
 import platform
+import subprocess
+import sys
+
+import mlflow
 import pkg_resources
 
 
-def configure_mlflow():
-    """Configure MLflow tracking URI and experiment, auto-creating if needed."""
-    tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
-    experiment_name = os.getenv("MLFLOW_EXPERIMENT_NAME", "NBA_Analysis_Experiments")
+def configure_mlflow(tracking_uri: str = None, experiment_name: str = None):
+    """
+    Configure MLflow tracking URI and experiment.
+    Auto-creates experiment if it doesn't exist.
+    """
+    tracking_uri = tracking_uri or os.getenv("MLFLOW_TRACKING_URI", "file:./mlruns")
+    experiment_name = experiment_name or os.getenv(
+        "MLFLOW_EXPERIMENT_NAME", "NBA_Analysis_Experiments"
+    )
 
     try:
         mlflow.set_tracking_uri(tracking_uri)
@@ -37,29 +44,37 @@ def configure_mlflow():
         sys.exit(1)
 
 
-def start_run_with_metadata(run_name: str = "nba_analysis_run"):
+def start_run_with_metadata(run_name: str = None):
     """
-    Start an MLflow run with standard metadata:
+    Start an MLflow run with standard reproducibility metadata.
+
+    Adds:
     - Project name
     - Timestamp
-    - Git commit hash (if available)
-    - System environment info (Python version, OS, machine)
+    - Git commit hash
+    - System info (Python version, OS, machine, processor)
     - Installed package versions
     """
+    run_name = run_name or f"nba_analysis_run_{datetime.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
     configure_mlflow()
 
-    # Collect metadata
+    # Collect timestamp
     timestamp = datetime.datetime.utcnow().isoformat()
+
+    # Attempt to get git commit
     try:
-        git_commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
-        ).decode("utf-8").strip()
+        git_commit = (
+            subprocess.check_output(["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL)
+            .decode("utf-8")
+            .strip()
+        )
     except Exception:
         git_commit = "unknown"
 
+    # Start MLflow run
     run = mlflow.start_run(run_name=run_name)
 
-    # Tags for reproducibility
+    # Set tags for reproducibility
     mlflow.set_tags({
         "project": "nba_analysis",
         "timestamp": timestamp,
@@ -71,7 +86,7 @@ def start_run_with_metadata(run_name: str = "nba_analysis_run"):
         "processor": platform.processor(),
     })
 
-    # Log installed package versions
+    # Log installed packages
     try:
         installed_packages = {dist.project_name: dist.version for dist in pkg_resources.working_set}
         for pkg, version in installed_packages.items():

@@ -1,16 +1,18 @@
 # ============================================================
 # File: src/main_today.py
 # Purpose: Daily NBA predictions pipeline
-# Version: 1.1 (uses config defaults if no CLI args provided)
+# Version: 1.2 (robust imports, schema handling, SHAP dir creation)
 # ============================================================
 
 import argparse
-import yaml
-from pathlib import Path
-import pandas as pd
 import logging
-from features.feature_engineering import generate_features_for_games
-from prediction_engine.predictor import Predictor as NBAPredictor
+from pathlib import Path
+
+import pandas as pd
+import yaml
+
+from src.features.feature_engineering import generate_features_for_games
+from src.prediction_engine.predictor import Predictor as NBAPredictor
 
 # -----------------------------
 # Load default config
@@ -54,7 +56,12 @@ if not SCHEDULE_FILE.exists():
     logger.error(f"Schedule/features file not found: {SCHEDULE_FILE}")
     raise FileNotFoundError(f"{SCHEDULE_FILE} does not exist")
 
-schedule_df = pd.read_parquet(SCHEDULE_FILE)
+try:
+    schedule_df = pd.read_parquet(SCHEDULE_FILE)
+except Exception as e:
+    logger.error(f"Failed to read schedule file: {e}")
+    raise
+
 if schedule_df.empty:
     logger.warning("Schedule/features file is empty")
 
@@ -71,8 +78,9 @@ logger.info(f"Loading model from {MODEL_PATH}")
 predictor = NBAPredictor(model_path=str(MODEL_PATH))
 
 logger.info("Predicting probabilities and labels...")
-features_df["win_proba"] = predictor.predict_proba(features_df)
-features_df["win_pred"] = predictor.predict_label(features_df)
+X = features_df.drop(columns=["win"], errors="ignore")
+features_df["win_proba"] = predictor.predict_proba(X)
+features_df["win_pred"] = predictor.predict_label(X)
 
 # -----------------------------
 # Save outputs
@@ -83,8 +91,12 @@ logger.info(f"Predictions saved to {todays_csv}")
 
 # Optional: run SHAP
 if args.run_shap:
-    from interpretability.shap_analysis import run_shap
+    from src.interpretability.shap_analysis import run_shap
+
+    shap_dir = OUT_DIR / "interpretability"
+    shap_dir.mkdir(parents=True, exist_ok=True)
+
     logger.info("Running SHAP analysis...")
-    run_shap(str(MODEL_PATH), cache_file=str(SCHEDULE_FILE), out_dir=str(OUT_DIR / "interpretability"))
+    run_shap(str(MODEL_PATH), cache_file=str(SCHEDULE_FILE), out_dir=str(shap_dir))
 
 logger.info("NBA pipeline finished.")

@@ -3,8 +3,11 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
-# Environmental variable
+
+# --- Environment variables ---
 .env
+.env.*
+*.lock
 
 # --- Virtual environments ---
 env/
@@ -23,6 +26,7 @@ results/
 models/
 data/
 archives/
+mlruns/
 
 # --- Jupyter notebooks ---
 .ipynb_checkpoints/
@@ -52,3 +56,4 @@ dist/
 *.tmp
 *.bak
 *.swp
+*~
