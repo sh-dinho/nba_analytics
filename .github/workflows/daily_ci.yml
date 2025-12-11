@@ -17,18 +17,18 @@ jobs:
       - name: Set up Python environment
         uses: actions/setup-python@v2
         with:
-          python-version: '3.12'
+          python-version: '12.0'  # Updated Python version to 12.0
 
       - name: Install dependencies
         run: |
           python -m venv venv
           source venv/bin/activate
-          pip install -r requirements.txt
+          pip install -r requirements.txt  # Ensures all dependencies including pandas are installed
 
       - name: Fetch historical NBA data
         run: |
           echo "Fetching historical NBA data..."
-          python src/scripts/generate_historical_schedule.py
+          python src/scripts/generate_historical_schedule.py  # Running your script
 
       - name: Generate Today's Schedule
         run: |
@@ -45,7 +45,7 @@ jobs:
       - name: Set up Python environment
         uses: actions/setup-python@v2
         with:
-          python-version: '3.12'
+          python-version: '12.0'  # Updated Python version to 12.0
 
       - name: Install dependencies
         run: |
@@ -68,7 +68,7 @@ jobs:
       - name: Set up Python environment
         uses: actions/setup-python@v2
         with:
-          python-version: '3.9'
+          python-version: '12.0'  # Updated Python version to 12.0
 
       - name: Install dependencies
         run: |
@@ -96,7 +96,7 @@ jobs:
       - name: Set up Python environment
         uses: actions/setup-python@v2
         with:
-          python-version: '3.12'
+          python-version: '12.0'  # Updated Python version to 12.0
 
       - name: Install dependencies
         run: |
