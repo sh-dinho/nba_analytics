@@ -6,6 +6,7 @@
 import logging
 import os
 import pandas as pd
+from src.schemas import FEATURE_COLUMNS, normalize_features
 
 logger = logging.getLogger("scripts.generate_features")
 logging.basicConfig(level=logging.INFO)
@@ -21,61 +22,111 @@ def main():
 
     df = None
 
-    # --- Try parquet first ---
+    # Try parquet first
     if os.path.exists(input_file_parquet):
         logger.info("Loading schedule from %s", input_file_parquet)
-        df = pd.read_parquet(input_file_parquet)
+        try:
+            df = pd.read_parquet(input_file_parquet)
+        except Exception as e:
+            logger.error("Failed to read parquet file: %s", e)
+            df = None
     elif os.path.exists(input_file_csv):
         logger.info("Loading schedule from %s", input_file_csv)
-        df = pd.read_csv(input_file_csv)
+        try:
+            df = pd.read_csv(input_file_csv)
+        except Exception as e:
+            logger.error("Failed to read CSV file: %s", e)
+            df = None
     else:
         logger.warning("No schedule file found. Writing empty features file.")
-        empty_cols = ["GAME_ID", "SEASON", "PTS", "PTS_OPP", "WL"]
-        pd.DataFrame(columns=empty_cols).to_parquet(output_file, index=False)
+        pd.DataFrame(columns=FEATURE_COLUMNS).to_parquet(output_file, index=False)
         return
 
     if df is None or df.empty:
         logger.warning("Schedule data is empty. Writing empty features file.")
-        empty_cols = ["GAME_ID", "SEASON", "PTS", "PTS_OPP", "WL"]
-        pd.DataFrame(columns=empty_cols).to_parquet(output_file, index=False)
+        pd.DataFrame(columns=FEATURE_COLUMNS).to_parquet(output_file, index=False)
         return
 
-    # --- Build features ---
+    # Build features
     logger.info("Building features from schedule data (rows: %d)", len(df))
 
     features = pd.DataFrame()
-    features["GAME_ID"] = df.get("GAME_ID", pd.Series(dtype="int"))
-    features["SEASON"] = df.get("SEASON_ID", pd.Series(dtype="int"))
+    # GAME_ID
+    if "GAME_ID" in df.columns:
+        features["GAME_ID"] = df["GAME_ID"]
+    else:
+        features["GAME_ID"] = pd.Series(dtype="int64")
 
-    # Points scored/allowed if available
+    # SEASON
+    if "SEASON" in df.columns:
+        features["SEASON"] = df["SEASON"]
+    elif "SEASON_ID" in df.columns:
+        features["SEASON"] = df["SEASON_ID"]
+    else:
+        features["SEASON"] = pd.Series(dtype="int64")
+
+    # Points scored/allowed
     if "PTS" in df.columns:
         features["PTS"] = df["PTS"]
+    else:
+        features["PTS"] = pd.Series(dtype="float64")
+
     if "PTS_OPP" in df.columns:
         features["PTS_OPP"] = df["PTS_OPP"]
+    else:
+        features["PTS_OPP"] = pd.Series(dtype="float64")
 
-    # Win/Loss flag
-    if "WL" in df.columns:
-        features["WL"] = df["WL"].apply(lambda x: 1 if x == "W" else 0)
+    # WIN target (numeric)
+    if "WIN" in df.columns:
+        features["WIN"] = df["WIN"]
+    elif "WL" in df.columns:
+        features["WIN"] = df["WL"].apply(lambda x: 1 if str(x).upper() == "W" else 0)
+        features["WL"] = df["WL"]
+    else:
+        features["WIN"] = pd.Series(dtype="int64")
+        features["WL"] = pd.Series(dtype="object")
 
-    # Rolling averages (last 3 games per team)
-    if "TEAM_ID" in df.columns and "PTS" in df.columns:
-        features["AVG_PTS_LAST3"] = df.groupby("TEAM_ID")["PTS"].transform(
-            lambda x: x.shift().rolling(3, min_periods=1).mean()
+    # Rolling averages and streaks
+    if {"TEAM_ID", "GAME_DATE"}.issubset(df.columns):
+        df_sorted = df.sort_values(["TEAM_ID", "GAME_DATE"])
+        if "PTS" in df_sorted.columns:
+            features["AVG_PTS_LAST3"] = df_sorted.groupby("TEAM_ID")["PTS"].transform(
+                lambda x: x.shift().rolling(3, min_periods=1).mean()
+            )
+        else:
+            features["AVG_PTS_LAST3"] = pd.Series(dtype="float64")
+
+        if "PTS_OPP" in df_sorted.columns:
+            features["AVG_PTS_ALLOWED_LAST3"] = df_sorted.groupby("TEAM_ID")[
+                "PTS_OPP"
+            ].transform(lambda x: x.shift().rolling(3, min_periods=1).mean())
+        else:
+            features["AVG_PTS_ALLOWED_LAST3"] = pd.Series(dtype="float64")
+
+        if "WL" in df_sorted.columns:
+            df_sorted["win_flag"] = df_sorted["WL"].apply(
+                lambda x: 1 if str(x).upper() == "W" else 0
+            )
+            features["WIN_STREAK"] = df_sorted.groupby("TEAM_ID")["win_flag"].transform(
+                lambda x: x.shift().rolling(5, min_periods=1).sum()
+            )
+        else:
+            features["WIN_STREAK"] = pd.Series(dtype="float64")
+    else:
+        logger.warning(
+            "TEAM_ID or GAME_DATE missing. Skipping rolling stats and win streaks."
         )
-    if "TEAM_ID" in df.columns and "PTS_OPP" in df.columns:
-        features["AVG_PTS_ALLOWED_LAST3"] = df.groupby("TEAM_ID")["PTS_OPP"].transform(
-            lambda x: x.shift().rolling(3, min_periods=1).mean()
-        )
+        features["AVG_PTS_LAST3"] = pd.Series(dtype="float64")
+        features["AVG_PTS_ALLOWED_LAST3"] = pd.Series(dtype="float64")
+        features["WIN_STREAK"] = pd.Series(dtype="float64")
 
-    # Win streaks
-    if "TEAM_ID" in df.columns and "WL" in df.columns:
-        features["WIN_STREAK"] = df.groupby("TEAM_ID")["WL"].transform(
-            lambda x: x.eq("W").astype(int).groupby(x.ne("W").cumsum()).cumsum()
-        )
-
-    # --- Save features ---
-    features.to_parquet(output_file, index=False)
-    logger.info("Features saved to %s (rows: %d)", output_file, len(features))
+    # Normalize and save
+    features = normalize_features(features)
+    try:
+        features.to_parquet(output_file, index=False)
+        logger.info("Features saved to %s (rows: %d)", output_file, len(features))
+    except Exception as e:
+        logger.error("Failed to save features: %s", e)
 
 
 if __name__ == "__main__":

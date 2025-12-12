@@ -17,12 +17,12 @@ from sklearn.metrics import (
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 from xgboost import XGBClassifier
+from src.schemas import normalize_features
 
 logger = logging.getLogger("model_training.compare_algorithms")
 logging.basicConfig(level=logging.INFO)
 
 
-# --- Helper: Evaluate model ---
 def evaluate_model(model, X_test, y_test, label):
     y_pred = model.predict(X_test)
     y_prob = None
@@ -43,34 +43,43 @@ def evaluate_model(model, X_test, y_test, label):
 
 
 def main():
-    # --- Load features ---
     features_path = "data/cache/features_full.parquet"
-    df = pd.read_parquet(features_path)
+    if not os.path.exists(features_path):
+        logger.error("Features file not found at %s. Aborting.", features_path)
+        return
 
-    # Assume target column is 'WIN' (1=win, 0=loss)
-    X = df.drop(columns=["WIN"])
+    df = pd.read_parquet(features_path)
+    df = normalize_features(df)
+
+    if df.empty or "WIN" not in df.columns:
+        logger.error("Features file is empty or missing WIN column. Aborting training.")
+        return
+
+    # Drop non-numeric columns if necessary (basic guard)
+    non_feature_cols = ["GAME_ID", "WL"]
+    X = df.drop(columns=[c for c in non_feature_cols if c in df.columns] + ["WIN"])
     y = df["WIN"]
 
-    # Train/test split
+    if y.isnull().all():
+        logger.error("WIN column has no values. Aborting training.")
+        return
+
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X.fillna(0), y.fillna(0), test_size=0.2, random_state=42
     )
 
     results = []
 
-    # --- Logistic Regression ---
     logger.info("Training Logistic Regression...")
     lr = LogisticRegression(max_iter=1000)
     lr.fit(X_train, y_train)
     results.append(evaluate_model(lr, X_test, y_test, "LogisticRegression"))
 
-    # --- Random Forest ---
     logger.info("Training Random Forest...")
     rf = RandomForestClassifier(n_estimators=200, random_state=42)
     rf.fit(X_train, y_train)
     results.append(evaluate_model(rf, X_test, y_test, "RandomForest"))
 
-    # --- XGBoost ---
     logger.info("Training XGBoost...")
     xgb = XGBClassifier(
         n_estimators=300,
@@ -85,7 +94,6 @@ def main():
     xgb.fit(X_train, y_train)
     results.append(evaluate_model(xgb, X_test, y_test, "XGBoost"))
 
-    # --- Save metrics ---
     out_path = "data/results/model_comparison.csv"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     pd.DataFrame(results).to_csv(out_path, index=False)

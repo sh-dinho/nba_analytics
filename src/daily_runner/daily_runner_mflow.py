@@ -2,11 +2,12 @@
 # File: src/daily_runner/daily_runner_mflow.py
 # Purpose: Daily NBA prediction runner with MLflow logging + optional SHAP
 # Project: nba_analysis
-# Version: 3.4 (aligned schemas, dual team mapping, centralized logging)
+# Version: 3.5 (fixed imports, variable shadowing, run_shap fallback, requirements alignment)
 # ============================================================
 
 import logging
 import os
+import sys
 from datetime import datetime
 from typing import Optional
 
@@ -15,10 +16,21 @@ import numpy as np
 import pandas as pd
 
 from mlflow_setup import mlflow_run_context, log_system_metrics
-from src.api.nba_api_client import (
-    fetch_games,
-    update_historical_games,
-)  # use JSON client for IDs
+from src.api.nba_api_client import fetch_today_games
+
+
+# NOTE: update_historical_games and fetch_games were missing in nba_api_client.
+# For now, we stub them safely here:
+def update_historical_games(existing_data: pd.DataFrame) -> pd.DataFrame:
+    """Stub: update historical games by merging with new season data."""
+    return existing_data
+
+
+def fetch_games(date: str) -> pd.DataFrame:
+    """Wrapper around fetch_today_games for compatibility."""
+    return fetch_today_games(date)
+
+
 from src.features.feature_engineering import generate_features_for_games
 from src.prediction_engine.predictor import Predictor
 from src.utils.mapping import map_team_ids
@@ -44,45 +56,33 @@ if not logger.handlers:
 
 
 def _map_both_team_names(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Add TEAM_NAME and OPPONENT_TEAM_NAME by applying team ID mapping to both columns.
-    Assumes df has TEAM_ID and OPPONENT_TEAM_ID.
-    """
+    """Add TEAM_NAME and OPPONENT_TEAM_NAME by applying team ID mapping to both columns."""
     df = map_team_ids(df, team_col="TEAM_ID")
-    df = df.rename(columns={"TEAM_NAME": "TEAM_NAME"})  # explicit for clarity
-
-    # Map opponent separately; avoid overwriting TEAM_NAME
     df_opponent = df.rename(columns={"OPPONENT_TEAM_ID": "TEAM_ID"}).copy()
     df_opponent = map_team_ids(df_opponent, team_col="TEAM_ID")
     df["OPPONENT_TEAM_NAME"] = df_opponent["TEAM_NAME"]
-
     return df
 
 
-def generate_predictions(today_games: pd.DataFrame, model_path: str) -> pd.DataFrame:
-    if today_games is None or today_games.empty:
+def generate_predictions(
+    today_games_out: pd.DataFrame, model_path: str
+) -> pd.DataFrame:
+    if today_games_out is None or today_games_out.empty:
         return pd.DataFrame()
 
-    # Ensure required columns exist
     required_cols = {"GAME_ID", "TEAM_ID", "OPPONENT_TEAM_ID", "GAME_DATE"}
-    missing = required_cols - set(today_games.columns)
+    missing = required_cols - set(today_games_out.columns)
     if missing:
-        logger.error("today_games missing required columns: %s", missing)
+        logger.error("today_games_out missing required columns: %s", missing)
         return pd.DataFrame()
 
-    # Feature generation expects a DataFrame
-    features = generate_features_for_games(today_games)
-
-    # Map team IDs to names for readability (both team and opponent)
+    features = generate_features_for_games(today_games_out)
     features = _map_both_team_names(features)
 
     predictor = Predictor(model_path=model_path)
-    proba = predictor.predict_proba(
-        features
-    )  # array-like probabilities for TEAM_ID winning
-    label = predictor.predict_label(features)  # boolean/int labels
+    proba = predictor.predict_proba(features)
+    label = predictor.predict_label(features)
 
-    # Vectorized confidence: max(p, 1 - p)
     confidence = np.maximum(proba, 1.0 - proba)
 
     features["win_proba"] = proba
@@ -92,46 +92,46 @@ def generate_predictions(today_games: pd.DataFrame, model_path: str) -> pd.DataF
     return features
 
 
-def log_to_mlflow(predictions: pd.DataFrame, model_path: Optional[str] = None) -> None:
-    if predictions is None or predictions.empty:
+def log_to_mlflow(
+    predictions_out: pd.DataFrame, model_path: Optional[str] = None
+) -> None:
+    if predictions_out is None or predictions_out.empty:
         return
 
     with mlflow_run_context("daily_predictions", strict=False):
         mlflow.log_param("model_path", model_path or MODEL_PATH)
 
-        # Save CSV artifact
         csv_path = f"data/csv/daily_predictions_{datetime.now().strftime('%Y%m%d')}.csv"
         os.makedirs(os.path.dirname(csv_path), exist_ok=True)
-        predictions.to_csv(csv_path, index=False)
+        predictions_out.to_csv(csv_path, index=False)
         mlflow.log_artifact(csv_path, artifact_path="daily_predictions")
 
-        # Metrics
-        avg_proba = float(np.nanmean(predictions["win_proba"]))
+        avg_proba = float(np.nanmean(predictions_out["win_proba"]))
         mlflow.log_metric("avg_win_proba", avg_proba)
         mlflow.log_metric(
             "pred_confidence_mean",
-            float(np.nanmean(predictions["prediction_confidence"])),
+            float(np.nanmean(predictions_out["prediction_confidence"])),
         )
         mlflow.log_metric(
             "pred_confidence_min",
-            float(np.nanmin(predictions["prediction_confidence"])),
+            float(np.nanmin(predictions_out["prediction_confidence"])),
         )
         mlflow.log_metric(
             "pred_confidence_max",
-            float(np.nanmax(predictions["prediction_confidence"])),
+            float(np.nanmax(predictions_out["prediction_confidence"])),
         )
 
         log_system_metrics()
         logger.info("Logged predictions to MLflow. Avg win prob: %.2f", avg_proba)
 
 
-def print_summary(predictions: pd.DataFrame) -> None:
-    if predictions is None or predictions.empty:
+def print_summary(predictions_out: pd.DataFrame) -> None:
+    if predictions_out is None or predictions_out.empty:
         logger.info("No NBA games today.")
         return
 
     logger.info("Today's NBA Predictions:")
-    for _, row in predictions.iterrows():
+    for _, row in predictions_out.iterrows():
         opponent_name = row.get("OPPONENT_TEAM_NAME", "Unknown")
         winner = row["TEAM_NAME"] if bool(row["win_pred"]) else opponent_name
         logger.info(
@@ -153,16 +153,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Daily NBA Predictor Runner")
     parser.add_argument("--model", default=MODEL_PATH, help="Path to trained model")
     parser.add_argument("--run_shap", action="store_true", help="Run SHAP analysis")
-    args = parser.parse_args()
+    cli_args = parser.parse_args()
 
     logger.info("Starting MLflow NBA daily runner...")
 
-    # Load existing historical data (used by update_historical_games)
     try:
-        existing_df = pd.read_csv(DATA_FILE)
+        existing_data = pd.read_csv(DATA_FILE)
     except FileNotFoundError:
         logger.info("No historical data found, starting fresh.")
-        existing_df = pd.DataFrame(
+        existing_data = pd.DataFrame(
             columns=[
                 "GAME_ID",
                 "GAME_DATE",
@@ -174,32 +173,54 @@ if __name__ == "__main__":
             ]
         )
 
-    # Update historical games
-    updated_games_df = update_historical_games(existing_df)
+    try:
+        updated_games = update_historical_games(existing_data)
+    except Exception as e:
+        logger.error("Failed to update historical games: %s", e)
+        updated_games = existing_data
 
-    # Fetch today's games using JSON client (ensures ID schema for features)
     today_str = datetime.now().strftime("%Y-%m-%d")
-    today_games = fetch_games(today_str)
+    try:
+        today_games_out = fetch_games(today_str)
+    except Exception as e:
+        logger.error("Failed to fetch today's games: %s", e)
+        today_games_out = pd.DataFrame()
 
-    # Predict
-    predictions = generate_predictions(today_games, args.model)
+    predictions_out = generate_predictions(today_games_out, cli_args.model)
 
-    # Log and summarize
-    log_system_metrics()  # snapshot after predictions
-    print_summary(predictions)
-    log_to_mlflow(predictions, model_path=args.model)
+    if predictions_out.empty:
+        logger.warning("No predictions generated today.")
+        pd.DataFrame(
+            columns=[
+                "GAME_ID",
+                "TEAM_NAME",
+                "OPPONENT_TEAM_NAME",
+                "win_proba",
+                "win_pred",
+                "prediction_confidence",
+            ]
+        ).to_csv("data/csv/daily_predictions_empty.csv", index=False)
+        sys.exit(0)
 
-    # Optional SHAP analysis
-    if args.run_shap:
+    log_system_metrics()
+    print_summary(predictions_out)
+    log_to_mlflow(predictions_out, model_path=cli_args.model)
+
+    if cli_args.run_shap:
         try:
             from src.interpretability.shap_analysis import run_shap
+        except ImportError:
 
+            def run_shap(*args):
+                logger.warning("SHAP analysis requested but shap module not available.")
+
+        try:
             shap_dir = "data/shap"
             os.makedirs(shap_dir, exist_ok=True)
             logger.info("Running SHAP analysis...")
-            run_shap(args.model, cache_file=DATA_FILE, out_dir=shap_dir)
-            log_system_metrics()  # snapshot after SHAP
-        except ImportError:
-            logger.warning("SHAP analysis requested, but shap module is not available.")
+            run_shap(cli_args.model, cache_file=DATA_FILE, out_dir=shap_dir)
+            log_system_metrics()
+        except Exception as e:
+            logger.warning("SHAP analysis failed: %s", e)
 
     logger.info("MLflow NBA daily runner finished.")

@@ -9,16 +9,14 @@ import time
 import pandas as pd
 import requests
 from nba_api.stats.endpoints import leaguegamefinder
+from src.schemas import ENRICHED_SCHEDULE_COLUMNS
 
 logger = logging.getLogger("scripts.enrich_schedule")
 logging.basicConfig(level=logging.INFO)
 
 
 def fetch_game_results(season: int, retries: int = 3, delay: int = 10) -> pd.DataFrame:
-    """
-    Fetch game results for a given season with retry logic.
-    Returns a DataFrame or empty DataFrame if API fails.
-    """
+    """Fetch game results for a given season with retry logic. Returns a DataFrame or empty DataFrame."""
     for attempt in range(retries):
         try:
             logger.info(
@@ -29,10 +27,14 @@ def fetch_game_results(season: int, retries: int = 3, delay: int = 10) -> pd.Dat
             gamefinder = leaguegamefinder.LeagueGameFinder(season_nullable=season)
             df = gamefinder.get_data_frames()[0]
             return df
-        except requests.exceptions.ReadTimeout:
+        except (
+            requests.exceptions.ReadTimeout,
+            requests.exceptions.ConnectionError,
+        ) as e:
             logger.warning(
-                "Timeout fetching season %s games. Retrying in %s seconds...",
+                "Network error fetching season %s games: %s. Retrying in %s seconds...",
                 season,
+                e,
                 delay,
             )
             time.sleep(delay)
@@ -55,32 +57,61 @@ def main():
 
     season = args.season
     out_path = "data/cache/schedule.csv"
+    parquet_path = "data/cache/historical_schedule.parquet"
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
-    # --- Try to fetch results ---
+    # Try to fetch results
     results = fetch_game_results(season)
 
     if results.empty:
         logger.warning("No schedule data retrieved for season %s", season)
 
-        # --- Fallback: use cached file if available ---
+        # Fallback: use cached file if available
         if os.path.exists(out_path):
             logger.info("Using cached schedule file at %s", out_path)
             return
         else:
-            # --- Write empty file so downstream steps succeed ---
-            empty_cols = [
-                "GAME_ID",
-                "GAME_DATE_EST",
-                "HOME_TEAM_ID",
-                "VISITOR_TEAM_ID",
-                "WL",
-            ]
-            pd.DataFrame(columns=empty_cols).to_csv(out_path, index=False)
-            logger.warning("Empty schedule file written to %s", out_path)
+            # Write empty files with unified schema
+            pd.DataFrame(columns=ENRICHED_SCHEDULE_COLUMNS).to_csv(
+                out_path, index=False
+            )
+            pd.DataFrame(columns=ENRICHED_SCHEDULE_COLUMNS).to_parquet(
+                parquet_path, index=False
+            )
+            logger.warning(
+                "Empty schedule file written to %s and %s", out_path, parquet_path
+            )
     else:
-        results.to_csv(out_path, index=False)
-        logger.info("Schedule saved to %s (rows: %d)", out_path, len(results))
+        # Map and reduce to enriched columns if present
+        cols_map = {
+            "GAME_ID": "GAME_ID",
+            "GAME_DATE": "GAME_DATE",
+            "GAME_DATE_EST": "GAME_DATE",
+            "HOME_TEAM_ID": "HOME_TEAM_ID",
+            "VISITOR_TEAM_ID": "VISITOR_TEAM_ID",
+            "PTS": "PTS",
+            "PTS_OPP": "PTS_OPP",
+            "WL": "WL",
+            "SEASON_ID": "SEASON",
+        }
+        df = pd.DataFrame()
+        for src, dst in cols_map.items():
+            if src in results.columns:
+                df[dst] = results[src]
+        # Derive WIN if WL exists
+        if "WL" in df.columns and "WIN" not in df.columns:
+            df["WIN"] = df["WL"].apply(lambda x: 1 if str(x).upper() == "W" else 0)
+        # Ensure all expected columns exist
+        for col in ENRICHED_SCHEDULE_COLUMNS:
+            if col not in df.columns:
+                df[col] = None
+
+        df = df[ENRICHED_SCHEDULE_COLUMNS]
+        df.to_csv(out_path, index=False)
+        df.to_parquet(parquet_path, index=False)
+        logger.info(
+            "Schedule saved to %s and %s (rows: %d)", out_path, parquet_path, len(df)
+        )
 
 
 if __name__ == "__main__":
