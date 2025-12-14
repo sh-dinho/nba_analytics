@@ -5,6 +5,9 @@ on:
     - cron: "0 6 * * *"   # every day at 6:00 UTC
   workflow_dispatch:
 
+permissions:
+  contents: write   # allow pushing commits
+
 jobs:
   retrain_and_predict:
     runs-on: ubuntu-latest
@@ -76,12 +79,17 @@ jobs:
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           git add models/nba_${{ matrix.model }}.pkl \
                  data/results/${{ matrix.model }}_metrics.csv \
                  data/results/${{ matrix.model }}_importance.csv \
                  data/cache/features_full.parquet || true
-          git commit -m "chore: nightly retrain for ${{ matrix.model }}" || echo "No changes to commit"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: nightly retrain for ${{ matrix.model }}"
+            git push
+          fi
 
   aggregate_metrics:
     runs-on: ubuntu-latest
@@ -122,7 +130,6 @@ jobs:
               print("\n=== Model Comparison Summary ===")
               print(tabulate(combined, headers="keys", tablefmt="github", showindex=False))
               print("================================\n")
-              # also write summary table to a text file for artifact
               with open("data/results/model_comparison_summary.txt", "w") as f:
                   f.write(tabulate(combined, headers="keys", tablefmt="github", showindex=False))
           else:
@@ -133,9 +140,14 @@ jobs:
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           git add data/results/model_comparison.csv || true
-          git commit -m "chore: nightly aggregated model comparison" || echo "No changes to commit"
-          git push
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: nightly aggregated model comparison"
+            git push
+          fi
 
       - name: Upload summary artifact
         uses: actions/upload-artifact@v3
