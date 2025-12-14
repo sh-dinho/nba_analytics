@@ -2,7 +2,7 @@
 # File: mlflow_setup.py
 # Purpose: Configure MLflow tracking for nba_analysis experiments
 # Project: nba_analysis
-# Version: 1.5 (adds system resource logging)
+# Version: 1.6 (replaces pkg_resources with importlib.metadata)
 # ============================================================
 
 import datetime
@@ -15,8 +15,8 @@ from tempfile import NamedTemporaryFile
 from contextlib import contextmanager
 
 import mlflow
-import pkg_resources
-import psutil  # ✅ new dependency for system metrics
+import psutil  # ✅ system metrics
+import importlib.metadata  # ✅ modern replacement for pkg_resources
 
 
 def configure_mlflow(
@@ -102,7 +102,9 @@ def start_run_with_metadata(run_name: str = None, strict: bool = True):
     # Log installed packages as JSON artifact
     try:
         installed_packages = {
-            dist.project_name: dist.version for dist in pkg_resources.working_set
+            dist.metadata["Name"]: dist.version
+            for dist in importlib.metadata.distributions()
+            if dist.metadata["Name"]
         }
         with NamedTemporaryFile("w", delete=False, suffix=".json") as f:
             json.dump(installed_packages, f, indent=2)

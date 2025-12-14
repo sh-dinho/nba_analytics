@@ -2,7 +2,7 @@
 # File: src/daily_runner/daily_runner_mflow.py
 # Purpose: Daily NBA prediction runner with MLflow logging + optional SHAP
 # Project: nba_analysis
-# Version: 3.5 (fixed imports, variable shadowing, run_shap fallback, requirements alignment)
+# Version: 3.6 (historical update, baseline comparison, schema normalization)
 # ============================================================
 
 import logging
@@ -16,20 +16,9 @@ import numpy as np
 import pandas as pd
 
 from mlflow_setup import mlflow_run_context, log_system_metrics
-from src.api.nba_api_client import fetch_today_games
-
-
-# NOTE: update_historical_games and fetch_games were missing in nba_api_client.
-# For now, we stub them safely here:
-def update_historical_games(existing_data: pd.DataFrame) -> pd.DataFrame:
-    """Stub: update historical games by merging with new season data."""
-    return existing_data
-
-
-def fetch_games(date: str) -> pd.DataFrame:
-    """Wrapper around fetch_today_games for compatibility."""
-    return fetch_today_games(date)
-
+from src.api.nba_api_client import fetch_today_games, fetch_season_games
+from src.scripts.compare_schedule import compare, load_baseline
+from src.schemas import TODAY_SCHEDULE_COLUMNS, normalize_today_schedule
 
 from src.features.feature_engineering import generate_features_for_games
 from src.prediction_engine.predictor import Predictor
@@ -53,6 +42,38 @@ if not logger.handlers:
 # -----------------------------
 # HELPER FUNCTIONS
 # -----------------------------
+
+
+def update_historical_games(existing_data: pd.DataFrame) -> pd.DataFrame:
+    """Update historical games by fetching current season and merging."""
+    season_year = datetime.now().year
+    new_games = fetch_season_games(season_year)
+    if new_games.empty:
+        return existing_data
+    combined = pd.concat([existing_data, new_games], ignore_index=True)
+    combined = combined.drop_duplicates(subset=["GAME_ID", "TEAM_ID"])
+    return combined
+
+
+def fetch_games(date: str) -> pd.DataFrame:
+    """Fetch today's games and normalize schema."""
+    df = fetch_today_games(date)
+    if df.empty:
+        return df
+    df = normalize_today_schedule(df)
+    df = df.rename(
+        columns={
+            "HOME_TEAM_ABBREVIATION": "TEAM_NAME",
+            "AWAY_TEAM_ABBREVIATION": "OPPONENT_TEAM_NAME",
+            "GAME_DATE_EST": "GAME_DATE",
+        }
+    )
+    # Add placeholder IDs if missing
+    if "TEAM_ID" not in df.columns:
+        df["TEAM_ID"] = range(len(df))
+    if "OPPONENT_TEAM_ID" not in df.columns:
+        df["OPPONENT_TEAM_ID"] = range(len(df))
+    return df
 
 
 def _map_both_team_names(df: pd.DataFrame) -> pd.DataFrame:
@@ -120,6 +141,7 @@ def log_to_mlflow(
             "pred_confidence_max",
             float(np.nanmax(predictions_out["prediction_confidence"])),
         )
+        mlflow.log_metric("games_today", len(predictions_out))
 
         log_system_metrics()
         logger.info("Logged predictions to MLflow. Avg win prob: %.2f", avg_proba)
@@ -185,6 +207,15 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error("Failed to fetch today's games: %s", e)
         today_games_out = pd.DataFrame()
+
+    # --- Baseline comparison ---
+    baseline = load_baseline()
+    if not baseline.empty and not today_games_out.empty:
+        changes = compare(baseline, today_games_out, "today")
+        if not changes.empty:
+            logger.warning(
+                "Reschedules detected today. See reschedule_log.csv for details."
+            )
 
     predictions_out = generate_predictions(today_games_out, cli_args.model)
 

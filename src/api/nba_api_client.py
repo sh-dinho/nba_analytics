@@ -1,6 +1,8 @@
 # ============================================================
 # File: src/api/nba_api_client.py
 # Purpose: Fetch NBA data (season schedule, boxscores, today’s games, next game day)
+# Project: nba_analysis
+# Version: 1.4 (schema normalization, defensive column handling)
 # ============================================================
 
 import logging
@@ -19,6 +21,7 @@ from src.schemas import TODAY_SCHEDULE_COLUMNS, normalize_today_schedule
 logger = logging.getLogger("api.nba_api_client")
 
 
+# --- Helper: TEAM_ID → Abbreviation ---
 def get_team_abbreviation(team_id: int) -> str:
     """Map TEAM_ID to team abbreviation (e.g., BOS, LAL)."""
     try:
@@ -30,6 +33,7 @@ def get_team_abbreviation(team_id: int) -> str:
         return str(team_id)
 
 
+# --- Season Games ---
 def fetch_season_games(season: int, retries: int = 3, delay: int = 10) -> pd.DataFrame:
     """Fetch all games for a season with WL outcomes and team abbreviations."""
     for attempt in range(retries):
@@ -60,6 +64,7 @@ def fetch_season_games(season: int, retries: int = 3, delay: int = 10) -> pd.Dat
     return pd.DataFrame()
 
 
+# --- Boxscores ---
 def fetch_boxscores(game_ids: list[str]) -> pd.DataFrame:
     """Fetch boxscores for a list of game IDs, including points scored and allowed."""
     all_boxscores = []
@@ -88,10 +93,12 @@ def fetch_boxscores(game_ids: list[str]) -> pd.DataFrame:
     return boxscores
 
 
+# --- Today’s Games with fallback ---
 def fetch_today_games(date: str | None = None) -> pd.DataFrame:
     """
-    Fetch today's NBA games. If no games today, look ahead up to 7 days and return the next game day.
-    Returns normalized DataFrame with TODAY_SCHEDULE_COLUMNS, using team abbreviations.
+    Fetch today's NBA games with team abbreviations.
+    If no games today, check next game day (up to 7 days ahead).
+    Adds a column GAME_TYPE = 'Regular Season' or 'NBA Cup'.
     """
     if date is None:
         date = datetime.date.today().strftime("%Y-%m-%d")
@@ -99,45 +106,33 @@ def fetch_today_games(date: str | None = None) -> pd.DataFrame:
     required_cols = ["GAME_ID", "GAME_DATE_EST", "HOME_TEAM_ID", "VISITOR_TEAM_ID"]
 
     try:
-        sb = scoreboardv2.ScoreboardV2(game_date=date)
-        games = sb.get_data_frames()[0]
-        games = games[[c for c in required_cols if c in games.columns]]
+        scoreboard = scoreboardv2.ScoreboardV2(game_date=date)
+        games = scoreboard.get_data_frames()[0]
 
-        def decorate(df: pd.DataFrame, current_date: datetime.date) -> pd.DataFrame:
-            if df.empty:
-                return df
-            team_map = {}
-            for tid in pd.concat([df["HOME_TEAM_ID"], df["VISITOR_TEAM_ID"]]).unique():
-                team_map[tid] = get_team_abbreviation(int(tid))
-            df["HOME_TEAM_ABBREVIATION"] = df["HOME_TEAM_ID"].map(team_map)
-            df["AWAY_TEAM_ABBREVIATION"] = df["VISITOR_TEAM_ID"].map(team_map)
-            # NBA Cup window (configurable per year)
-            cup_windows = {
-                2025: (datetime.date(2025, 12, 9), datetime.date(2025, 12, 16)),
-            }
-            cup_start, cup_end = cup_windows.get(current_date.year, (None, None))
-            if cup_start and cup_end and cup_start <= current_date <= cup_end:
-                df["GAME_TYPE"] = "NBA Cup"
-            else:
-                df["GAME_TYPE"] = "Regular Season"
-            return df[
-                [
-                    "GAME_ID",
-                    "GAME_DATE_EST",
-                    "HOME_TEAM_ABBREVIATION",
-                    "AWAY_TEAM_ABBREVIATION",
-                    "GAME_TYPE",
-                ]
-            ]
+        # Defensive column selection
+        available_cols = [c for c in required_cols if c in games.columns]
+        games = games[available_cols]
+
+        # Log unexpected columns
+        unexpected = set(scoreboard.get_data_frames()[0].columns) - set(required_cols)
+        if unexpected:
+            logger.info("Extra columns in API response: %s", unexpected)
 
         if not games.empty:
-            out = decorate(games, datetime.date.fromisoformat(date))
-            return normalize_today_schedule(out)
+            team_map = {}
+            for tid in pd.concat(
+                [games["HOME_TEAM_ID"], games["VISITOR_TEAM_ID"]]
+            ).unique():
+                team_map[tid] = get_team_abbreviation(int(tid))
+            games["HOME_TEAM_ABBREVIATION"] = games["HOME_TEAM_ID"].map(team_map)
+            games["AWAY_TEAM_ABBREVIATION"] = games["VISITOR_TEAM_ID"].map(team_map)
+            games["GAME_TYPE"] = "Regular Season"
+            return normalize_today_schedule(games)
 
-        # Fallback: look ahead up to a week
+        # --- Fallback: look ahead to next game day ---
         logger.info("No games today. Searching for next scheduled game day...")
-        next_date = datetime.date.fromisoformat(date)
-        for _ in range(7):
+        next_date = datetime.date.today()
+        for _ in range(7):  # look ahead up to a week
             next_date += datetime.timedelta(days=1)
             try:
                 sb_next = scoreboardv2.ScoreboardV2(
@@ -148,13 +143,32 @@ def fetch_today_games(date: str | None = None) -> pd.DataFrame:
                     [c for c in required_cols if c in games_next.columns]
                 ]
                 if not games_next.empty:
-                    out = decorate(games_next, next_date)
+                    team_map = {}
+                    for tid in pd.concat(
+                        [games_next["HOME_TEAM_ID"], games_next["VISITOR_TEAM_ID"]]
+                    ).unique():
+                        team_map[tid] = get_team_abbreviation(int(tid))
+                    games_next["HOME_TEAM_ABBREVIATION"] = games_next[
+                        "HOME_TEAM_ID"
+                    ].map(team_map)
+                    games_next["AWAY_TEAM_ABBREVIATION"] = games_next[
+                        "VISITOR_TEAM_ID"
+                    ].map(team_map)
+
+                    # Detect NBA Cup by date range (Dec 9–16, 2025 for this season)
+                    cup_start = datetime.date(2025, 12, 9)
+                    cup_end = datetime.date(2025, 12, 16)
+                    if cup_start <= next_date <= cup_end:
+                        games_next["GAME_TYPE"] = "NBA Cup"
+                    else:
+                        games_next["GAME_TYPE"] = "Regular Season"
+
                     logger.info(
                         "Next NBA game day is %s (%s)",
                         next_date.strftime("%Y-%m-%d"),
-                        out["GAME_TYPE"].iloc[0],
+                        games_next["GAME_TYPE"].iloc[0],
                     )
-                    return normalize_today_schedule(out)
+                    return normalize_today_schedule(games_next)
             except Exception as e:
                 logger.warning("Error checking next game day %s: %s", next_date, e)
                 continue

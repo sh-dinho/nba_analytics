@@ -1,6 +1,8 @@
 # ============================================================
 # File: src/scripts/generate_today_schedule.py
 # Purpose: Generate today's NBA schedule (or next game day) and save to CSV/Parquet
+# Project: nba_analysis
+# Version: 1.4 (logs extra API columns, schema normalization)
 # ============================================================
 
 import logging
@@ -36,7 +38,13 @@ def main():
         logger.info("Empty schedule files written to %s and %s", out_path, parquet_path)
         sys.exit(0)
 
+    # Normalize schema
     df = normalize_today_schedule(df)
+
+    # Print out any unexpected columns for debugging
+    unexpected = set(df.columns) - set(TODAY_SCHEDULE_COLUMNS)
+    if unexpected:
+        logger.info("Extra columns present in API response: %s", unexpected)
 
     try:
         df.to_csv(out_path, index=False)

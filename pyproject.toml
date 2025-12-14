@@ -1,10 +1,12 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "nba-analytics"
-dynamic = ["version"]
+version = "0.1.0"
 description = "NBA win prediction pipeline with MLflow and SHAP explainability"
-authors = [
-    { name = "Your Team", email = "team@example.com" }
-]
+authors = [{ name = "Your Team", email = "team@example.com" }]
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -32,16 +34,20 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.setuptools.dynamic]
-version = { attr = "nba_analytics.__version__" }
-
 [project.optional-dependencies]
 dev = [
-    "pytest~=9.0",
+    "pytest==9.0.2",
     "black~=24.10",
     "isort~=5.13",
     "mypy~=1.11"
 ]
+
+
+[project.scripts]
+nba-features = "nba_analytics.features.feature_engineering:main"
+nba-train = "nba_analytics.model_training.trainer_cli:cli"
+nba-predict = "nba_analytics.daily_runner.predict_cli:cli"
+nba-rankings = "nba_analytics.analytics.rankings_cli:cli"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

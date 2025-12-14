@@ -1,5 +1,5 @@
 # ============================================================
-# NBA Prediction Pipeline Configuration (v1.2 → v2.1)
+# NBA Prediction Pipeline Configuration (v2.1)
 # Centralized configuration for API pulls, caching, model loading,
 # training periods, output formats, and runner defaults.
 # ============================================================
@@ -16,6 +16,7 @@ paths:
   logs: data/logs
   models: models
   mlflow_artifacts: mlruns
+  analytics: data/analytics
 
 # -----------------------------
 # NBA DATA SETTINGS
@@ -63,8 +64,30 @@ mlflow:
   run_prefix: daily_prediction_
   log_avg_probability: true
   log_model_path: true
-  tracking_uri: http://localhost:5000   # ✅ Added for validation
-  artifact_location: mlruns             # ✅ Optional, but good practice
+  tracking_uri: http://localhost:5000   # Explicit MLflow server
+  artifact_location: mlruns             # Organized artifact storage
+
+# -----------------------------
+# BETTING SETTINGS
+# -----------------------------
+betting:
+  threshold: 0.6   # Override default (was 0.55)
+
+# -----------------------------
+# RUNNER SETTINGS
+# -----------------------------
+runner:
+  shap_enabled: true
+  commit_outputs: true
+
+# -----------------------------
+# DATABASE SETTINGS
+# -----------------------------
+database:
+  host: localhost
+  port: 5432
+  user: nba_user
+  password: secret_password
 
 # -----------------------------
 # META

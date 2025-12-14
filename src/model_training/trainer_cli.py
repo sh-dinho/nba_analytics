@@ -70,18 +70,49 @@ def cli(model, season, features, out, metrics_out, importance_out):
     logger.info("Training model: %s", model)
 
     # --- Load features ---
-    df = pd.read_parquet(features)
-    X = df.drop(columns=["WIN"], errors="ignore")
-    y = df["WIN"] if "WIN" in df.columns else None
-
-    if y is None:
-        logger.error("No WIN column found in features file.")
+    if not os.path.exists(features):
+        logger.error("Features file not found: %s", features)
         return
 
-    # Train/test split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    df = pd.read_parquet(features)
+    logger.info("Loaded dataset with %d rows and %d columns", df.shape[0], df.shape[1])
+
+    if df.empty:
+        logger.error("Features file is empty: %s", features)
+        return
+
+    # --- Detect target column ---
+    target_col = None
+    for candidate in ["WIN", "is_win", "target"]:
+        if candidate in df.columns:
+            target_col = candidate
+            break
+
+    if target_col is None:
+        logger.error(
+            "No target column found in features file. Expected one of WIN, is_win, target."
+        )
+        return
+
+    X = df.drop(columns=[target_col], errors="ignore")
+    y = df[target_col]
+
+    # --- Validate dataset ---
+    if len(X) < 2:
+        logger.warning(
+            "Not enough samples to split. Training on all data instead. Rows=%d", len(X)
+        )
+        X_train, y_train = X, y
+        X_test, y_test = X, y
+    elif y.nunique() < 2:
+        logger.error(
+            "Target column '%s' has fewer than 2 classes. Cannot train.", target_col
+        )
+        return
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
 
     # --- Select model ---
     if model == "logreg":
@@ -126,6 +157,7 @@ def cli(model, season, features, out, metrics_out, importance_out):
         ).sort_values("importance", ascending=False)
 
     if not importance_df.empty:
+        os.makedirs(os.path.dirname(importance_out), exist_ok=True)
         importance_df.to_csv(importance_out, index=False)
         logger.info("Feature importance saved to %s", importance_out)
 

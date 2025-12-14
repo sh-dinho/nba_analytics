@@ -2,11 +2,11 @@
 # File: src/config.py
 # Purpose: Unified configuration loader for NBA analysis pipeline
 # Project: nba_analysis
-# Version: 2.0 (merges schema + loader)
+# Version: 2.1 (fixes error reporting, extra keys, MLflow defaults, DB validation)
 # ============================================================
 
 from typing import List, Optional
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, root_validator
 from pydantic_settings import BaseSettings
 import yaml
 
@@ -76,7 +76,7 @@ class MLflowSettings(BaseModel):
     run_prefix: str = "daily_prediction_"
     log_avg_probability: bool = True
     log_model_path: bool = True
-    tracking_uri: Optional[str] = None
+    tracking_uri: str = "file:./mlruns"  # explicit default
     artifact_location: Optional[str] = None
 
 
@@ -104,6 +104,15 @@ class DatabaseSettings(BaseModel):
     user: Optional[str] = Field(default=None, env="DATABASE_USER")
     password: Optional[str] = Field(default=None, env="DATABASE_PASSWORD")
 
+    @root_validator
+    def check_consistency(cls, values):
+        # If any field is set, require all fields
+        if any(values.values()) and not all(values.values()):
+            raise ValueError(
+                "Database config must include host, port, user, and password together."
+            )
+        return values
+
 
 # -----------------------------
 # ROOT CONFIG
@@ -122,6 +131,7 @@ class Config(BaseSettings):
 
     class Config:
         env_nested_delimiter = "__"  # e.g. MODEL__PATH overrides model.path
+        extra = "ignore"  # tolerate extra keys in YAML
 
 
 # -----------------------------
@@ -130,11 +140,11 @@ class Config(BaseSettings):
 def load_config(path: str = "config.yaml") -> Config:
     """
     Load and validate configuration from YAML + environment overrides.
-    Raises ValidationError if required values are missing or invalid.
+    Raises RuntimeError with detailed validation errors if invalid.
     """
     with open(path, "r") as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}
     try:
         return Config(**data)
     except ValidationError as e:
-        raise RuntimeError(f"Configuration error: {e}")
+        raise RuntimeError(f"Configuration error: {e.errors()}")

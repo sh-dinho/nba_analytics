@@ -1,17 +1,17 @@
 # ============================================================
 # File: run_pipeline.py
 # Purpose: Orchestrator for NBA prediction pipeline
-# Version: 1.1 (Refactored)
+# Version: 1.3 (finalized for end-to-end run)
 # ============================================================
 
 import argparse
 from pathlib import Path
-import yaml
 import logging
 from datetime import date
 
-from prediction_engine.daily_runner_mlflow import daily_runner_mlflow
+from src.daily_runner.daily_runner_mlflow import daily_runner_mlflow
 from src.model_training.train_combined import train_model
+from src.config import load_config  # unified config loader
 
 # -----------------------------
 # Setup logging
@@ -24,15 +24,14 @@ logging.basicConfig(
 # Load config safely
 # -----------------------------
 try:
-    with open("config.yaml") as f:
-        cfg = yaml.safe_load(f)
-except FileNotFoundError:
-    logging.error("Missing config.yaml file. Please create one before running.")
+    cfg = load_config("config.yaml")
+except Exception as e:
+    logging.error(f"Failed to load config.yaml: {e}")
     exit(1)
 
-MODEL_PATH = cfg.get("model_path")
-MODEL_TYPE = cfg.get("model_type", "logreg")  # fallback to logistic regression
-CACHE_PATH = Path("data/cache/features_full.parquet")
+MODEL_PATH = cfg.model.path
+MODEL_TYPE = cfg.model.type or "logreg"  # fallback to logistic regression
+CACHE_PATH = Path(cfg.paths.cache) / "features_full.parquet"
 
 # -----------------------------
 # Argument parser
@@ -60,9 +59,11 @@ args = parser.parse_args()
 if args.train:
     logging.info("Starting model training...")
     train_model(
-        CACHE_PATH, out_dir=Path("models"), model_type=args.model_type or MODEL_TYPE
+        CACHE_PATH,
+        out_dir=Path(cfg.paths.models),
+        model_type=args.model_type or MODEL_TYPE,
     )
-    logging.info("Training complete. Model saved to models/")
+    logging.info("Training complete. Model saved to %s", cfg.paths.models)
 else:
     # Resolve date
     date_str = args.date or date.today().strftime("%Y-%m-%d")
@@ -74,6 +75,10 @@ else:
 
     logging.info(f"Running daily NBA predictions for {date_str}...")
     df = daily_runner_mlflow(MODEL_PATH, game_date=date_str)
+
+    if df is None or df.empty:
+        logging.warning("No predictions generated for %s", date_str)
+        exit(0)
 
     if args.save:
         out_file = Path(f"predictions_{date_str}.csv")

@@ -32,8 +32,10 @@ flake8==7.1.1
 mypy==1.11.2
 
 # Testing (optional)
-pytest==7.4.0
+pytest==9.0.2
 
-click
+# CLI utilities
+click==8.1.7
 
-xgboost
+# Gradient boosting
+xgboost==2.1.1

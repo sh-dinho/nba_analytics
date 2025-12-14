@@ -2,7 +2,7 @@
 # File: src/analytics/rankings.py
 # Purpose: Track top teams/players, betting recommendations,
 #          and winning streaks from prediction history + box scores
-# Version: 4.2 (fixes MLflow logging, centralized logger, validation)
+# Version: 4.4 (robust MLflow config, artifact logging, error handling)
 # ============================================================
 
 import os
@@ -12,8 +12,8 @@ from typing import Dict, Optional
 import pandas as pd
 import mlflow
 
-from mlflow_setup import configure_mlflow
-from src.config_schema import load_config
+from src.mlflow_setup import configure_mlflow
+from src.config import load_config  # ✅ corrected import to match your unified config
 
 
 class RankingsManager:
@@ -52,7 +52,10 @@ class RankingsManager:
         self.mlflow_enabled = getattr(self.mlflow_cfg, "enabled", True)
         if self.mlflow_enabled:
             try:
-                configure_mlflow(self.mlflow_cfg)
+                configure_mlflow(
+                    tracking_uri=self.mlflow_cfg.tracking_uri,
+                    experiment_name=self.mlflow_cfg.experiment,
+                )
                 self.logger.info(
                     "MLflow configured: tracking_uri=%s", self.mlflow_cfg.tracking_uri
                 )
@@ -94,7 +97,12 @@ class RankingsManager:
                 msg = "Betting threshold not provided and not found in config."
                 self.logger.error(msg)
                 raise ValueError(msg)
-            threshold = float(self.betting_cfg.threshold)
+            try:
+                threshold = float(self.betting_cfg.threshold)
+            except Exception:
+                msg = f"Invalid threshold value in config: {self.betting_cfg.threshold}"
+                self.logger.error(msg)
+                raise ValueError(msg)
 
         # Validate threshold bounds
         if not (0.0 <= threshold <= 1.0):
@@ -116,6 +124,11 @@ class RankingsManager:
         self.logger.info(
             "Betting recommendations: bet_on=%d, avoid=%d", len(bet_on), len(avoid)
         )
+
+        if bet_on.empty:
+            self.logger.warning("No teams meet bet_on criteria.")
+        if avoid.empty:
+            self.logger.warning("No teams meet avoid criteria.")
 
         # Log to MLflow (optional)
         self._log_to_mlflow_artifacts(
@@ -144,12 +157,11 @@ class RankingsManager:
                     try:
                         mlflow.log_metric(f"{name}_{k}", float(v))
                     except Exception:
-                        # Skip non-numeric
                         continue
 
                 # Artifact: save dataframe to a temp CSV and log
-                artifact_path = os.path.join(self.analytics_dir, f"{name}.csv")
-                df.to_csv(artifact_path, index=False)
-                mlflow.log_artifact(artifact_path, artifact_path=name)
+                artifact_file = os.path.join(self.analytics_dir, f"{name}.csv")
+                df.to_csv(artifact_file, index=False)
+                mlflow.log_artifact(artifact_file, artifact_path=f"analytics/{name}")
         except Exception as e:
             self.logger.error("Failed to log to MLflow for %s: %s", name, e)
