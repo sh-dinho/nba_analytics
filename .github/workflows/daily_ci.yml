@@ -8,6 +8,10 @@ on:
 jobs:
   retrain_and_predict:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        model: [xgb, rf, logreg]
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -17,6 +21,14 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Cache pip
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -25,7 +37,6 @@ jobs:
           python -m src.scripts.enrich_schedule --season 2025 || echo "Schedule enrichment failed"
           mkdir -p data/backups
           cp data/cache/schedule.csv data/backups/schedule_backup_$(date +%F).csv || echo "No schedule file to back up"
-          # also write parquet for generate_features if CSV exists
           if [ -f data/cache/schedule.csv ]; then
             python -c "import pandas as pd; df=pd.read_csv('data/cache/schedule.csv'); df.to_parquet('data/cache/historical_schedule.parquet', index=False)"
           fi
@@ -34,7 +45,6 @@ jobs:
       - name: Generate features (resilient)
         run: |
           python -m src.scripts.generate_features || echo "Feature generation failed"
-          # ensure features_full.parquet exists even if script failed
           if [ ! -f data/cache/features_full.parquet ]; then
             mkdir -p data/cache
             python -c "import pandas as pd; pd.DataFrame(columns=['GAME_ID','SEASON','PTS','PTS_OPP','WL']).to_parquet('data/cache/features_full.parquet', index=False)"
@@ -42,17 +52,18 @@ jobs:
           fi
         continue-on-error: true
 
-      - name: Retrain model and log metrics
+      - name: Retrain ${{ matrix.model }} model
         run: |
           python -m src.model_training.trainer_cli \
-            --model xgb \
+            --model ${{ matrix.model }} \
             --season 2025 \
             --features data/cache/features_full.parquet \
-            --out models/nba_xgb.pkl \
-            --metrics_out data/results/model_metrics.csv \
-            --importance_out data/results/feature_importance.csv
+            --out models/nba_${{ matrix.model }}.pkl \
+            --metrics_out data/results/${{ matrix.model }}_metrics.csv \
+            --importance_out data/results/${{ matrix.model }}_importance.csv
 
-      - name: Generate predictions and player info
+      - name: Generate predictions (only for xgb)
+        if: matrix.model == 'xgb'
         run: |
           python -m src.prediction_engine.daily_runner_cli \
             --model models/nba_xgb.pkl \
@@ -61,21 +72,73 @@ jobs:
             --out data/results/daily_predictions.csv \
             --fmt csv
 
-      - name: Compare algorithms
-        run: python -m src.model_training.compare_algorithms
-
-      - name: Commit updated results and backups
+      - name: Commit model artifacts
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "actions@github.com"
-          git add models/nba_xgb.pkl \
-                 data/results/daily_predictions.csv \
-                 data/results/player_info.csv \
-                 data/results/model_metrics.csv \
-                 data/results/feature_importance.csv \
-                 data/results/model_comparison.csv \
-                 data/cache/schedule.csv \
-                 data/backups/schedule_backup_*.csv \
-                 data/cache/features_full.parquet
-          git commit -m "chore: nightly retrain, predictions, player info, algorithm comparison, and schedule backup" || echo "No changes to commit"
+          git add models/nba_${{ matrix.model }}.pkl \
+                 data/results/${{ matrix.model }}_metrics.csv \
+                 data/results/${{ matrix.model }}_importance.csv \
+                 data/cache/features_full.parquet || true
+          git commit -m "chore: nightly retrain for ${{ matrix.model }}" || echo "No changes to commit"
           git push
+
+  aggregate_metrics:
+    runs-on: ubuntu-latest
+    needs: retrain_and_predict
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install pandas and tabulate
+        run: pip install pandas tabulate
+
+      - name: Aggregate metrics
+        run: |
+          mkdir -p data/results
+          python - <<'EOF'
+          import pandas as pd
+          import glob
+          from tabulate import tabulate
+
+          files = glob.glob("data/results/*_metrics.csv")
+          dfs = []
+          for f in files:
+              try:
+                  df = pd.read_csv(f)
+                  if not df.empty:
+                      dfs.append(df)
+              except Exception as e:
+                  print(f"Skipping {f}: {e}")
+
+          if dfs:
+              combined = pd.concat(dfs, ignore_index=True)
+              combined.to_csv("data/results/model_comparison.csv", index=False)
+              print("\n=== Model Comparison Summary ===")
+              print(tabulate(combined, headers="keys", tablefmt="github", showindex=False))
+              print("================================\n")
+              # also write summary table to a text file for artifact
+              with open("data/results/model_comparison_summary.txt", "w") as f:
+                  f.write(tabulate(combined, headers="keys", tablefmt="github", showindex=False))
+          else:
+              print("No metrics files found to aggregate")
+          EOF
+
+      - name: Commit aggregated comparison
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "actions@github.com"
+          git add data/results/model_comparison.csv || true
+          git commit -m "chore: nightly aggregated model comparison" || echo "No changes to commit"
+          git push
+
+      - name: Upload summary artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: model-comparison-summary
+          path: data/results/model_comparison_summary.txt
