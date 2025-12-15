@@ -2,7 +2,7 @@ name: Nightly Retrain, Predictions, and Comparison
 
 on:
   schedule:
-    - cron: "0 6 * * *"   # every day at 6:00 UTC
+    - cron: "0 13 * * *"   # every day at 6:00 UTC
   workflow_dispatch:
 
 permissions:
@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4   
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -25,13 +25,12 @@ jobs:
           python-version: '3.11'
 
       - name: Cache pip
-        uses: actions/cache@v3
+        uses: actions/cache@v4      
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
             ${{ runner.os }}-pip-
-
       - name: Install dependencies
         run: pip install -r requirements.txt
 
@@ -96,8 +95,7 @@ jobs:
     needs: retrain_and_predict
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
-
+        uses: actions/checkout@v4   
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -113,7 +111,6 @@ jobs:
           import pandas as pd
           import glob
           from tabulate import tabulate
-
           files = glob.glob("data/results/*_metrics.csv")
           dfs = []
           for f in files:
@@ -123,7 +120,6 @@ jobs:
                       dfs.append(df)
               except Exception as e:
                   print(f"Skipping {f}: {e}")
-
           if dfs:
               combined = pd.concat(dfs, ignore_index=True)
               combined.to_csv("data/results/model_comparison.csv", index=False)
@@ -147,10 +143,9 @@ jobs:
           else
             git commit -m "chore: nightly aggregated model comparison"
             git push
-          fi
 
       - name: Upload summary artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4   
         with:
           name: model-comparison-summary
           path: data/results/model_comparison_summary.txt
