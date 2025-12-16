@@ -1,89 +1,123 @@
-# ============================================================
-# File: run_pipeline.py
-# Purpose: Orchestrator for NBA prediction pipeline
-# Version: 1.3 (finalized for end-to-end run)
-# ============================================================
+"""
+File: run_pipeline.py
+Path: project root / src
+Purpose: Daily NBA pipeline to fetch historical data, prepare features,
+         train ML model, and predict outcomes.
+"""
 
-import argparse
-from pathlib import Path
 import logging
-from datetime import date
+from pathlib import Path
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+import joblib
 
-from src.daily_runner.daily_runner_mlflow import daily_runner_mlflow
-from src.model_training.train_combined import train_model
-from src.config import load_config  # unified config loader
+from src.features.features import prepare_features
 
-# -----------------------------
-# Setup logging
-# -----------------------------
+# ----------------------
+# Logging
+# ----------------------
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
+logger = logging.getLogger(__name__)
 
-# -----------------------------
-# Load config safely
-# -----------------------------
-try:
-    cfg = load_config("config.yaml")
-except Exception as e:
-    logging.error(f"Failed to load config.yaml: {e}")
-    exit(1)
+# ----------------------
+# Constants
+# ----------------------
+DATA_DIR = Path("data")
+CACHE_DIR = DATA_DIR / "cache"
+MODEL_PATH = DATA_DIR / "models" / "nba_model.pkl"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-MODEL_PATH = cfg.model.path
-MODEL_TYPE = cfg.model.type or "logreg"  # fallback to logistic regression
-CACHE_PATH = Path(cfg.paths.cache) / "features_full.parquet"
 
-# -----------------------------
-# Argument parser
-# -----------------------------
-parser = argparse.ArgumentParser(description="Run NBA prediction pipeline")
-parser.add_argument(
-    "--train",
-    action="store_true",
-    help="Train model instead of running daily predictions",
-)
-parser.add_argument("--date", type=str, help="YYYY-MM-DD for daily run (default today)")
-parser.add_argument(
-    "--model-type", type=str, help="Override model type (default from config)"
-)
-parser.add_argument(
-    "--save",
-    action="store_true",
-    help="Save predictions to CSV instead of just printing",
-)
-args = parser.parse_args()
+# ----------------------
+# Load Historical Schedule
+# ----------------------
+def load_master_schedule() -> pd.DataFrame:
+    master_file = CACHE_DIR / "master_schedule.parquet"
+    if master_file.exists():
+        df = pd.read_parquet(master_file)
+        logger.info(f"Loaded master schedule ({df.shape[0]} rows)")
+        return df
+    logger.warning("No master schedule found. Returning empty DataFrame.")
+    return pd.DataFrame()
 
-# -----------------------------
-# Main logic
-# -----------------------------
-if args.train:
-    logging.info("Starting model training...")
-    train_model(
-        CACHE_PATH,
-        out_dir=Path(cfg.paths.models),
-        model_type=args.model_type or MODEL_TYPE,
-    )
-    logging.info("Training complete. Model saved to %s", cfg.paths.models)
-else:
-    # Resolve date
-    date_str = args.date or date.today().strftime("%Y-%m-%d")
 
-    # Validate model path
-    if not MODEL_PATH or not Path(MODEL_PATH).exists():
-        logging.error(f"Model path {MODEL_PATH} not found. Please check config.yaml.")
-        exit(1)
+# ----------------------
+# Train Model
+# ----------------------
+def train_model(features: pd.DataFrame, target: pd.Series) -> RandomForestClassifier:
+    model = RandomForestClassifier(n_estimators=100, random_state=42)
+    model.fit(features, target)
+    logger.info("Model training complete.")
+    return model
 
-    logging.info(f"Running daily NBA predictions for {date_str}...")
-    df = daily_runner_mlflow(MODEL_PATH, game_date=date_str)
 
-    if df is None or df.empty:
-        logging.warning("No predictions generated for %s", date_str)
-        exit(0)
+# ----------------------
+# Save Model
+# ----------------------
+def save_model(model: RandomForestClassifier, path: Path):
+    joblib.dump(model, path)
+    logger.info(f"Saved model to {path}")
 
-    if args.save:
-        out_file = Path(f"predictions_{date_str}.csv")
-        df.to_csv(out_file, index=False)
-        logging.info(f"Predictions saved to {out_file}")
+
+# ----------------------
+# Predict Games
+# ----------------------
+def predict_games(
+    model: RandomForestClassifier, features: pd.DataFrame
+) -> pd.DataFrame:
+    if features.empty:
+        return pd.DataFrame()
+    predictions = model.predict(features)
+    result = features.copy()
+    result["predicted_home_win"] = predictions
+    logger.info(f"Predicted {len(predictions)} games.")
+    return result
+
+
+# ----------------------
+# Main Pipeline
+# ----------------------
+def main():
+    logger.info("===== NBA DAILY PIPELINE START =====")
+
+    # Load historical data
+    historical_schedule = load_master_schedule()
+    if historical_schedule.empty:
+        logger.error("No historical schedule available. Exiting.")
+        return
+
+    # Prepare features for training
+    features_df = prepare_features(historical_schedule)
+    if features_df.empty:
+        logger.error("No features prepared. Exiting.")
+        return
+
+    # Split features and target
+    target = features_df["target"]
+    x = features_df.drop(columns=["target"])
+
+    # Train the model
+    model = train_model(x, target)
+
+    # Save the model
+    save_model(model, MODEL_PATH)
+
+    # Predict upcoming games (if any)
+    # Here we assume upcoming_games are in a CSV or similar
+    upcoming_file = CACHE_DIR / "upcoming_games.parquet"
+    if upcoming_file.exists():
+        upcoming_games = pd.read_parquet(upcoming_file)
+        upcoming_features = prepare_features(historical_schedule, upcoming_games)
+        predictions = predict_games(model, upcoming_features)
+        logger.info(predictions.head())
     else:
-        logging.info("Predictions completed. Sample output:")
-        print(df.head())
+        logger.info("No upcoming games file found. Skipping predictions.")
+
+    logger.info("===== NBA DAILY PIPELINE COMPLETE =====")
+
+
+if __name__ == "__main__":
+    main()

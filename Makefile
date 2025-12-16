@@ -1,43 +1,52 @@
 # ============================================================
-# Project: nba_analysis
-# Purpose: Automate end-to-end pipeline (enrich → features → train → predict)
+# NBA Analysis Pipeline Makefile (Optimized)
 # ============================================================
 
-PYTHON := python
+SEASON ?= 2025
+YEARS ?= 3
+DATE ?= $(shell date +%Y-%m-%d)
 
-ENRICHED_FILE := data/cache/historical_schedule_with_results.parquet
-FEATURES_FILE := data/cache/features_full.parquet
-MODEL_FILE := models/nba_xgb.pkl
-PREDICTIONS_FILE := data/results/daily_predictions.csv
+MASTER = data/reference/historical_master.parquet
 
-# Default target
-run_all: enrich generate_features train predict
+.PHONY: baseline refresh ingest features train predict today all clean rebuild
 
-# Step 0: Enrich schedule with WL outcomes (skip future games)
-enrich:
-	$(PYTHON) -m src.scripts.enrich_schedule
+# --- Baseline: download schedule for current season
+baseline:
+	python -m src.scripts.download_baseline_schedule --season $(SEASON)
 
-# Step 1: Generate features from enriched schedule
-generate_features:
-	$(PYTHON) -m src.scripts.generate_features
+# --- Refresh: incremental update of master historical dataset
+refresh: baseline
+	python -m src.scripts.refresh_schedule_incremental --season $(SEASON)
 
-# Step 2: Train model
-train:
-	$(PYTHON) -m src.model_training.trainer_cli \
-		--model xgb \
-		--season 2025 \
-		--features $(FEATURES_FILE) \
-		--out $(MODEL_FILE)
+# --- Ingest: build features from master file
+ingest: refresh
+	python -m src.data.ingest --end-season $(shell expr $(SEASON) - 1) --years $(YEARS) --refresh
 
-# Step 3: Run daily predictions
-predict:
-	$(PYTHON) -m src.prediction_engine.daily_runner_cli \
-		--model $(MODEL_FILE) \
-		--season 2025 \
-		--limit 10 \
-		--out $(PREDICTIONS_FILE) \
-		--fmt csv
+# --- Feature generation
+features: ingest
+	python -m src.scripts.generate_features --season $(SEASON)
 
-# Clean generated files
+# --- Train model
+train: features
+	python -m src.model.train --season $(SEASON) --type logreg
+
+# --- Predict daily games
+predict: train
+	python -m src.daily_runner.daily_runner_mflow --date $(DATE) --model models/nba_logreg.pkl --enable-shap
+
+# --- Generate today's schedule
+today:
+	python -m src.scripts.generate_today_schedule --date $(DATE)
+
+# --- Full pipeline
+all: baseline refresh ingest features train predict
+
+# --- Cleanup
 clean:
-	rm -f $(ENRICHED_FILE) $(FEATURES_FILE) $(MODEL_FILE) $(PREDICTIONS_FILE)
+	rm -f data/cache/*.csv
+	rm -f data/cache/*.parquet
+	rm -f data/reference/*.csv
+	rm -f data/reference/*.parquet
+	rm -f data/logs/*.log
+
+rebuild: clean

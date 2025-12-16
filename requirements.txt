@@ -39,3 +39,7 @@ click==8.1.7
 
 # Gradient boosting
 xgboost==2.1.1
+
+mlflow-skinny
+
+requests

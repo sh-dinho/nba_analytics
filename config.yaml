@@ -1,12 +1,7 @@
 # ============================================================
 # NBA Prediction Pipeline Configuration (v2.1)
-# Centralized configuration for API pulls, caching, model loading,
-# training periods, output formats, and runner defaults.
 # ============================================================
 
-# -----------------------------
-# PATH CONFIGURATION
-# -----------------------------
 paths:
   raw: data/raw
   cache: data/cache
@@ -18,19 +13,13 @@ paths:
   mlflow_artifacts: mlruns
   analytics: data/analytics
 
-# -----------------------------
-# NBA DATA SETTINGS
-# -----------------------------
 nba:
-  seasons: [2022-23, 2023-24, 2024-25, 2025-26]
+  seasons: ["2022-23", "2023-24", "2024-25", "2025-26"]   # QUOTED strings
   default_year: 2025
   players_min_points: 20
   fetch_retries: 3
   retry_delay_ms: 1500
 
-# -----------------------------
-# MODEL SETTINGS
-# -----------------------------
 model:
   path: models/nba_logreg.pkl
   type: xgb
@@ -38,9 +27,6 @@ model:
   device: cpu
   feature_version: v1
 
-# -----------------------------
-# OUTPUT SETTINGS
-# -----------------------------
 output:
   save_csv: true
   save_parquet: false
@@ -48,48 +34,35 @@ output:
   include_player_stats: true
   include_betting_fields: true
 
-# -----------------------------
-# LOGGING SETTINGS
-# -----------------------------
 logging:
   level: INFO
   file: data/logs/pipeline.log
 
-# -----------------------------
-# MLFLOW SETTINGS
-# -----------------------------
 mlflow:
   enabled: true
   experiment: nba_predictions
   run_prefix: daily_prediction_
   log_avg_probability: true
   log_model_path: true
-  tracking_uri: http://localhost:5000   # Explicit MLflow server
-  artifact_location: mlruns             # Organized artifact storage
+  tracking_uri: "http://localhost:5000"   # QUOTED URL
+  artifact_location: mlruns
 
-# -----------------------------
-# BETTING SETTINGS
-# -----------------------------
 betting:
-  threshold: 0.6   # Override default (was 0.55)
+  threshold: 0.6
 
-# -----------------------------
-# RUNNER SETTINGS
-# -----------------------------
 runner:
   shap_enabled: true
   commit_outputs: true
 
-# -----------------------------
-# DATABASE SETTINGS
-# -----------------------------
 database:
   host: localhost
   port: 5432
   user: nba_user
   password: secret_password
 
-# -----------------------------
-# META
-# -----------------------------
+prediction:
+  lookahead_days: 3
+  use_any_available: true
+
 schema_version: "2.1"
+

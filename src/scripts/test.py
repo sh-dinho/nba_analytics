@@ -1,4 +1,5 @@
 import pandas as pd
 
-df = pd.read_parquet("data/cache/features_full.parquet")
-print(df["win"].value_counts())
+df = pd.read_parquet("data/cache/historical_schedule.parquet")
+print(df.head())
+print(df["GAME_DATE"].dt.year.value_counts())
