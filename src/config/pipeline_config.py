@@ -3,140 +3,180 @@
 # Purpose: Configuration for NBA Analytics Pipeline
 # ============================================================
 
-import yaml
 from pathlib import Path
+from typing import Dict, Any
+import yaml
+import logging
+import os
+
+
+SUPPORTED_SCHEMA_VERSIONS = {"2.1"}
+
+
+class Paths:
+    """
+    Strongly-typed path container.
+    Access paths as config.paths.cache, config.paths.history, etc.
+    """
+
+    def __init__(self, paths: Dict[str, str]):
+        for key, value in paths.items():
+            setattr(self, key, Path(value))
+
+    def create_dirs(self):
+        for value in self.__dict__.values():
+            if isinstance(value, Path):
+                value.mkdir(parents=True, exist_ok=True)
 
 
 class Config:
-    def __init__(self, config_file="config.yaml"):
-        # Load configuration from YAML file
-        with open(config_file, "r") as file:
-            config_data = yaml.safe_load(file)
+    def __init__(self, config_file: str = "config.yaml") -> None:
+        if not Path(config_file).exists():
+            raise FileNotFoundError(f"Configuration file not found: {config_file}")
 
-        # Initialize configuration sections from the YAML, with defaults
-        self.paths = {
-            key: Path(value) for key, value in config_data.get("paths", {}).items()
-        }
-        self.nba = config_data.get(
+        with open(config_file, "r") as f:
+            try:
+                config_data = yaml.safe_load(f) or {}
+            except yaml.YAMLError as e:
+                raise ValueError(f"Invalid YAML in {config_file}: {e}")
+
+        # ---------------- PATHS ----------------
+        self.paths = Paths(
+            config_data.get(
+                "paths",
+                {
+                    "raw": "data/raw",
+                    "cache": "data/cache",
+                    "history": "data/history",
+                    "models": "models",
+                    "logs": "data/logs",
+                },
+            )
+        )
+        self.paths.create_dirs()
+
+        # ---------------- NBA ----------------
+        self.nba: Dict[str, Any] = config_data.get(
             "nba",
             {
                 "seasons": ["2022-23", "2023-24", "2024-25", "2025-26"],
                 "default_year": 2025,
-                "players_min_points": 20,
                 "fetch_retries": 3,
                 "retry_delay_ms": 1500,
             },
         )
 
-        self.model = config_data.get(
+        # ---------------- MODEL ----------------
+        self.model: Dict[str, Any] = config_data.get(
             "model",
             {
-                "path": "models/nba_logreg.pkl",
-                "type": "xgb",
-                "threshold": 0.5,
-                "device": "cpu",
+                "type": "random_forest",
+                "path": str(self.paths.models / "nba_random_forest.pkl"),
+                "threshold": 0.6,
                 "feature_version": "v1",
+                "calibrated": True,
             },
         )
 
-        self.output = config_data.get(
+        # ---------------- OUTPUT ----------------
+        self.output: Dict[str, Any] = config_data.get(
             "output",
             {
                 "save_csv": True,
-                "save_parquet": False,
+                "save_parquet": True,
                 "pretty_json": True,
-                "include_player_stats": True,
                 "include_betting_fields": True,
             },
         )
 
-        self.logging = config_data.get(
-            "logging", {"level": "INFO", "file": "data/logs/pipeline.log"}
+        # ---------------- LOGGING ----------------
+        self.logging: Dict[str, Any] = config_data.get(
+            "logging",
+            {
+                "level": "INFO",
+                "file": str(self.paths.logs / "pipeline.log"),
+            },
         )
+        self._configure_logging()
 
-        self.mlflow = config_data.get(
+        # ---------------- MLFLOW ----------------
+        self.mlflow: Dict[str, Any] = config_data.get(
             "mlflow",
             {
                 "enabled": True,
                 "experiment": "nba_predictions",
                 "run_prefix": "daily_prediction_",
-                "log_avg_probability": True,
-                "log_model_path": True,
                 "tracking_uri": "http://localhost:5000",
                 "artifact_location": "mlruns",
             },
         )
 
-        self.betting = config_data.get("betting", {"threshold": 0.6})
+        # ---------------- BETTING ----------------
+        self.betting: Dict[str, Any] = config_data.get("betting", {"threshold": 0.6})
 
-        self.runner = config_data.get(
-            "runner", {"shap_enabled": True, "commit_outputs": True}
+        # ---------------- RUNNER ----------------
+        self.runner: Dict[str, Any] = config_data.get(
+            "runner",
+            {
+                "shap_enabled": True,
+                "commit_outputs": True,
+            },
         )
 
-        self.database = config_data.get(
+        # ---------------- DATABASE ----------------
+        self.database: Dict[str, Any] = config_data.get(
             "database",
             {
                 "host": "localhost",
                 "port": 5432,
                 "user": "nba_user",
-                "password": "secret_password",
+                "password": os.getenv("NBA_DB_PASSWORD"),
             },
         )
 
-        self.prediction = config_data.get(
-            "prediction", {"lookahead_days": 3, "use_any_available": True}
+        # ---------------- PREDICTION ----------------
+        self.prediction: Dict[str, Any] = config_data.get(
+            "prediction",
+            {
+                "lookahead_days": 3,
+                "use_any_available": True,
+            },
         )
 
-        self.schema_version = config_data.get("schema_version", "2.1")
+        # ---------------- SCHEMA ----------------
+        self.schema_version: str = config_data.get("schema_version", "2.1")
+        self._validate_schema()
 
-        # Create missing directories for paths
-        self.create_missing_dirs()
+    # ============================================================
+    # Internal helpers
+    # ============================================================
 
-        # Optionally, validate the configuration
-        self.validate_config()
+    def _validate_schema(self):
+        if self.schema_version not in SUPPORTED_SCHEMA_VERSIONS:
+            raise ValueError(
+                f"Unsupported schema_version '{self.schema_version}'. "
+                f"Supported versions: {SUPPORTED_SCHEMA_VERSIONS}"
+            )
 
-    def __getattr__(self, item):
-        """For safe attribute access."""
-        try:
-            return getattr(self, item)
-        except AttributeError:
-            raise AttributeError(f"Config object has no attribute '{item}'")
+    def _configure_logging(self):
+        level = getattr(logging, self.logging.get("level", "INFO").upper())
+        log_file = self.logging.get("file")
 
-    def create_missing_dirs(self):
-        """Ensure all necessary directories exist."""
-        for path_key in self.paths.values():
-            if not path_key.exists():
-                path_key.mkdir(parents=True, exist_ok=True)
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[
+                logging.FileHandler(log_file),
+                logging.StreamHandler(),
+            ],
+        )
 
-    def validate_config(self):
-        """Validate the existence of essential configuration keys."""
-        required_keys = {
-            "paths",
-            "nba",
-            "model",
-            "output",
-            "logging",
-            "mlflow",
-            "betting",
-            "runner",
-            "database",
-            "prediction",
-            "schema_version",
-        }
-        missing_keys = required_keys - set(self.__dict__.keys())
-        if missing_keys:
-            raise ValueError(f"Missing required configuration sections: {missing_keys}")
+    # ============================================================
+    # Public helpers
+    # ============================================================
 
-        # Example validation: Make sure certain paths are valid
-        for path_key in ["raw", "cache", "history"]:
-            path = Path(
-                self.paths.get(path_key, "")
-            )  # Convert to Path here for validation
-            if not path.exists():
-                raise FileNotFoundError(
-                    f"The path for '{path_key}' does not exist: {path}"
-                )
+    def get_model_path(self) -> Path:
+        return Path(self.model["path"]).resolve()
 
-    def get_abs_path(self, key):
-        """Helper to get the absolute path of any directory."""
-        return self.paths[key].resolve()  # Returns Path object
+    def get_master_schedule_path(self) -> Path:
+        return self.paths.cache / "master_schedule.parquet"

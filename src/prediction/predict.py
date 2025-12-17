@@ -1,35 +1,78 @@
-# ============================================================
-# File: src/prediction/predict.py
-# Purpose: NBA Win Predictions
-# ============================================================
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Prediction and ranking for NBA games
+Author: Mohamadou
+"""
 
-import pandas as pd
 import logging
+import pandas as pd
 
+# Initialize logger
 logger = logging.getLogger(__name__)
 
 
-def run_predictions(engineered_schedule: pd.DataFrame, config) -> pd.DataFrame:
+def generate_predictions(schedule_df: pd.DataFrame, model=None) -> pd.DataFrame:
     """
-    Generate win predictions for NBA games.
+    Generate win predictions based on a model or fallback logic using rolling features.
 
     Args:
-        engineered_schedule (pd.DataFrame): Master schedule with engineered features
-        config: pipeline configuration
+        schedule_df (pd.DataFrame): DataFrame with schedule and features
+        model (sklearn model, optional): Pre-trained model for predictions
 
     Returns:
-        pd.DataFrame: schedule with predicted win probabilities
+        pd.DataFrame: DataFrame with predictions and rankings
     """
-    if engineered_schedule.empty:
-        logger.warning("Engineered schedule is empty. No predictions generated.")
-        return pd.DataFrame()
+    df = schedule_df.copy()
 
-    df = engineered_schedule.copy()
+    if model is None:  # Fallback logic if no model is provided
+        if "HOME_AVG_LAST5PTS" not in df or "AWAY_AVG_LAST5PTS" not in df:
+            logger.warning("Rolling features missing. Cannot generate predictions.")
+            return df
 
-    # Example prediction: Use simple historical win percentage
-    # In real pipeline, this could be a ML model
-    df["predicted_win"] = df["home_team_win_pct"].fillna(0.5)  # fallback 50%
-    df["predicted_loss"] = 1 - df["predicted_win"]
+        # If all rolling stats are NaN, skip prediction
+        if df[["HOME_AVG_LAST5PTS", "AWAY_AVG_LAST5PTS"]].isna().all().all():
+            logger.warning("No valid rolling stats for prediction. Skipping.")
+            return df
 
-    logger.info(f"Predictions generated for {len(df)} games.")
+        # Simple prediction based on recent performance (last 5 games)
+        df["predicted_home_win"] = (
+            df["HOME_AVG_LAST5PTS"] > df["AWAY_AVG_LAST5PTS"]
+        ).astype(float)
+        df["predicted_away_win"] = 1 - df["predicted_home_win"]
+
+    else:  # Model-based prediction
+        required_columns = [
+            "HOME_AVG_LAST5PTS",
+            "AWAY_AVG_LAST5PTS",
+        ]  # You can expand this list with more features
+
+        missing_cols = [col for col in required_columns if col not in df.columns]
+        if missing_cols:
+            logger.warning(f"Missing required columns for model: {missing_cols}")
+            return df
+
+        # Prepare features (fill missing values with 0)
+        x = df[required_columns].fillna(0)
+
+        try:
+            # Make predictions
+            predictions = model.predict(x)
+            df["predicted_home_win"] = predictions
+            df["predicted_away_win"] = 1 - predictions
+
+            logger.info(
+                f"Predictions made for {len(df)} games using the provided model."
+            )
+        except Exception as e:
+            logger.error(
+                f"Error during model prediction: {e}. Falling back to simple prediction logic."
+            )
+            # Recursively fallback to simple prediction logic
+            return generate_predictions(df, model=None)
+
+    # Rank games by predicted home win probability
+    df["rank"] = df["predicted_home_win"].rank(ascending=False, method="dense")
+
+    logger.info("Predictions and rankings added to schedule.")
     return df

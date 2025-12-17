@@ -1,55 +1,41 @@
 # ============================================================
 # File: src/config/pipeline_config.yaml
-# Purpose: Full pipeline configuration for NBA daily pipeline
+# Purpose: Central config for NBA analytics pipeline (v2.2)
+# Version: 2.2
+# Author: Your Team
+# Date: December 2025
 # ============================================================
 
-# ------------------ Paths ------------------
-paths:
-  raw_data: data/raw                  # folder for today's schedule
-  history_data: data/history          # folder for historical schedules
-  cache: data/cache                   # master incremental schedule
-  model: models                        # folder for ML model (nba_model.pkl)
-  mlflow_tracking: mlruns             # MLFlow tracking directory
+logging:
+  level: INFO
 
-# ------------------ Schedule settings ------------------
-schedule:
-  baseline_file: data/history/baseline_schedule.parquet
-  today_file: data/raw/today_schedule.parquet
-  master_file: data/cache/master_schedule.parquet
-
-# ------------------ Model settings ------------------
-model:
-  model_file: nba_model.pkl
-  feature_columns:
-    - TEAM_ID
-    - OPP_TEAM_ID
-    - HOME
-    - LAST_5_WINS
-    - AVG_POINTS
-    - AVG_OPP_POINTS
-    - DAYS_REST
-    - BACK_TO_BACK
-  target_column: WIN
-
-# ------------------ Rolling features ------------------
-rolling_features:
-  window: 5            # last 5 games
-  features:
-    - AVG_POINTS
-    - AVG_OPP_POINTS
-    - LAST_5_WINS
-
-# ------------------ Betting settings ------------------
 betting:
-  min_predicted_win: 0.55   # only recommend bets above 55% predicted win
-  max_odds: 3.0             # avoid extreme betting odds
+  threshold: 0.6
 
-# ------------------ MLFlow ------------------
-mlflow:
-  experiment_name: nba_daily_pipeline
-  tracking_uri: file:mlruns
+strength:
+  streak_weight: 0.3
+  diff_weight: 0.4
+  winpct_weight: 0.3
 
-# ------------------ API settings ------------------
-api:
-  nba_url: "https://data.nba.com/data/10s/v2015/json/mobile_teams/nba/latest/games.json"
-  timeout: 10   # seconds
+model:
+  type: RandomForestClassifier
+  n_estimators: 200
+  max_depth: 10
+  random_state: 42
+  target: homeWin
+  features:
+    - home_team_encoded
+    - away_team_encoded
+    - point_diff
+    - rest_days_home
+    - rest_days_away
+    - home_lastN_winpct
+    - away_lastN_winpct
+    - home_lastN_pointdiff
+    - away_lastN_pointdiff
+    - elo_home
+    - elo_away
+    - home_opp_strength
+    - away_opp_strength
+    - adj_pointdiff_home
+    - adj_pointdiff_away

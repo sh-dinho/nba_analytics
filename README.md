@@ -1,210 +1,121 @@
-# 📘 NBA Prediction Pipeline — Clean & Production-Ready README (v1.3)
-*A modular Python pipeline for fetching NBA game data, generating features, training ML models, and producing daily win-probability predictions. Fully compatible with Power BI.*
+# 🏀 NBA Analytics Pipeline v2.3
+
+## Overview
+This project is a **modern SaaS analytics platform for NBA game outcome prediction and betting insights**.  
+It orchestrates ingestion, schema alignment, feature engineering, model training, explainability, rankings, betting recommendations, and artifact archiving — all with CI/CD integration and automated notifications.
+
+Key highlights:
+- 📥 **Data ingestion** from NBA boxscore schemas
+- 🧾 **Schema normalization & validation**
+- ⚙️ **Feature engineering** (Elo ratings, rolling stats, opponent-adjusted metrics, rest days)
+- 🤖 **Model training & prediction** (RandomForest + extensible ensemble support)
+- 🔍 **Explainability** with SHAP plots
+- 📊 **Rankings & betting recommendations**
+- 📦 **Artifact management** with versioned archives
+- 📲 **Notifications** via Telegram/Slack
+- 🛡 **CI/CD** with linting, header enforcement, and automated tests
 
 ---
 
-# 🚀 Quick Start
+## 📂 Project Structure
+```
+src/
+config/ # YAML configs + loader
+ features/ # Feature engineering (Elo, rolling, opponent-adjusted) 
+ models/ # Model training & prediction 
+ ranking/ # Betting recommendations
+  schedule/ # Historical pipeline + schema contracts
+   schemas/ # Normalization logic 
+   utils/ # Logging, IO helpers pipeline_runner.py # Main orchestration script 
+   scripts/ add_headers.py # Header enforcement utility 
+   tests/ test_feature_engineering.py # Unit tests for features test_pipeline_e2e.py # End-to-end pipeline tests
+    data/ 
+      history/ # Raw historical NBA data
+      cache/ # Latest enriched schedule, rankings, recs
+       archive/ # Versioned run artifacts 
+       logs/ interpretability/ # SHAP plots 
+       .github/workflows/ pipeline.yml # CI/CD workflow 
+  requirements.txt # Python dependencies
+```
 
-### **1. Install requirements**
+---
+
+## ⚙️ Setup
+
+### Prerequisites
+- Python 3.11+
+- Virtual environment recommended
+
+### Install dependencies
 ```bash
 pip install -r requirements.txt
 ```
-### 2.Run the daily prediction runner
-```bash
-python run_pipeline.py --model models/nba_logreg.pkl
+Prepare historical data
+Place a parquet file in data/history/historical_schedule.parquet with NBA boxscore schema:
 ```
-### 3.  Optional) Run the MLflow-enabled runner
-```bash
-python daily_runner_mflow.py --model models/nba_logreg.pkl
+SEASON_ID, TEAM_ID, TEAM_ABBREVIATION, TEAM_NAME,
+GAME_ID, GAME_DATE, MATCHUP, WL, PTS, ...
 ```
-### 4. View outputs
-All outputs are saved automatically into the standardized folder structure:
-```bash
-data/
-  raw/           # raw NBA API dumps (optional)
-  cache/         # cached training features
-  history/       # historical predictions
-  csv/           # daily CSV predictions
-  parquet/       # daily Parquet predictions
-  logs/          # runner logs + API failure logs
-models/
-results/
+The pipeline automatically aligns this schema to canonical:
 ```
-Your predictions are now ready for Power BI dashboards.
-
-# 🏗 Project Structure
-
+gameId, seasonYear, startDate, homeTeam, awayTeam, homeScore, awayScore
 ```
-nba_analysis/
-│
-├── src/
-│   ├── api/
-│   │   └── nba_api_wrapper.py
-│   ├── features/
-│   ├── model_training/
-│   ├── prediction_engine/
-│   ├── tracker/
-│   │   └── game_tracker.py
-│   ├── utils/
-│   │   ├── add_unique_id.py
-│   │   ├── io.py
-│   │   ├── logging.py
-│   │   ├── logging_config.py
-│   │   ├── mapping.py
-│   │   ├── nba_api_wrapper.py
-│   │   ├── validation.py
-│   └── scripts/
-│       ├── generate_historical_schedule.py
-│       └── generate_today_schedule.py
-├── data/
-│   ├── cache/
-│   └── results/
-├── logs/
-├── models/
-├── tests/
-├── docs/
-├── .editorconfig
-├── .gitignore
-├── requirements.txt
-├── setup_project.sh
-└── Makefile
-
+Run pipeline
 ```
-📊 Power BI Integration
-1. Load Historical Prediction Data
+python -m src.pipeline_runner
+```
+This will:
 
-Power BI → Get Data → Parquet
+Ingest & align historical data
 
-Select:
-````
-data/history/predictions_history.parquet
-````
-2. Load Multiple Daily Prediction Files
+Enrich schedule with features
 
-- Use the Folder connector:
+Train & predict outcomes
 
-  -For CSVs: data/csv/
+Generate SHAP explainability plots
 
-- For Parquet: data/parquet/
+Produce rankings & betting recommendations
 
-Power BI automatically appends all files.
+Archive artifacts with metadata
 
-🛠 Key Pipeline Features
-1. Data Quality Checks
+📊 Outputs
+Enriched schedule → data/cache/master_schedule.parquet
 
-validates required columns
+Rankings → data/cache/rankings.parquet
 
-ensures correct data types
+Betting recommendations → data/cache/betting_recommendations_YYYY-MM-DD.parquet
 
-detects anomalies
+Explainability plots → logs/interpretability/shap_summary.png, shap_bar.png
 
-logs issues to data/logs/
+Archived artifacts → data/archive/<timestamp>/
 
-2. Error Handling
+🛡 CI/CD
+Linting: flake8 + black
 
-automatic retry logic with backoff
+Header enforcement: scripts/add_headers.py
 
-safe API wrappers
+Pipeline run: executes end-to-end
 
-separate error logs
+Notifications: Telegram alerts with top picks + SHAP plots
 
-3. Config-Driven
+🧪 Testing
+Unit tests: Elo ratings, rolling features, opponent-adjusted metrics, schema alignment
 
-config.yaml controls:
+End-to-end tests: Full pipeline run from ingestion → archiving
 
-seasons
+Numerical validation: Elo updates, rolling averages correctness
 
-model paths
+📅 Roadmap (2026)
+Q1: Feature store, drift detection, schema validation
 
-thresholds
+Q2: Ensemble models, Bayesian updating, analyst notes
 
-save locations
+Q3: Automated retraining, MLflow model registry, richer notifications
 
-retry settings
+Q4: Player-level features, betting market integration, interactive dashboards
 
-MLflow parameters
+👤 Author
+Developed by  (sh) — Architect and lead developer of a modern SaaS analytics platform for sports betting.
 
-4. File Structure Organization
-
-Separate folders for:
-
-raw API data
-
-feature cache
-
-prediction history
-
-CSV & Parquet daily outputs
-
-logs
-
-5. Deduplication
-
-Unified ID prevents duplicate rows:
-
-GAME_ID
-
-TEAM_ID
-
-prediction_date
-
-6. Performance
-
-Vectorized feature engineering
-
-Batch operations
-
-Cached repeated lookups
-
-7. Tested with pytest
-
-Core components include tests:
-
-feature generation
-
-API wrapper
-
-predictor logic
-
-data cleaning
-
-👥 Contributors
-
-Developed in Python with ❤️ for NBA analytics, reproducible ML pipelines, and Power BI integration.
-
-🗺 Roadmap
-v1.0 — Complete
-
-Logistic regression baseline
-
-Clean pipeline
-
-CSV/Parquet outputs
-
-Power BI dashboards
-
-v2.0 — Coming Soon
-
-Migrate storage to SQLite/Postgres
-
-Historical rollups
-
-Scheduled ETL jobs
-
-v3.0 — ML Enhancements
-
-XGBoost / Random Forest / Neural Net models
-
-SHAP explainability
-
-MLflow model versioning
-
-v4.0 — Cloud Integration
-
-Azure Synapse
-
-BigQuery
-
-AWS Glue
-
-cloud-based MLflow
+📜 License
+MIT License (or specify your chosen license).
