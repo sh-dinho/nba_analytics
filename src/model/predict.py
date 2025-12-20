@@ -1,98 +1,61 @@
-# ============================================================
-# File: src/model/predict.py
-# Purpose: Utility for loading trained models and predicting NBA outcomes
-# Version: 1.0
-# Author: Mohamadou
-# Date: December 2025
-# ============================================================
+"""
+Prediction utilities for NBA Analytics v3.
+Handles batch prediction and probability generation.
+"""
 
-import logging
-import joblib
 import pandas as pd
 from pathlib import Path
-
-from src.model.train_model import predict_outcomes
-
-# Configure logger for the predict module
-logger = logging.getLogger("model.predict")
-logging.basicConfig(level=logging.INFO)
+from loguru import logger
 
 
-def load_model(model_path: str):
+def predict_games(
+    model, metadata: dict, df_features: pd.DataFrame, output_dir="data/predictions"
+):
     """
-    Load a trained model from disk using joblib.
+    Generate predictions for a set of games using a trained model.
 
     Args:
-        model_path (str): Path to the saved model file.
+        model: Trained ML model (e.g., RandomForestClassifier)
+        metadata: Model metadata including 'features_used'
+        df_features: DataFrame containing feature columns
+        output_dir: Directory to save prediction parquet file
 
     Returns:
-        model: The loaded machine learning model, or None if loading failed.
+        Tuple[pd.DataFrame, Path]: DataFrame with predicted probabilities, path to parquet
     """
-    try:
-        model = joblib.load(model_path)
-        logger.info(f"Model successfully loaded from {model_path}")
-        return model
-    except Exception as e:
-        logger.error(f"Failed to load model from {model_path}: {e}")
-        return None
+    logger.info("Running batch predictions...")
 
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-def predict_schedule(model, schedule_df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """
-    Predict outcomes for NBA games using a trained model and a schedule DataFrame.
+    feature_cols = metadata["features_used"]
+    df = df_features.copy()
 
-    Args:
-        model: The trained machine learning model to use for predictions.
-        schedule_df (pd.DataFrame): DataFrame containing game features for prediction.
-        config (dict): Configuration dictionary with key "features".
+    # Ensure all features exist
+    missing_cols = [c for c in feature_cols if c not in df.columns]
+    if missing_cols:
+        raise ValueError(f"Missing required feature columns: {missing_cols}")
 
-    Returns:
-        pd.DataFrame: Updated DataFrame with predicted outcomes and probabilities.
-    """
-    if model is None or schedule_df.empty:
-        logger.warning("Model or schedule data is missing. Skipping predictions.")
-        return pd.DataFrame()
+    # Get model prediction probabilities
+    classes = model.classes_
+    proba = model.predict_proba(df[feature_cols])
 
-    # Ensure required feature columns exist
-    if not all(col in schedule_df.columns for col in config["features"]):
+    # Handle single-class models gracefully
+    if proba.shape[1] == 1:
+        only_class = classes[0]
+        df["probability"] = float(only_class)
         logger.warning(
-            f"Required columns {config['features']} are missing in the schedule DataFrame."
+            f"Model trained on a single class ({only_class}). "
+            f"All probabilities set to {float(only_class)}."
         )
-        return pd.DataFrame()
+    else:
+        # Normal case: probability of class 1 (home win)
+        df["probability"] = proba[:, 1]
 
-    try:
-        # Reuse predict_outcomes from train_model.py
-        schedule_df = predict_outcomes(model, schedule_df, config)
-        logger.info(f"Predicted outcomes for {len(schedule_df)} games.")
-    except Exception as e:
-        logger.error(f"Prediction failed: {e}")
-        return pd.DataFrame()
+    # Save predictions
+    timestamp = pd.Timestamp.utcnow().strftime("%Y%m%d_%H%M%S")
+    path = output_dir / f"predictions_{timestamp}.parquet"
+    df.to_parquet(path, index=False)
 
-    return schedule_df
-
-
-# Example usage
-if __name__ == "__main__":
-    # Example path to your saved model
-    model_path = "models/rf_model_latest.joblib"
-
-    # Example schedule DataFrame with placeholder features
-    schedule_data = {
-        "HOME_TEAM_STATS": [0.85, 0.76, 0.90],
-        "AWAY_TEAM_STATS": [0.72, 0.65, 0.80],
-    }
-    schedule_df = pd.DataFrame(schedule_data)
-
-    # Example config
-    config = {
-        "features": ["HOME_TEAM_STATS", "AWAY_TEAM_STATS"],
-        "target": "homeWin",
-    }
-
-    # Load the model
-    model = load_model(model_path)
-
-    # Predict the outcomes for the given schedule
-    if model:
-        predictions = predict_schedule(model, schedule_df, config)
-        print(predictions)
+    logger.info(f"Saved predictions → {path}")
+    return df, path
