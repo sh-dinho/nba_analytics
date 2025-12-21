@@ -6,8 +6,7 @@
 # Description:
 #     Utilities for sending alerts and charts to Telegram:
 #       - Text alerts (summary, value bets, errors)
-#       - Bankroll / prediction charts via matplotlib figures
-#
+#       - Bankroll charts via matplotlib figures
 # ============================================================
 
 from __future__ import annotations
@@ -16,8 +15,8 @@ import os
 import tempfile
 
 import matplotlib.pyplot as plt
-import requests
 import pandas as pd
+import requests
 
 
 TELEGRAM_BOT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
@@ -73,10 +72,6 @@ def _send_telegram_chart(fig, caption: str = "Chart") -> None:
 def send_bankroll_chart(
     records: pd.DataFrame, caption: str = "Bankroll Over Time"
 ) -> None:
-    """
-    Send a bankroll curve chart to Telegram using backtest records.
-    Expects a DataFrame with at least 'date' and 'bankroll_after' columns.
-    """
     records = records.sort_values("date")
 
     fig, ax = plt.subplots(figsize=(8, 4))

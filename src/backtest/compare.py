@@ -4,15 +4,11 @@
 # Author: Sadiq
 #
 # Description:
-#     Run multiple backtest configurations over the same date
-#     range and return a comparison table for consulting/demo.
-#
+#     Run multiple backtest configurations over the same range
+#     and return a comparison table for consulting/demo.
 # ============================================================
 
 from __future__ import annotations
-
-from dataclasses import asdict
-from typing import Iterable
 
 import pandas as pd
 

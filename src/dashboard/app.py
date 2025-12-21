@@ -4,29 +4,28 @@
 # Author: Sadiq
 #
 # Description:
-#     Streamlit dashboard for inspecting:
-#       - Daily predictions
-#       - Odds + predictions merged view
-#       - Historical backtest performance (bankroll, ROI, drawdown)
-#
+#     Streamlit dashboard / client portal:
+#       - Predictions
+#       - Backtest + What-if
+#       - Accuracy
+#       - Strategy comparison (admin)
+#       - Report generation (client)
 # ============================================================
 
 from __future__ import annotations
 
 from datetime import date
-from pathlib import Path
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
 
 from src.config.paths import PREDICTIONS_DIR, ODDS_DIR
 from src.backtest.engine import Backtester, BacktestConfig
-
-
-# ------------------------------------------------------------
-# Data loading helpers
-# ------------------------------------------------------------
+from src.backtest.accuracy import AccuracyEngine
+from src.backtest.compare import compare_strategies
+from src.dashboard.auth import require_login, is_admin
+from src.reports.backtest_report import generate_backtest_accuracy_report
 
 
 def _load_predictions(pred_date: date) -> pd.DataFrame:
@@ -43,11 +42,6 @@ def _load_odds(pred_date: date) -> pd.DataFrame:
     return pd.read_parquet(path)
 
 
-# ------------------------------------------------------------
-# Plot helpers
-# ------------------------------------------------------------
-
-
 def plot_bankroll_curve(records: pd.DataFrame):
     fig, ax = plt.subplots(figsize=(8, 4))
     records = records.sort_values("date")
@@ -57,11 +51,6 @@ def plot_bankroll_curve(records: pd.DataFrame):
     ax.tick_params(axis="x", rotation=45)
     fig.tight_layout()
     return fig
-
-
-# ------------------------------------------------------------
-# Tabs
-# ------------------------------------------------------------
 
 
 def predictions_tab():
@@ -129,9 +118,12 @@ def predictions_tab():
 
 
 def backtest_tab():
-    st.header("Backtest")
+    st.header("Backtest / What-if Simulator")
 
-    st.markdown("Run a historical backtest over your predictions + odds + outcomes.")
+    st.markdown(
+        "_This is a **what-if simulator**: adjust the parameters below to see how the "
+        "strategy would have performed historically under different risk settings._"
+    )
 
     col1, col2 = st.columns(2)
     with col1:
@@ -183,6 +175,10 @@ def backtest_tab():
         st.write(f"ROI: {results['roi']:.3f}")
         st.write(f"Hit rate: {results['hit_rate']:.3f}")
         st.write(f"Max drawdown: {results['max_drawdown']:.3f}")
+        st.write(
+            f"Bets: {results['num_bets']}, Wins: {results['num_wins']}, "
+            f"Losses: {results['num_losses']}, Pushes: {results['num_pushes']}"
+        )
 
         records = results["records"]
         if not records.empty:
@@ -196,16 +192,159 @@ def backtest_tab():
                 use_container_width=True,
             )
 
+        if st.button("Generate client-ready report"):
+            report_path = generate_backtest_accuracy_report(
+                start_date=start_date.isoformat() if start_date else None,
+                end_date=end_date.isoformat() if end_date else None,
+                config=cfg,
+                decision_threshold=0.5,
+            )
+            st.success(f"Report generated: {report_path}")
+            st.markdown(f"[Download report]({report_path})")
+
+
+def accuracy_tab():
+    st.header("Model Accuracy")
+
+    threshold = st.slider(
+        "Decision threshold (win_probability >= threshold => predict win)",
+        0.0,
+        1.0,
+        0.5,
+        0.01,
+    )
+    start_date = st.date_input("Start date (optional)", value=None, key="acc_start")
+    end_date = st.date_input("End date (optional)", value=None, key="acc_end")
+
+    if st.button("Compute accuracy"):
+        engine = AccuracyEngine(threshold=threshold)
+        res = engine.run(
+            start_date=start_date.isoformat() if start_date else None,
+            end_date=end_date.isoformat() if end_date else None,
+        )
+
+        if res.total_examples == 0:
+            st.warning("No data for accuracy computation in this range.")
+            return
+
+        st.subheader("Overall")
+        st.write(f"Overall accuracy: {res.overall_accuracy:.3f}")
+        st.write(f"Total examples: {res.total_examples}")
+
+        if not res.by_season.empty:
+            st.subheader("By season")
+            st.dataframe(res.by_season, use_container_width=True)
+
+        st.subheader("Sample predictions vs outcomes")
+        sample_cols = [
+            "date",
+            "game_id",
+            "team",
+            "win_probability",
+            "won",
+            "predicted_win",
+            "correct",
+        ]
+        sample = res.raw[sample_cols].sort_values("date", ascending=False).head(200)
+        st.dataframe(sample, use_container_width=True)
+
+
+def strategy_comparison_tab():
+    st.header("Strategy Comparison")
+
+    start_date = st.date_input("Start date", value=None, key="cmp_start")
+    end_date = st.date_input("End date", value=None, key="cmp_end")
+
+    st.markdown("Define a few strategies to compare:")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        min_edge_base = st.number_input("Baseline min edge", value=0.0, step=0.01)
+    with col2:
+        min_edge_aggressive = st.number_input(
+            "Aggressive min edge", value=0.05, step=0.01
+        )
+    with col3:
+        min_edge_conservative = st.number_input(
+            "Conservative min edge", value=0.03, step=0.01
+        )
+
+    col4, col5 = st.columns(2)
+    with col4:
+        kelly_fraction_base = st.number_input(
+            "Baseline Kelly fraction", value=0.0, step=0.05
+        )
+    with col5:
+        kelly_fraction_main = st.number_input(
+            "Main strategy Kelly fraction", value=0.25, step=0.05
+        )
+
+    if st.button("Compare strategies"):
+        configs = {
+            "Flat no-edge baseline": BacktestConfig(
+                starting_bankroll=1000.0,
+                min_edge=min_edge_base,
+                kelly_fraction=kelly_fraction_base,
+                max_stake_fraction=0.02,
+            ),
+            "Main strategy": BacktestConfig(
+                starting_bankroll=1000.0,
+                min_edge=min_edge_conservative,
+                kelly_fraction=kelly_fraction_main,
+                max_stake_fraction=0.05,
+            ),
+            "Aggressive edge strategy": BacktestConfig(
+                starting_bankroll=1000.0,
+                min_edge=min_edge_aggressive,
+                kelly_fraction=kelly_fraction_main,
+                max_stake_fraction=0.1,
+            ),
+        }
+
+        df = compare_strategies(
+            configs,
+            start_date=start_date.isoformat() if start_date else None,
+            end_date=end_date.isoformat() if end_date else None,
+        )
+
+        if df.empty or not df["has_data"].any():
+            st.warning("No data for comparison in this range.")
+            return
+
+        st.subheader("Strategy comparison table")
+        st.dataframe(
+            df.sort_values("roi", ascending=False),
+            use_container_width=True,
+        )
+
 
 def main():
-    st.set_page_config(page_title="NBA Analytics & Betting Dashboard", layout="wide")
+    st.set_page_config(page_title="NBA Analytics Client Portal", layout="wide")
 
-    tab1, tab2 = st.tabs(["Predictions", "Backtest"])
+    require_login()
+
+    st.sidebar.write(f"Logged in as: **{st.session_state['username']}**")
+    if st.sidebar.button("Logout"):
+        st.session_state.clear()
+        st.experimental_rerun()
+
+    if is_admin():
+        tab1, tab2, tab3, tab4 = st.tabs(
+            ["Predictions", "Backtest / What-if", "Accuracy", "Strategy Comparison"]
+        )
+    else:
+        tab1, tab2, tab3 = st.tabs(["Predictions", "Backtest / What-if", "Accuracy"])
 
     with tab1:
         predictions_tab()
     with tab2:
         backtest_tab()
+    with tab3:
+        accuracy_tab()
+
+    if is_admin():
+        with tab4:
+            strategy_comparison_tab()
 
 
 if __name__ == "__main__":

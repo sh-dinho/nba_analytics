@@ -2,78 +2,90 @@
 # File: src/ingestion/pipeline.py
 # ============================================================
 
-from pathlib import Path
 import pandas as pd
+from datetime import date, timedelta
 from loguru import logger
-
-from src.ingestion.collector import NBADataCollector
-from src.ingestion.transform import wide_to_long
-from src.config import SNAPSHOT_PATH
+from src.ingestion.collector import NBACollector
+from src.config.paths import SCHEDULE_SNAPSHOT, LONG_SNAPSHOT
 
 
 class IngestionPipeline:
     def __init__(self):
-        self.snapshot_path = SNAPSHOT_PATH
-        self.snapshot_path.parent.mkdir(parents=True, exist_ok=True)
-        self.collector = NBADataCollector()
+        self.collector = NBACollector()
 
-    # ---------------------------------------------------------
-    # Snapshot helpers
-    # ---------------------------------------------------------
+    def run_today_ingestion(self):
+        """Fetches yesterday and today, ensuring data types are correct."""
+        today = date.today()
+        yesterday = today - timedelta(days=1)
 
-    def _load_snapshot(self) -> pd.DataFrame:
-        if not self.snapshot_path.exists():
-            logger.info("No snapshot found. Starting fresh.")
-            return pd.DataFrame()
-        return pd.read_parquet(self.snapshot_path)
+        all_new_games = []
+        for d in [yesterday, today]:
+            # Force the collector to use the '00' LeagueID
+            df = self.collector.fetch_scoreboard(d)
+            if not df.empty:
+                all_new_games.append(df)
 
-    def _save_snapshot(self, df: pd.DataFrame):
-        if df.empty:
-            logger.warning("Attempted to save empty snapshot. Skipping.")
+        if not all_new_games:
+            logger.warning("No games found for yesterday or today.")
             return
-        df = df.sort_values("date")
-        df.to_parquet(self.snapshot_path, index=False)
-        logger.success(f"Saved snapshot with {len(df)} games → {self.snapshot_path}")
 
-    # ---------------------------------------------------------
-    # Full history ingestion
-    # ---------------------------------------------------------
+        combined_df = pd.concat(all_new_games).drop_duplicates(subset=["game_id"])
 
-    def run_full_history_ingestion(self) -> pd.DataFrame:
-        logger.info("🚀 Running full history ingestion...")
-        df = self.collector.fetch_all_history()
-        self._save_snapshot(df)
-        return df
+        # FIX 1: Force column to datetime, then to date objects (not strings!)
+        combined_df["date"] = pd.to_datetime(combined_df["date"]).dt.date
 
-    # ---------------------------------------------------------
-    # Today ingestion
-    # ---------------------------------------------------------
+        self._update_historical_data(combined_df)
+        self._update_schedule(combined_df)
 
-    def run_today_ingestion(self) -> pd.DataFrame:
-        logger.info("🔄 Running today's ingestion...")
-        base = self._load_snapshot()
+    def _update_schedule(self, new_df: pd.DataFrame):
+        """Saves the schedule snapshot specifically for the prediction model."""
+        # FIX 2: Parquet preserves 'object' types; we must ensure they are dates
+        # Some engines convert dates to strings; we'll force them back on load in the model
+        new_df.to_parquet(SCHEDULE_SNAPSHOT, index=False, engine="pyarrow")
+        logger.success(f"Verified {len(new_df)} games saved to schedule.")
 
-        today_df = self.collector.fetch_today()
-        if today_df.empty:
-            logger.info("No games today.")
-            return pd.DataFrame()
+    def _update_long_history(self, results_df: pd.DataFrame):
+        """Converts scoreboard format to 'Long' format and merges with history."""
+        long_rows = []
+        for _, row in results_df.iterrows():
+            # Home Team Entry
+            long_rows.append(
+                {
+                    "game_id": row["game_id"],
+                    "date": row["date"],
+                    "team": row["home_team"],
+                    "opponent": row["away_team"],
+                    "is_home": 1,
+                    "points_for": row["home_score"],
+                    "points_against": row["away_score"],
+                    "won": 1 if row["home_score"] > row["away_score"] else 0,
+                }
+            )
+            # Away Team Entry
+            long_rows.append(
+                {
+                    "game_id": row["game_id"],
+                    "date": row["date"],
+                    "team": row["away_team"],
+                    "opponent": row["home_team"],
+                    "is_home": 0,
+                    "points_for": row["away_score"],
+                    "points_against": row["home_score"],
+                    "won": 1 if row["away_score"] > row["home_score"] else 0,
+                }
+            )
 
-        combined = pd.concat([base, today_df], ignore_index=True)
-        combined = combined.drop_duplicates(subset=["game_id"], keep="last")
+        new_long_df = pd.DataFrame(long_rows)
+        new_long_df["date"] = pd.to_datetime(new_long_df["date"]).dt.date
 
-        self._save_snapshot(combined)
-        return today_df
+        if LONG_SNAPSHOT.exists():
+            existing_df = pd.read_parquet(LONG_SNAPSHOT)
+            existing_df["date"] = pd.to_datetime(existing_df["date"]).dt.date
+            combined = pd.concat([existing_df, new_long_df]).drop_duplicates(
+                subset=["game_id", "team"]
+            )
+        else:
+            combined = new_long_df
 
-    # ---------------------------------------------------------
-    # ML-ready output
-    # ---------------------------------------------------------
-
-    def load_long_format(self) -> pd.DataFrame:
-        """Returns long-format ML-ready dataset."""
-        wide = self._load_snapshot()
-        return wide_to_long(wide)
-
-
-if __name__ == "__main__":
-    pipeline = IngestionPipeline()
-    pipeline.run_today_ingestion()
+        combined.to_parquet(LONG_SNAPSHOT, index=False)
+        logger.info(f"Historical training data updated → {LONG_SNAPSHOT}")

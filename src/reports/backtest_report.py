@@ -7,15 +7,13 @@
 #     Generate client-ready HTML reports that summarize:
 #       - Backtest performance (ROI, bankroll, drawdown, win/loss)
 #       - Model accuracy (overall + per-season)
-#
+#       - Executive Summary (auto-generated insights)
 # ============================================================
 
 from __future__ import annotations
 
-from pathlib import Path
 from datetime import datetime
-
-import pandas as pd
+from pathlib import Path
 
 from src.backtest.engine import Backtester, BacktestConfig
 from src.backtest.accuracy import AccuracyEngine
@@ -55,6 +53,62 @@ def generate_backtest_accuracy_report(
     return report_path
 
 
+def _generate_executive_summary(bt, acc):
+    if not bt or acc.total_examples == 0:
+        return ["Insufficient data to generate a meaningful summary."]
+
+    insights = []
+
+    if bt["roi"] > 0.05:
+        insights.append(
+            f"Strategy achieved a strong ROI of {bt['roi']:.1%}, indicating consistent profitability."
+        )
+    elif bt["roi"] > 0:
+        insights.append(f"Strategy produced a modest positive ROI of {bt['roi']:.1%}.")
+    else:
+        insights.append(
+            f"Strategy underperformed with an ROI of {bt['roi']:.1%}, suggesting parameter tuning is needed."
+        )
+
+    if bt["hit_rate"] > 0.55:
+        insights.append(
+            f"Hit rate of {bt['hit_rate']:.1%} exceeds typical market baselines."
+        )
+    else:
+        insights.append(
+            f"Hit rate of {bt['hit_rate']:.1%} is within expected variance for NBA moneyline models."
+        )
+
+    if bt["max_drawdown"] > -0.20:
+        insights.append(
+            "Drawdown remained well-controlled, indicating stable risk exposure."
+        )
+    else:
+        insights.append(
+            "Drawdown exceeded 20%, suggesting the strategy may be too aggressive."
+        )
+
+    if acc.overall_accuracy > 0.60:
+        insights.append(
+            f"Model accuracy of {acc.overall_accuracy:.1%} is strong for NBA forecasting."
+        )
+    else:
+        insights.append(
+            f"Model accuracy of {acc.overall_accuracy:.1%} is typical for NBA forecasting models."
+        )
+
+    if bt["num_bets"] > 200:
+        insights.append(
+            f"High bet volume ({bt['num_bets']}) provides strong statistical confidence."
+        )
+    else:
+        insights.append(
+            f"Lower bet volume ({bt['num_bets']}) suggests results should be interpreted cautiously."
+        )
+
+    return insights[:5]
+
+
 def _render_html_report(start_date, end_date, config, bt, acc) -> str:
     def fmt(x, digits=3):
         return f"{x:.{digits}f}"
@@ -63,6 +117,7 @@ def _render_html_report(start_date, end_date, config, bt, acc) -> str:
 
     if not bt:
         bt_html = "<p>No backtest results available.</p>"
+        summary_items = ["No backtest results available."]
     else:
         bt_html = f"""
         <h2>Backtest Summary</h2>
@@ -76,6 +131,7 @@ def _render_html_report(start_date, end_date, config, bt, acc) -> str:
           <li>Bets: {bt['num_bets']}, Wins: {bt['num_wins']}, Losses: {bt['num_losses']}, Pushes: {bt['num_pushes']}</li>
         </ul>
         """
+        summary_items = _generate_executive_summary(bt, acc)
 
     if acc.total_examples == 0:
         acc_html = "<p>No accuracy data available.</p>"
@@ -92,6 +148,10 @@ def _render_html_report(start_date, end_date, config, bt, acc) -> str:
         <h3>Accuracy by Season</h3>
         {by_season_table}
         """
+
+    summary_html = (
+        "<ul>" + "".join(f"<li>{item}</li>" for item in summary_items) + "</ul>"
+    )
 
     html = f"""
     <html>
@@ -110,6 +170,9 @@ def _render_html_report(start_date, end_date, config, bt, acc) -> str:
       <body>
         <h1>NBA Analytics & Betting Engine — Performance Report</h1>
         <p><strong>Date range:</strong> {date_range_str}</p>
+
+        <h2>Executive Summary</h2>
+        {summary_html}
 
         <h2>Strategy Configuration</h2>
         <ul>

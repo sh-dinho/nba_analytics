@@ -1,0 +1,33 @@
+# --- Python Environment ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+
+# --- NBA Data (Keep the repo clean) ---
+# Ignore all raw and processed data snapshots
+data/
+*.parquet
+*.csv
+*.json
+!src/ingestion/static_data/  # Example: Don't ignore static team maps if needed
+
+# --- Model Artifacts ---
+# Serialized models and training logs
+models/
+*.joblib
+*.pkl
+latest_features.parquet
+
+# --- Logs & Performance ---
+logs/
+*.log
+
+# --- IDEs & System ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

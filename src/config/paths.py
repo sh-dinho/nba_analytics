@@ -1,7 +1,10 @@
 # ============================================================
 # Project: NBA Analytics & Betting Engine
+# Module: Paths Configuration
 # Author: Sadiq
-# Description: Centralized filesystem paths for all pipeline data.
+#
+# Description:
+#     Centralized filesystem paths for all pipeline data.
 # ============================================================
 
 from pathlib import Path
@@ -19,7 +22,6 @@ MODEL_REGISTRY_DIR = DATA_DIR / "models" / "registry"
 PREDICTIONS_DIR = DATA_DIR / "predictions"
 ODDS_DIR = DATA_DIR / "odds"
 LOGS_DIR = DATA_DIR / "logs"
-
 # Orchestrator logs
 ORCHESTRATOR_LOG_DIR = DATA_DIR / "orchestrator_logs"
 

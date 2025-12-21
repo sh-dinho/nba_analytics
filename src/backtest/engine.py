@@ -4,37 +4,14 @@
 # Author: Sadiq
 #
 # Description:
-#     This module provides a full historical backtesting engine
-#     for evaluating model-driven betting strategies.
-#
-#     It loads:
-#       - Historical model predictions
-#       - Historical bookmaker odds
-#       - Actual game outcomes (from canonical long snapshot)
-#
-#     It joins these into a unified dataset and simulates:
-#       - Edge calculation
-#       - Kelly-based stake sizing
-#       - Bet execution and bankroll evolution
-#       - Profit/loss tracking
-#       - ROI, hit rate, max drawdown
-#
-#     The engine is fully modular:
-#       - BacktestConfig controls strategy parameters
-#       - Backtester.run() executes the simulation
-#       - Results include per-bet logs and bankroll curves
-#
-#     This module integrates with:
-#       - The orchestrator (for daily runs)
-#       - The dashboard (for visualization)
-#       - Telegram notifications (for charts and summaries)
-#
+#     Historical backtesting engine for evaluating model-driven
+#     betting strategies using predictions, odds, and outcomes.
 # ============================================================
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
+from datetime import date, datetime
 from typing import Optional
 
 import numpy as np
@@ -44,27 +21,16 @@ from loguru import logger
 from src.config.paths import PREDICTIONS_DIR, ODDS_DIR, LONG_SNAPSHOT
 
 
-# ============================================================
-# Configuration
-# ============================================================
-
-
 @dataclass
 class BacktestConfig:
     starting_bankroll: float = 1000.0
-    min_edge: float = 0.03  # minimum edge required to place a bet
-    kelly_fraction: float = 0.25  # fractional Kelly
-    max_stake_fraction: float = 0.05  # cap stake to 5% of bankroll
-    market: str = "moneyline"  # placeholder for future markets
-
-
-# ============================================================
-# Utility Functions
-# ============================================================
+    min_edge: float = 0.03
+    kelly_fraction: float = 0.25
+    max_stake_fraction: float = 0.05
+    market: str = "moneyline"
 
 
 def american_to_implied(price: float) -> float:
-    """Convert American odds to implied probability."""
     if price > 0:
         return 100 / (price + 100)
     else:
@@ -72,10 +38,6 @@ def american_to_implied(price: float) -> float:
 
 
 def kelly_fraction(win_prob: float, price: float) -> float:
-    """
-    Kelly formula for American odds.
-    Convert to decimal odds first.
-    """
     if price > 0:
         decimal_odds = 1 + price / 100
     else:
@@ -89,25 +51,26 @@ def kelly_fraction(win_prob: float, price: float) -> float:
     return max(0.0, k)
 
 
-# ============================================================
-# Backtester
-# ============================================================
+def current_season_date_range() -> tuple[str, str]:
+    today = datetime.today().date()
+    year = today.year
+
+    if today.month >= 10:
+        start = date(year, 10, 1)
+    else:
+        start = date(year - 1, 10, 1)
+
+    end = today
+    return start.isoformat(), end.isoformat()
 
 
 class Backtester:
     def __init__(self, config: BacktestConfig):
         self.config = config
 
-    # --------------------------------------------------------
-    # Public API
-    # --------------------------------------------------------
-
     def run(
         self, start_date: Optional[str] = None, end_date: Optional[str] = None
     ) -> dict:
-        """
-        Run backtest over predictions + odds + outcomes for the given date range.
-        """
         df = self._load_joined_data(start_date, end_date)
 
         if df.empty:
@@ -120,22 +83,13 @@ class Backtester:
 
         return results
 
-    # --------------------------------------------------------
-    # Data Loading & Joining
-    # --------------------------------------------------------
-
     def _load_joined_data(
         self, start_date: Optional[str], end_date: Optional[str]
     ) -> pd.DataFrame:
-        """
-        Load predictions, odds, and outcomes, join into a single DataFrame.
-        """
-        # 1) Load outcomes
         long_df = pd.read_parquet(LONG_SNAPSHOT)
         long_df["date"] = pd.to_datetime(long_df["date"]).dt.date
         long_df = long_df[["game_id", "team", "won", "date"]]
 
-        # 2) Load predictions
         pred_files = sorted(PREDICTIONS_DIR.glob("predictions_*.parquet"))
         preds_list = []
 
@@ -157,7 +111,6 @@ class Backtester:
 
         preds = pd.concat(preds_list, ignore_index=True)
 
-        # 3) Load odds
         odds_files = sorted(ODDS_DIR.glob("odds_*.parquet"))
         odds_list = []
 
@@ -179,7 +132,6 @@ class Backtester:
 
         odds = pd.concat(odds_list, ignore_index=True)
 
-        # 4) Join predictions + odds
         joined = odds.merge(
             preds,
             on=["game_id", "team", "date"],
@@ -187,21 +139,15 @@ class Backtester:
             suffixes=("_odds", "_pred"),
         )
 
-        # 5) Join outcomes
         joined = joined.merge(
             long_df,
             on=["game_id", "team"],
             how="left",
         )
 
-        # Remove rows without outcomes (future games)
         joined = joined.dropna(subset=["won"])
 
         return joined
-
-    # --------------------------------------------------------
-    # Strategy Logic
-    # --------------------------------------------------------
 
     def _compute_edges(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
@@ -210,9 +156,6 @@ class Backtester:
         return df
 
     def _apply_strategy(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Apply edge + fractional Kelly strategy.
-        """
         df = df.copy()
         bankroll = self.config.starting_bankroll
 
@@ -238,10 +181,6 @@ class Backtester:
 
         return df
 
-    # --------------------------------------------------------
-    # Bankroll Simulation
-    # --------------------------------------------------------
-
     def _simulate_bankroll(self, bets: pd.DataFrame) -> dict:
         if bets.empty:
             logger.warning("No bets placed under the current strategy.")
@@ -264,7 +203,6 @@ class Backtester:
                 profits.append(0.0)
                 continue
 
-            # Compute profit
             if price > 0:
                 profit = stake * (price / 100) if won == 1 else -stake
             else:
@@ -297,6 +235,11 @@ class Backtester:
         hit_rate = (bets["profit"] > 0).mean()
         max_drawdown = self._max_drawdown([r["bankroll_after"] for r in daily_records])
 
+        num_bets = len(bets)
+        num_wins = int((bets["profit"] > 0).sum())
+        num_losses = int((bets["profit"] < 0).sum())
+        num_pushes = int((bets["profit"] == 0).sum())
+
         return {
             "config": self.config,
             "bets": bets,
@@ -306,11 +249,17 @@ class Backtester:
             "roi": roi,
             "hit_rate": hit_rate,
             "max_drawdown": max_drawdown,
+            "num_bets": num_bets,
+            "num_wins": num_wins,
+            "num_losses": num_losses,
+            "num_pushes": num_pushes,
         }
 
     @staticmethod
     def _max_drawdown(series) -> float:
         series = np.array(series, dtype=float)
+        if series.size == 0:
+            return 0.0
         running_max = np.maximum.accumulate(series)
         drawdowns = (series - running_max) / running_max
         return float(drawdowns.min())
