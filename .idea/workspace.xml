@@ -4,34 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1055a22a-fe87-4015-a0ba-4059ce98257a" name="Changes" comment="Version_3.0">
-      <change afterPath="$PROJECT_DIR$/repair_data.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/backtest/accuracy.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/backtest/run_season_to_date.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/dashboard/auth.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/reports/run_report.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/canonical/long.parquet" beforeDir="false" afterPath="$PROJECT_DIR$/data/canonical/long.parquet" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/canonical/schedule.parquet" beforeDir="false" afterPath="$PROJECT_DIR$/data/canonical/schedule.parquet" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/orchestrator_logs/orchestrator_runs.log" beforeDir="false" afterPath="$PROJECT_DIR$/data/orchestrator_logs/orchestrator_runs.log" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/alerts/telegram.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/alerts/telegram.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/backtest/compare.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/backtest/compare.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/backtest/engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/backtest/engine.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/backtest/run_backtest.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/backtest/run_backtest.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/env.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/env.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/paths.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/paths.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/dashboard/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/dashboard/app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/features/builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/features/builder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/ingestion/collector.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/ingestion/collector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/ingestion/pipeline.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/ingestion/pipeline.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/model/predict.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/predict.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/model/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/train.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/pipeline/orchestrator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pipeline/orchestrator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/reports/backtest_report.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/reports/backtest_report.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" afterPath="$PROJECT_DIR$/test.py" afterDir="false" />
-    </list>
+    <list default="true" id="1055a22a-fe87-4015-a0ba-4059ce98257a" name="Changes" comment="Version_3.0" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
