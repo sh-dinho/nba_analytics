@@ -1,33 +1,99 @@
-# --- Python Environment ---
+# ============================================================
+# PyCharm / IntelliJ
+# ============================================================
+.idea/
+*.iml
+
+# ============================================================
+# Python
+# ============================================================
 __pycache__/
-*.py[cod]
-*$py.class
-.venv/
-venv/
-env/
-.env
-
-# --- NBA Data (Keep the repo clean) ---
-# Ignore all raw and processed data snapshots
-data/
-*.parquet
-*.csv
-*.json
-!src/ingestion/static_data/  # Example: Don't ignore static team maps if needed
-
-# --- Model Artifacts ---
-# Serialized models and training logs
-models/
-*.joblib
+*.pyc
+*.pyo
+*.pyd
+*.pdb
 *.pkl
-latest_features.parquet
-
-# --- Logs & Performance ---
-logs/
+*.pickle
 *.log
 
-# --- IDEs & System ---
-.idea/
-.vscode/
+# Byte-compiled / optimized / DLL files
+*.so
+*.dylib
+*.dll
+
+# Virtual environments
+venv/
+.env/
+.venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ============================================================
+# Build / Packaging
+# ============================================================
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ============================================================
+# OS Files
+# ============================================================
 .DS_Store
 Thumbs.db
+
+# ============================================================
+# Project-specific (NBA Analytics Engine)
+# ============================================================
+
+# Data directories
+data/
+!data/.gitkeep
+
+# Model registry
+data/models/
+!data/models/.gitkeep
+
+# Predictions
+data/predictions/
+!data/predictions/.gitkeep
+
+# Odds snapshots
+data/odds/
+!data/odds/.gitkeep
+
+# Logs
+data/logs/
+data/orchestrator_logs/
+!data/logs/.gitkeep
+!data/orchestrator_logs/.gitkeep
+
+# Reports
+data/reports/
+!data/reports/.gitkeep
+
+# Cache / temp
+tmp/
+temp/
+.cache/
+
+# ============================================================
+# Environment / Secrets
+# ============================================================
+*.env
+.env.*
+secrets.json
+credentials.json
+
+# ============================================================
+# Streamlit
+# ============================================================
+.streamlit/
+
+# ============================================================
+# VSCode (if you ever open it there)
+# ============================================================
+.vscode/
