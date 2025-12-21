@@ -1,0 +1,42 @@
+{
+  "models": [
+    {
+      "model_id": "0baf315c-4fbe-4852-ade3-e623a1ff8e49",
+      "timestamp": "2025-12-21T18:12:37.614318",
+      "val_acc": 1.0,
+      "feature_cols": [
+        "is_home",
+        "game_number",
+        "rolling_points_for",
+        "rolling_points_against",
+        "rolling_win_rate",
+        "lag_points_for",
+        "lag_points_against",
+        "lag_won",
+        "opp_avg_points_for",
+        "opp_avg_points_against",
+        "opp_win_rate"
+      ],
+      "path": "data\\models\\registry\\0baf315c-4fbe-4852-ade3-e623a1ff8e49.pkl"
+    },
+    {
+      "model_id": "8e8719cb-8570-4376-b5b4-423edc430fdd",
+      "timestamp": "2025-12-21T18:17:19.539724",
+      "val_acc": 1.0,
+      "feature_cols": [
+        "is_home",
+        "game_number",
+        "rolling_points_for",
+        "rolling_points_against",
+        "rolling_win_rate",
+        "lag_points_for",
+        "lag_points_against",
+        "lag_won",
+        "opp_avg_points_for",
+        "opp_avg_points_against",
+        "opp_win_rate"
+      ],
+      "path": "data\\models\\registry\\8e8719cb-8570-4376-b5b4-423edc430fdd.pkl"
+    }
+  ]
+}

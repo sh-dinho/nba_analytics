@@ -1,121 +1,178 @@
-# 🏀 NBA Analytics Pipeline v2.3
+# 🏀 NBA Analytics v3  
+**Fully Automated ML Pipeline for NBA Game Predictions**
 
-## Overview
-This project is a **modern SaaS analytics platform for NBA game outcome prediction and betting insights**.  
-It orchestrates ingestion, schema alignment, feature engineering, model training, explainability, rankings, betting recommendations, and artifact archiving — all with CI/CD integration and automated notifications.
+NBA Analytics v3 is a complete end‑to‑end machine learning system that ingests NBA data, builds engineered features, trains predictive models, monitors drift, generates predictions, and exposes results through a Streamlit dashboard — all automated and production‑ready.
 
-Key highlights:
-- 📥 **Data ingestion** from NBA boxscore schemas
-- 🧾 **Schema normalization & validation**
-- ⚙️ **Feature engineering** (Elo ratings, rolling stats, opponent-adjusted metrics, rest days)
-- 🤖 **Model training & prediction** (RandomForest + extensible ensemble support)
-- 🔍 **Explainability** with SHAP plots
-- 📊 **Rankings & betting recommendations**
-- 📦 **Artifact management** with versioned archives
-- 📲 **Notifications** via Telegram/Slack
-- 🛡 **CI/CD** with linting, header enforcement, and automated tests
+---
+
+## 🚀 Features
+
+### **✔ Automated Ingestion**
+- Fetches full NBA history (via nba_api)
+- Daily incremental updates
+- Normalized canonical schema
+- Versioned ingestion snapshot
+
+### **✔ Feature Engineering**
+- Rolling pre‑game statistics (win rate, points for/against)
+- Strict point‑in‑time correctness (no leakage)
+- Versioned feature snapshots via FeatureStore
+
+### **✔ Model Training**
+- Random Forest classifier (configurable)
+- Automatic model registry with versioning
+- Metadata tracking (features used, params, version)
+
+### **✔ Batch Predictions**
+- Builds features for today’s scheduled games
+- Generates win probabilities
+- Saves versioned predictions + `predictions_latest.parquet`
+- Integrated drift monitoring (KS-test)
+
+### **✔ Monitoring**
+- Prometheus metrics:
+  - prediction runs
+  - prediction failures
+  - prediction duration
+  - drifted features
+- Grafana‑ready
+
+### **✔ Streamlit Dashboard**
+- Live predictions
+- SHAP explainability
+- Admin controls (run pipeline, refresh games)
+
+### **✔ Full Automation**
+A single orchestrator runs:
+```
+Ingestion → Feature Engineering → Training → Prediction → Drift Monitoring
+```
 
 ---
 
 ## 📂 Project Structure
+
 ```
-src/
-config/ # YAML configs + loader
- features/ # Feature engineering (Elo, rolling, opponent-adjusted) 
- models/ # Model training & prediction 
- ranking/ # Betting recommendations
-  schedule/ # Historical pipeline + schema contracts
-   schemas/ # Normalization logic 
-   utils/ # Logging, IO helpers pipeline_runner.py # Main orchestration script 
-   scripts/ add_headers.py # Header enforcement utility 
-   tests/ test_feature_engineering.py # Unit tests for features test_pipeline_e2e.py # End-to-end pipeline tests
-    data/ 
-      history/ # Raw historical NBA data
-      cache/ # Latest enriched schedule, rankings, recs
-       archive/ # Versioned run artifacts 
-       logs/ interpretability/ # SHAP plots 
-       .github/workflows/ pipeline.yml # CI/CD workflow 
-  requirements.txt # Python dependencies
+nba-analytics-v3/
+│
+├── app.py
+├── config.py
+│
+├── src/
+│   ├── ingestion/
+│   ├── features/
+│   ├── model/
+│   ├── monitoring/
+│   └── pipeline/
+│
+├── data/
+│   ├── ingestion/
+│   ├── features/
+│   ├── predictions/
+│   ├── models/
+│   ├── raw/
+│   └── parquet/
+│
+├── archive/
+│   └── unused/
+│
+├── scripts/
+│   └── cleanup_archive.sh
+│
+├── Makefile
+└── README.md
 ```
 
 ---
 
-## ⚙️ Setup
+## 🛠 Installation
 
-### Prerequisites
-- Python 3.11+
-- Virtual environment recommended
-
-### Install dependencies
-```bash
+### **1. Install dependencies**
+```
 pip install -r requirements.txt
 ```
-Prepare historical data
-Place a parquet file in data/history/historical_schedule.parquet with NBA boxscore schema:
+
+### **2. Install nba_api**
 ```
-SEASON_ID, TEAM_ID, TEAM_ABBREVIATION, TEAM_NAME,
-GAME_ID, GAME_DATE, MATCHUP, WL, PTS, ...
+pip install nba_api
 ```
-The pipeline automatically aligns this schema to canonical:
+
+### **3. Run Streamlit dashboard**
 ```
-gameId, seasonYear, startDate, homeTeam, awayTeam, homeScore, awayScore
+streamlit run app.py
 ```
-Run pipeline
+
+---
+
+## 🔄 Automated Pipeline
+
+The orchestrator handles everything:
+
 ```
-python -m src.pipeline_runner
+python -m src.pipeline.orchestrator
 ```
+
 This will:
 
-Ingest & align historical data
+1. Start Prometheus metrics server  
+2. Run ingestion (full or daily)  
+3. Build training features  
+4. Train a new model  
+5. Predict today’s games  
+6. Run drift monitoring  
 
-Enrich schedule with features
+---
 
-Train & predict outcomes
+## 📊 Monitoring
 
-Generate SHAP explainability plots
+Prometheus metrics exposed at:
 
-Produce rankings & betting recommendations
+```
+http://localhost:8000
+```
 
-Archive artifacts with metadata
+Metrics include:
 
-📊 Outputs
-Enriched schedule → data/cache/master_schedule.parquet
+- `nba_predictions_total`
+- `nba_prediction_failures_total`
+- `nba_prediction_duration_seconds`
+- `nba_drift_features_detected`
 
-Rankings → data/cache/rankings.parquet
+---
 
-Betting recommendations → data/cache/betting_recommendations_YYYY-MM-DD.parquet
+## 🖥 Streamlit Dashboard
 
-Explainability plots → logs/interpretability/shap_summary.png, shap_bar.png
+Run:
 
-Archived artifacts → data/archive/<timestamp>/
+```
+streamlit run app.py
+```
 
-🛡 CI/CD
-Linting: flake8 + black
+Tabs include:
 
-Header enforcement: scripts/add_headers.py
+- **Live Predictions** (reads `predictions_latest.parquet`)
+- **Model Insights** (SHAP summary plot)
+- **Admin Center** (run pipeline, refresh games)
 
-Pipeline run: executes end-to-end
+---
 
-Notifications: Telegram alerts with top picks + SHAP plots
+## 🧹 Cleanup
 
-🧪 Testing
-Unit tests: Elo ratings, rolling features, opponent-adjusted metrics, schema alignment
+To archive unused files:
 
-End-to-end tests: Full pipeline run from ingestion → archiving
+```
+bash scripts/cleanup_archive.sh
+```
 
-Numerical validation: Elo updates, rolling averages correctness
+---
 
-📅 Roadmap (2026)
-Q1: Feature store, drift detection, schema validation
+## 📄 License
 
-Q2: Ensemble models, Bayesian updating, analyst notes
+Internal / Private Project (customize as needed)
 
-Q3: Automated retraining, MLflow model registry, richer notifications
+---
 
-Q4: Player-level features, betting market integration, interactive dashboards
+## 🙌 Credits
 
-👤 Author
-Developed by  (sh) — Architect and lead developer of a modern SaaS analytics platform for sports betting.
+Built with ❤️ using Python, nba_api, scikit‑learn, Streamlit, Prometheus, and Grafana.
 
-📜 License
-MIT License (or specify your chosen license).

@@ -1,59 +1,33 @@
-# --- Python build artifacts ---
+# --- Python Environment ---
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# --- Environment variables ---
-.env
-.env.*
-*.lock
-
-# --- Virtual environments ---
-env/
+*.py[cod]
+*$py.class
 .venv/
-.ENV/
 venv/
+env/
+.env
 
-# --- Logs & databases ---
-*.log
-logs/
-*.sqlite3
-*.db
-
-# --- Project outputs ---
-results/
-models/
+# --- NBA Data (Keep the repo clean) ---
+# Ignore all raw and processed data snapshots
 data/
-archives/
-mlruns/
+*.parquet
+*.csv
+*.json
+!src/ingestion/static_data/  # Example: Don't ignore static team maps if needed
 
-# --- Jupyter notebooks ---
-.ipynb_checkpoints/
-*.ipynb
+# --- Model Artifacts ---
+# Serialized models and training logs
+models/
+*.joblib
+*.pkl
+latest_features.parquet
 
-# --- Testing & coverage ---
-.pytest_cache/
-.mypy_cache/
-.coverage
-coverage.xml
-htmlcov/
+# --- Logs & Performance ---
+logs/
+*.log
 
-# --- OS-specific junk ---
+# --- IDEs & System ---
+.idea/
+.vscode/
 .DS_Store
 Thumbs.db
-
-# --- IDE/project files ---
-.vscode/
-.idea/
-
-# --- Build/distribution ---
-build/
-dist/
-*.egg-info/
-
-# --- Temporary files ---
-*.tmp
-*.bak
-*.swp
-*~

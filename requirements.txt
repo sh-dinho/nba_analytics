@@ -1,20 +1,7 @@
-# ============================================================
-# File: requirements.txt
-# Purpose: Python dependencies for pipeline v2.0
-# Version: 2.0
-# Author: Your Team
-# Date: December 2025
-# ============================================================
-
-pandas==2.2.2
-pyyaml==6.0.2
-scikit-learn==1.4.2
-joblib==1.4.2
-matplotlib==3.9.0
-shap==0.44.1
-pyarrow==16.1.0
-flake8==7.1.1
-black==24.10.0
-pytest==8.3.3
-
-scipy
+pandas
+numpy
+scikit-learn
+pyarrow
+loguru
+joblib
+nba_api

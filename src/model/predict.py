@@ -1,98 +1,120 @@
-# ============================================================
-# File: src/model/predict.py
-# Purpose: Utility for loading trained models and predicting NBA outcomes
-# Version: 1.0
-# Author: Mohamadou
-# Date: December 2025
-# ============================================================
+"""
+Prediction Pipeline
+-------------------
+Loads the latest trained model, builds features for a given date's games,
+generates predictions, and saves them.
+"""
 
-import logging
-import joblib
 import pandas as pd
+import joblib
+from datetime import date
+from loguru import logger
 from pathlib import Path
 
-from src.model.train_model import predict_outcomes
-
-# Configure logger for the predict module
-logger = logging.getLogger("model.predict")
-logging.basicConfig(level=logging.INFO)
-
-
-def load_model(model_path: str):
-    """
-    Load a trained model from disk using joblib.
-
-    Args:
-        model_path (str): Path to the saved model file.
-
-    Returns:
-        model: The loaded machine learning model, or None if loading failed.
-    """
-    try:
-        model = joblib.load(model_path)
-        logger.info(f"Model successfully loaded from {model_path}")
-        return model
-    except Exception as e:
-        logger.error(f"Failed to load model from {model_path}: {e}")
-        return None
+# Import exactly what is defined in your paths.py
+from src.config.paths import (
+    MODEL_REGISTRY_DIR,
+    SCHEDULE_SNAPSHOT,
+    LONG_SNAPSHOT,  # This appears to be your features/historical data
+    PREDICTIONS_DIR,
+)
 
 
-def predict_schedule(model, schedule_df: pd.DataFrame, config: dict) -> pd.DataFrame:
-    """
-    Predict outcomes for NBA games using a trained model and a schedule DataFrame.
+def _get_production_model():
+    """Finds the most recent model in the registry."""
+    models = list(MODEL_REGISTRY_DIR.glob("*.joblib"))
+    if not models:
+        raise FileNotFoundError(f"No models found in {MODEL_REGISTRY_DIR}")
 
-    Args:
-        model: The trained machine learning model to use for predictions.
-        schedule_df (pd.DataFrame): DataFrame containing game features for prediction.
-        config (dict): Configuration dictionary with key "features".
-
-    Returns:
-        pd.DataFrame: Updated DataFrame with predicted outcomes and probabilities.
-    """
-    if model is None or schedule_df.empty:
-        logger.warning("Model or schedule data is missing. Skipping predictions.")
-        return pd.DataFrame()
-
-    # Ensure required feature columns exist
-    if not all(col in schedule_df.columns for col in config["features"]):
-        logger.warning(
-            f"Required columns {config['features']} are missing in the schedule DataFrame."
-        )
-        return pd.DataFrame()
-
-    try:
-        # Reuse predict_outcomes from train_model.py
-        schedule_df = predict_outcomes(model, schedule_df, config)
-        logger.info(f"Predicted outcomes for {len(schedule_df)} games.")
-    except Exception as e:
-        logger.error(f"Prediction failed: {e}")
-        return pd.DataFrame()
-
-    return schedule_df
+    # Sort by modification time to get the latest trained model
+    latest_model = max(models, key=lambda p: p.stat().st_mtime)
+    return latest_model
 
 
-# Example usage
+def _build_prediction_features(matchups_df, features_df):
+    """Joins matchups with team features using a Home/Away prefix strategy."""
+    # Ensure team IDs/Names are strings for the merge
+    matchups_df["home_team"] = matchups_df["home_team"].astype(str)
+    matchups_df["away_team"] = matchups_df["away_team"].astype(str)
+
+    # We join features twice: once for Home stats, once for Away stats
+    home_feats = features_df.add_prefix("home_")
+    away_feats = features_df.add_prefix("away_")
+
+    # Merge Home Team data
+    pred_df = matchups_df.merge(
+        home_feats, left_on="home_team", right_on="home_team", how="left"
+    )
+    # Merge Away Team data
+    pred_df = pred_df.merge(
+        away_feats, left_on="away_team", right_on="away_team", how="left"
+    )
+
+    # Drop non-numeric metadata that isn't a model feature
+    cols_to_drop = ["game_id", "date", "home_team", "away_team", "status", "season"]
+    X = pred_df.drop(
+        columns=[c for c in cols_to_drop if c in pred_df.columns], errors="ignore"
+    )
+
+    return X, pred_df
+
+
+def run_prediction_for_date(target_date: date):
+    """Orchestrates the full prediction flow for a specific date."""
+    logger.info(f"Generating predictions for: {target_date}")
+
+    # 1. Load Schedule and Filter for target_date
+    if not SCHEDULE_SNAPSHOT.exists():
+        logger.error(f"Missing schedule snapshot: {SCHEDULE_SNAPSHOT}")
+        return
+
+    df_schedule = pd.read_parquet(SCHEDULE_SNAPSHOT)
+
+    # Handle date conversion to ensure matching
+    df_schedule["date"] = pd.to_datetime(df_schedule["date"]).dt.date
+    todays_games = df_schedule[df_schedule["date"] == target_date].copy()
+
+    if todays_games.empty:
+        logger.warning(f"No games scheduled for {target_date}.")
+        return
+
+    # 2. Load Features (using LONG_SNAPSHOT as the source of team stats)
+    if not LONG_SNAPSHOT.exists():
+        logger.error("Feature snapshot (LONG_SNAPSHOT) not found.")
+        return
+
+    features_df = pd.read_parquet(LONG_SNAPSHOT)
+    # If LONG_SNAPSHOT has multiple rows per team, get the most recent one
+    features_df = features_df.sort_values("date").groupby("team_id").tail(1)
+
+    # 3. Prepare Feature Matrix
+    X, combined_df = _build_prediction_features(todays_games, features_df)
+
+    # 4. Load Model and Predict
+    model_path = _get_production_model()
+    logger.info(f"Predicting with model: {model_path.name}")
+    model_data = joblib.load(model_path)
+
+    # Handle if model is wrapped in a dict or is a raw pipeline
+    model = model_data["model"] if isinstance(model_data, dict) else model_data
+
+    probs = model.predict_proba(X)[:, 1]
+
+    # 5. Format Results
+    results = todays_games[["game_id", "home_team", "away_team"]].copy()
+    results["home_win_probability"] = probs
+    results["predicted_winner"] = results.apply(
+        lambda x: x["home_team"] if x["home_win_probability"] > 0.5 else x["away_team"],
+        axis=1,
+    )
+
+    # 6. Save
+    out_path = PREDICTIONS_DIR / f"preds_{target_date}.csv"
+    results.to_csv(out_path, index=False)
+    logger.success(f"Predictions saved to {out_path}")
+
+    return results
+
+
 if __name__ == "__main__":
-    # Example path to your saved model
-    model_path = "models/rf_model_latest.joblib"
-
-    # Example schedule DataFrame with placeholder features
-    schedule_data = {
-        "HOME_TEAM_STATS": [0.85, 0.76, 0.90],
-        "AWAY_TEAM_STATS": [0.72, 0.65, 0.80],
-    }
-    schedule_df = pd.DataFrame(schedule_data)
-
-    # Example config
-    config = {
-        "features": ["HOME_TEAM_STATS", "AWAY_TEAM_STATS"],
-        "target": "homeWin",
-    }
-
-    # Load the model
-    model = load_model(model_path)
-
-    # Predict the outcomes for the given schedule
-    if model:
-        predictions = predict_schedule(model, schedule_df, config)
-        print(predictions)
+    run_prediction_for_date(date.today())
