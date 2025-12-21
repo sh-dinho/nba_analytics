@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="1055a22a-fe87-4015-a0ba-4059ce98257a" name="Changes" comment="Version_3.0">
+      <change afterPath="$PROJECT_DIR$/src/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/alerts/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/alerts/alert_manager.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/alerts/telegram.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/backtest/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/backtest/engine.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/backtest/run_backtest.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/betting/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/betting/auto_bet.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/betting/recommendations.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/betting/value_bets.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config/betting.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config/env.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config/features.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config/model.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config/paths.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config/teams.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/config/thresholds.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/dashboard/app.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/external/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/external/odds.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/features/builder.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/ingestion/collector.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/ingestion/full_history_ingestor.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/ingestion/normalizer.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/ingestion/pipeline.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/ingestion/transform.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/ingestion/wide_to_long.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/auto_bet.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/bankroll.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/bet_logger.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/dashboard_data.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/data_quality.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/health_check.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/metrics_exporter.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/model_monitor.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/system_status.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/monitoring/team_risk.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/pipeline/orchestrator.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/recommendation/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/recommendation/engine.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/reports/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/reports/backtest_report.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scripts/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scripts/archive/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scripts/archive/unused/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scripts/archive/unused/scripts/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scripts/archive/unused/scripts/archive/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scripts/archive/unused/scripts/archive/unused/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scripts/archive/unused/scripts/archive/unused/archieve/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/features/feature_builder.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/features/feature_store.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/features/feature_store.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/build_completed_games.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/build_ingestion_snapshot.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/fetch_nba_data.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/fetch_today_games.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/ingestion.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/ingestion/ingestion.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/ingestion_runner.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/load_raw_schedule.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/normalize_schedule.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ml/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ml/train_model.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/predict.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/predict.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/predict_batch.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/predict_runner.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/predict_today.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/registry.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/train.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/train_runner.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/monitoring/drift.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/monitoring/drift.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pipeline/model_optimization.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pipeline/pipeline_runner.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ranking/__init__.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ranking/ranking_runner.py" beforeDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Jupyter Notebook" />
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="GitHubPullRequestSearchHistory">{
+  &quot;lastFilter&quot;: {}
+}</component>
+  <component name="GithubPullRequestsUISettings">{
+  &quot;selectedUrlAndAccountId&quot;: {
+    &quot;url&quot;: &quot;https://github.com/sh-dinho/nba_analytics.git&quot;,
+    &quot;accountId&quot;: &quot;9a431a70-d1e2-49fe-8691-a8257165c6f8&quot;
+  }
+}</component>
+  <component name="ProblemsViewState">
+    <option name="selectedTabId" value="CurrentFile" />
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 5
+}</component>
+  <component name="ProjectId" id="36aCtOuaeZgbTEtCLuIIF6UCBob" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Makefile Target.test.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;Notification.DisplayName-DoNotAsk-Black action on save file ignored&quot;: &quot;Black action on save file ignored&quot;,
+    &quot;Notification.DoNotAsk-Black action on save file ignored&quot;: &quot;true&quot;,
+    &quot;Python.tasks.executor&quot;: &quot;Run&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;SHELLCHECK.PATH&quot;: &quot;C:\\Users\\Mohamadou\\AppData\\Roaming\\JetBrains\\PyCharm2025.3\\plugins\\Shell Script\\shellcheck.exe&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;feature/store&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;C:/Users/Mohamadou/PycharmProjects/nba_analytics/src/analytics&quot;,
+    &quot;run.code.analysis.last.selected.profile&quot;: &quot;aDefault&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
+  },
+  &quot;keyToStringList&quot;: {
+    &quot;com.intellij.ide.scratch.ScratchImplUtil$2/New Scratch File&quot;: [
+      &quot;TEXT&quot;
+    ]
+  }
+}</component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\analytics" />
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\data_fetcher" />
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\interpretability" />
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\scripts" />
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src" />
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\scripts\archieve" />
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\monitoring" />
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\ingestion" />
+    </key>
+  </component>
+  <component name="RunManager" selected="Makefile Target.test">
+    <configuration name="test" type="MAKEFILE_TARGET_RUN_CONFIGURATION" factoryName="Makefile" temporary="true">
+      <makefile filename="$PROJECT_DIR$/Makefile" target="test" workingDirectory="" arguments="">
+        <envs />
+      </makefile>
+      <method v="2" />
+    </configuration>
+    <configuration name="tasks" type="PythonConfigurationType" factoryName="Python" nameIsGenerated="true">
+      <module name="nba_analytics" />
+      <option name="ENV_FILES" value="" />
+      <option name="INTERPRETER_OPTIONS" value="" />
+      <option name="PARENT_ENVS" value="true" />
+      <envs>
+        <env name="PYTHONUNBUFFERED" value="1" />
+      </envs>
+      <option name="SDK_HOME" value="" />
+      <option name="SDK_NAME" value="Python 3.12 (PyCharmMiscProject)" />
+      <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+      <option name="IS_MODULE_SDK" value="false" />
+      <option name="ADD_CONTENT_ROOTS" value="true" />
+      <option name="ADD_SOURCE_ROOTS" value="true" />
+      <option name="RUN_TOOL" value="" />
+      <option name="SCRIPT_NAME" value="C:\Users\Mohamadou\PycharmProjects\nba_analytics\scripts\tasks.py" />
+      <option name="PARAMETERS" value="" />
+      <option name="SHOW_COMMAND_LINE" value="false" />
+      <option name="EMULATE_TERMINAL" value="false" />
+      <option name="MODULE_MODE" value="false" />
+      <option name="REDIRECT_INPUT" value="false" />
+      <option name="INPUT_FILE" value="" />
+      <method v="2" />
+    </configuration>
+    <recent_temporary>
+      <list>
+        <item itemvalue="Makefile Target.test" />
+      </list>
+    </recent_temporary>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-f2b7a9f6281b-6e1f45a539f7-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-253.29346.142" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="1055a22a-fe87-4015-a0ba-4059ce98257a" name="Changes" comment="" />
+      <created>1765235510664</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1765235510664</updated>
+    </task>
+    <task id="LOCAL-00001" summary="Version_1.1">
+      <option name="closed" value="true" />
+      <created>1765319191187</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1765319191187</updated>
+    </task>
+    <task id="LOCAL-00002" summary="Version_1.1">
+      <option name="closed" value="true" />
+      <created>1765744721645</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1765744721645</updated>
+    </task>
+    <task id="LOCAL-00003" summary="Version_3.0">
+      <option name="closed" value="true" />
+      <created>1766259382550</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1766259382550</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
+    <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State />
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="Version_1.0" />
+    <MESSAGE value="Version_1.1" />
+    <MESSAGE value="Version_3.0" />
+    <option name="LAST_COMMIT_MESSAGE" value="Version_3.0" />
+  </component>
+  <component name="XDebuggerManager">
+    <breakpoint-manager>
+      <breakpoints>
+        <line-breakpoint enabled="true" suspend="THREAD" type="python-line">
+          <url>file://$PROJECT_DIR$/src/prediction/train_model.py</url>
+          <line>8</line>
+          <option name="timeStamp" value="2" />
+        </line-breakpoint>
+      </breakpoints>
+    </breakpoint-manager>
+  </component>
+</project>

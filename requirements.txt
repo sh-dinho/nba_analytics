@@ -4,3 +4,4 @@ scikit-learn
 pyarrow
 loguru
 joblib
+nba_api

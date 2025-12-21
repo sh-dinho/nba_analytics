@@ -1,48 +1,36 @@
-"""
-Feature Store Module
-Handles loading, creating, and managing feature snapshots.
-"""
+# ============================================================
+# File: src/features/feature_store.py
+# ============================================================
 
-import pandas as pd
 from pathlib import Path
-
-# Path to store parquet files
-FEATURE_PATH = Path("data/parquet")
-RAW_PATH = Path("data/raw")
+from datetime import datetime
+import pandas as pd
+from loguru import logger
 
 
 class FeatureStore:
     def __init__(self):
-        # Initialize paths or other attributes
-        pass
+        self.base_dir = Path("data/features")
+        self.base_dir.mkdir(parents=True, exist_ok=True)
 
-    def ensure_parquet(self):
-        """
-        Checks if the canonical CSV (schedule.csv) exists, and converts it to Parquet format if not already done.
-        """
-        raw_csv_path = RAW_PATH / "schedule.csv"
-        parquet_path = FEATURE_PATH / "schedule.parquet"
+    def save_snapshot(self, df: pd.DataFrame, kind: str = "training") -> str:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"features_{timestamp}_{kind}.parquet"
+        path = self.base_dir / filename
+        df.to_parquet(path, index=False)
+        logger.info(f"Saved feature snapshot → {path} ({len(df)} rows)")
+        return str(path)
 
-        # Check if CSV exists and Parquet file does not exist
-        if raw_csv_path.exists() and not parquet_path.exists():
-            print(f"Converting {raw_csv_path} to Parquet format...")
-            df = pd.read_csv(raw_csv_path)
-            parquet_path.parent.mkdir(
-                parents=True, exist_ok=True
-            )  # Ensure the directory exists
-            df.to_parquet(parquet_path)
-            print(f"Conversion complete. Parquet saved at {parquet_path}")
-        else:
-            print(
-                f"Parquet file already exists at {parquet_path}, skipping conversion."
-            )
-
-    def load_latest_snapshot(self) -> pd.DataFrame:
-        """
-        Load the latest feature snapshot (Parquet format).
-        """
-        snapshots = sorted(FEATURE_PATH.glob("*.parquet"), reverse=True)
-        if snapshots:
-            return pd.read_parquet(snapshots[0])
-        else:
-            raise FileNotFoundError("No feature snapshots found.")
+    def load_latest_snapshot(self):
+        files = sorted(self.base_dir.glob("features_*.parquet"))
+        if not files:
+            raise FileNotFoundError("No feature snapshots found in data/features/")
+        latest = files[-1]
+        df = pd.read_parquet(latest)
+        meta = {
+            "path": str(latest),
+            "rows": len(df),
+            "columns": list(df.columns),
+        }
+        logger.info(f"Loaded feature snapshot: {latest} ({len(df)} rows)")
+        return df, meta
