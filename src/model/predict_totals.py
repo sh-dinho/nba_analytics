@@ -1,22 +1,19 @@
 # ============================================================
 # 🏀 NBA Analytics v3
-# Module: Totals Prediction Pipeline
+# Module: Totals Prediction Pipeline (Over/Under)
 # File: src/model/predict_totals.py
 # Author: Sadiq
 #
 # Description:
-#     Loads the latest totals model (model_type="totals") from
-#     the registry, builds home-team game-level features using
-#     the same feature version as training, and generates
-#     predicted total points for each game on a target date.
+#     Loads the latest totals model from the registry,
+#     builds home-team features for a target date, and
+#     generates predicted_total for each game.
 #
-#     Outputs one row per game:
-#       - game_id
-#       - date
-#       - home_team
-#       - away_team
-#       - predicted_total
-#       - model_name, model_version, feature_version
+#     Cleaned-up version:
+#       - Consistent with moneyline predict.py
+#       - Uses unified registry
+#       - Fully typed and logged
+#       - Backwards-compatible helper alias
 # ============================================================
 
 from __future__ import annotations
@@ -24,7 +21,7 @@ from __future__ import annotations
 import json
 from datetime import date
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Any
 
 import pandas as pd
 from loguru import logger
@@ -36,123 +33,87 @@ from src.config.paths import (
     DATA_DIR,
 )
 from src.features.builder import FeatureBuilder, FeatureConfig
+from src.model.registry import load_model_and_metadata
 
 TOTALS_PRED_DIR = DATA_DIR / "predictions_totals"
 TOTALS_PRED_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _get_latest_totals_metadata() -> dict:
-    index_path = MODEL_REGISTRY_DIR / "index.json"
-    if not index_path.exists():
-        raise FileNotFoundError(f"Model registry index not found at {index_path}")
-
-    registry = json.loads(index_path.read_text())
-    models = registry.get("models", [])
-    if not models:
-        raise RuntimeError("No models in registry.")
-
-    totals_models = [m for m in models if m.get("model_type") == "totals"]
-    if not totals_models:
-        raise RuntimeError("No totals models found in registry.")
-
-    prod_models = [m for m in totals_models if m.get("is_production")]
-    models_to_consider = prod_models or totals_models
-
-    models_sorted = sorted(models_to_consider, key=lambda m: m["created_at_utc"])
-    latest = models_sorted[-1]
-
-    logger.info(
-        f"[Totals] Using model '{latest['model_name']}' version {latest['version']} "
-        f"(production={latest.get('is_production', False)})"
-    )
-    return latest
-
-
-def _load_totals_model_and_meta() -> Tuple[object, dict]:
-    meta = _get_latest_totals_metadata()
-    model_path = Path(meta["path"])
-    if not model_path.exists():
-        raise FileNotFoundError(f"Totals model file not found at {model_path}")
-
-    model = pd.read_pickle(model_path)
-    return model, meta
+# ------------------------------------------------------------
+# Data loading
+# ------------------------------------------------------------
 
 
 def _load_schedule(pred_date: date) -> pd.DataFrame:
-    if not SCHEDULE_SNAPSHOT.exists():
-        raise FileNotFoundError(f"Schedule snapshot not found: {SCHEDULE_SNAPSHOT}")
-
     df = pd.read_parquet(SCHEDULE_SNAPSHOT)
     df["date"] = pd.to_datetime(df["date"]).dt.date
     todays = df[df["date"] == pred_date].copy()
 
     if todays.empty:
         logger.warning(f"[Totals] No games scheduled for {pred_date}.")
-        return pd.DataFrame()
-
     return todays
+
+
+def _load_long() -> pd.DataFrame:
+    df = pd.read_parquet(LONG_SNAPSHOT)
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    return df
+
+
+# ------------------------------------------------------------
+# Feature building
+# ------------------------------------------------------------
 
 
 def _build_prediction_features(pred_date: date, feature_version: str) -> pd.DataFrame:
     """
-    For totals prediction, we:
-      - build features from long-format data up to pred_date
-      - restrict to home rows (is_home==True)
-      - join with schedule so we have home/away team labels
+    Build features for home teams only (one row per game).
     """
-    if not LONG_SNAPSHOT.exists():
-        raise FileNotFoundError(f"Long-format snapshot not found: {LONG_SNAPSHOT}")
-
-    df_long = pd.read_parquet(LONG_SNAPSHOT)
-    df_long["date"] = pd.to_datetime(df_long["date"]).dt.date
-
+    df_long = _load_long()
     df_hist = df_long[df_long["date"] <= pred_date].copy()
+
     if df_hist.empty:
-        logger.warning(f"[Totals] No historical long-format data up to {pred_date}.")
+        logger.warning(f"[Totals] No historical data available up to {pred_date}.")
         return pd.DataFrame()
 
     fb = FeatureBuilder(config=FeatureConfig(version=feature_version))
-    features = fb.build_from_long(df_long=df_hist)
+    features = fb.build_from_long(df_hist)
 
-    # Merge back is_home and opponent to identify home rows
+    # Add is_home flag
     features = features.merge(
         df_long[["game_id", "team", "date", "is_home"]],
         on=["game_id", "team", "date"],
         how="left",
     )
 
-    df_home = features[features["is_home"] == True].copy()  # noqa: E712
+    # Keep only home rows
+    home_features = features[features["is_home"] == True].copy()
 
-    todays_sched = _load_schedule(pred_date)
-    if todays_sched.empty:
+    todays = _load_schedule(pred_date)
+    if todays.empty:
         return pd.DataFrame()
 
-    # Map game_id -> home_team, away_team
-    game_meta = todays_sched[
-        ["game_id", "home_team", "away_team", "date"]
-    ].drop_duplicates()
-
-    merged = df_home.merge(
-        game_meta,
+    # Join schedule metadata
+    merged = home_features.merge(
+        todays[["game_id", "home_team", "away_team", "date"]],
         on=["game_id", "date"],
         how="inner",
     )
 
-    if merged.empty:
-        logger.warning(f"[Totals] No matching home rows for schedule on {pred_date}.")
-        return pd.DataFrame()
-
     return merged
+
+
+# ------------------------------------------------------------
+# Prediction
+# ------------------------------------------------------------
 
 
 def _predict_totals(
     model, df_features: pd.DataFrame, feature_cols: list[str]
 ) -> pd.DataFrame:
-    missing_cols = [c for c in feature_cols if c not in df_features.columns]
-    if missing_cols:
-        raise KeyError(
-            f"[Totals] Missing feature columns in prediction dataframe: {missing_cols}"
-        )
+    missing = [c for c in feature_cols if c not in df_features.columns]
+    if missing:
+        raise KeyError(f"[Totals] Missing feature columns: {missing}")
 
     X = df_features[feature_cols]
     preds = model.predict(X)
@@ -162,7 +123,7 @@ def _predict_totals(
     return out
 
 
-def _save_totals_predictions(df: pd.DataFrame, pred_date: date, meta: dict):
+def _save_predictions(df: pd.DataFrame, pred_date: date, meta: dict):
     out_path = TOTALS_PRED_DIR / f"totals_{pred_date}.parquet"
 
     df = df.copy()
@@ -174,26 +135,33 @@ def _save_totals_predictions(df: pd.DataFrame, pred_date: date, meta: dict):
     logger.success(f"[Totals] Predictions saved → {out_path}")
 
 
-def run_totals_prediction_for_date(pred_date: date | None = None):
+# ------------------------------------------------------------
+# Public API
+# ------------------------------------------------------------
+
+
+def run_totals_prediction_for_date(pred_date: date | None = None) -> pd.DataFrame:
     pred_date = pred_date or date.today()
     logger.info(f"🏀 Running totals prediction for {pred_date}")
 
-    model, meta = _load_totals_model_and_meta()
-    feature_version = meta.get("feature_version", "v1")
+    model, meta = load_model_and_metadata("totals")
+    feature_version = meta["feature_version"]
     feature_cols = meta["feature_cols"]
 
     df_features = _build_prediction_features(pred_date, feature_version)
     if df_features.empty:
-        logger.warning(
-            f"[Totals] No features available for totals prediction on {pred_date}."
-        )
-        return None
+        logger.warning(f"[Totals] No features available for {pred_date}.")
+        return pd.DataFrame()
 
     pred_df = _predict_totals(model, df_features, feature_cols)
-    _save_totals_predictions(pred_df, pred_date, meta)
+    _save_predictions(pred_df, pred_date, meta)
 
     logger.success(f"🏀 Totals prediction pipeline complete for {pred_date}")
     return pred_df
+
+
+# Backwards compatibility alias
+run_prediction_for_date = run_totals_prediction_for_date
 
 
 if __name__ == "__main__":

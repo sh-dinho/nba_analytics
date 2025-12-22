@@ -5,44 +5,29 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="1055a22a-fe87-4015-a0ba-4059ce98257a" name="Changes" comment="Version_3.0">
-      <change afterPath="$PROJECT_DIR$/src/alerts/recommendations_alert.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/analytics/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/analytics/team_stability.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/backtest/engine_multi.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/backtest/engine_spread.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/backtest/engine_totals.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/betting/accuracy.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/betting/compare.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/dashboard/tabs/advanced_predictions.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/dashboard/tabs/model_leaderboard.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/dashboard/tabs/recommendations.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/dashboard/tabs/team_stability.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/features/feature_schema.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/ingestion/validator.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/markets/__init__.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/markets/recommend.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/model/predict_spread.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/model/predict_totals.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/model/train_spread.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/model/train_totals.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/nba_analytics.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/nba_analytics.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.github/workflows/ci.yml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/model/registry.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/conftest.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_backtest_engines.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_backtest_ml.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_backtest_spread.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_backtest_totals.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_features.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_ml_prediction_pipeline.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_model_registry.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_orchestrator.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_orchestrator_end_to_end.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_predict_moneyline.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_predict_spread.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_predict_totals.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_recommendations.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_recommendations_pipeline.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_spread_prediction_pipeline.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/tests/test_totals_prediction_pipeline.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/data/orchestrator_logs/orchestrator_runs.log" beforeDir="false" afterPath="$PROJECT_DIR$/data/orchestrator_logs/orchestrator_runs.log" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/backtest/engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/backtest/engine.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/config/paths.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/paths.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/dashboard/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/dashboard/app.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/dashboard/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/dashboard/auth.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/features/builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/features/builder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/features/pregame_feature_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/archive/pregame_feature_builder.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/ingestion/collector.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/ingestion/collector.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/ingestion/pipeline.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/ingestion/pipeline.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/model/predict.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/predict.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/model/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/train.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/pipeline/orchestrator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pipeline/orchestrator.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/reports/backtest_report.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/reports/backtest_report.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" afterPath="$PROJECT_DIR$/test.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/predict_spread.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/predict_spread.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/predict_totals.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/predict_totals.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
