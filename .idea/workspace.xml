@@ -4,7 +4,46 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="1055a22a-fe87-4015-a0ba-4059ce98257a" name="Changes" comment="Version_3.0" />
+    <list default="true" id="1055a22a-fe87-4015-a0ba-4059ce98257a" name="Changes" comment="Version_3.0">
+      <change afterPath="$PROJECT_DIR$/src/alerts/recommendations_alert.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/analytics/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/analytics/team_stability.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/backtest/engine_multi.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/backtest/engine_spread.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/backtest/engine_totals.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/betting/accuracy.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/betting/compare.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/dashboard/tabs/advanced_predictions.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/dashboard/tabs/model_leaderboard.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/dashboard/tabs/recommendations.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/dashboard/tabs/team_stability.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/features/feature_schema.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/ingestion/validator.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/markets/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/markets/recommend.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/model/predict_spread.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/model/predict_totals.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/model/train_spread.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/model/train_totals.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.env" beforeDir="false" afterPath="$PROJECT_DIR$/.env" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/nba_analytics.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/nba_analytics.iml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/data/orchestrator_logs/orchestrator_runs.log" beforeDir="false" afterPath="$PROJECT_DIR$/data/orchestrator_logs/orchestrator_runs.log" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/backtest/engine.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/backtest/engine.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/config/paths.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/config/paths.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/dashboard/app.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/dashboard/app.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/dashboard/auth.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/dashboard/auth.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/features/builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/features/builder.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/features/pregame_feature_builder.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/scripts/archive/pregame_feature_builder.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/collector.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/ingestion/collector.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/ingestion/pipeline.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/ingestion/pipeline.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/predict.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/predict.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/model/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/model/train.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/pipeline/orchestrator.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/pipeline/orchestrator.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/reports/backtest_report.py" beforeDir="false" afterPath="$PROJECT_DIR$/src/reports/backtest_report.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/test.py" beforeDir="false" afterPath="$PROJECT_DIR$/test.py" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -57,7 +96,7 @@
     &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;SHELLCHECK.PATH&quot;: &quot;C:\\Users\\Mohamadou\\AppData\\Roaming\\JetBrains\\PyCharm2025.3\\plugins\\Shell Script\\shellcheck.exe&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;feature/store&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;feature/version__4.0&quot;,
     &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
     &quot;last_opened_file_path&quot;: &quot;C:/Users/Mohamadou/PycharmProjects/nba_analytics/src/analytics&quot;,
     &quot;run.code.analysis.last.selected.profile&quot;: &quot;aDefault&quot;,
@@ -77,11 +116,11 @@
       <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\scripts\archive" />
       <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\scripts" />
       <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src" />
       <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\scripts\archieve" />
       <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\monitoring" />
-      <recent name="C:\Users\Mohamadou\PycharmProjects\nba_analytics\src\ingestion" />
     </key>
   </component>
   <component name="RunManager" selected="Makefile Target.test">

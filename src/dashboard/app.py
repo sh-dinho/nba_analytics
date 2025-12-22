@@ -1,15 +1,23 @@
 # ============================================================
-# Project: NBA Analytics & Betting Engine
+# 🏀 NBA Analytics v3
 # Module: Dashboard App
+# File: src/dashboard/app.py
 # Author: Sadiq
 #
 # Description:
-#     Streamlit dashboard / client portal:
-#       - Predictions
-#       - Backtest + What-if
-#       - Accuracy
-#       - Strategy comparison (admin)
-#       - Report generation (client)
+#     Streamlit-based client portal for NBA Analytics v3:
+#       - Predictions tab
+#       - Backtest / What-if simulator
+#       - Accuracy tab
+#       - Strategy Comparison (admin)
+#       - Model Leaderboard (admin)
+#
+#     Integrates with:
+#       - Model registry (index.json)
+#       - Backtesting engine
+#       - Accuracy engine
+#       - Reports generator
+#       - Auth module for role-based views
 # ============================================================
 
 from __future__ import annotations
@@ -26,20 +34,33 @@ from src.backtest.accuracy import AccuracyEngine
 from src.backtest.compare import compare_strategies
 from src.dashboard.auth import require_login, is_admin
 from src.reports.backtest_report import generate_backtest_accuracy_report
+from src.dashboard.tabs.model_leaderboard import render_model_leaderboard
+from src.dashboard.tabs.advanced_predictions import render_advanced_predictions_tab
+from src.dashboard.tabs.team_stability import render_team_stability_tab
+
+# ============================================================
+# Helpers: data loading & plotting
+# ============================================================
 
 
 def _load_predictions(pred_date: date) -> pd.DataFrame:
     path = PREDICTIONS_DIR / f"predictions_{pred_date}.parquet"
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_parquet(path)
+    df = pd.read_parquet(path)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+    return df
 
 
 def _load_odds(pred_date: date) -> pd.DataFrame:
     path = ODDS_DIR / f"odds_{pred_date}.parquet"
     if not path.exists():
         return pd.DataFrame()
-    return pd.read_parquet(path)
+    df = pd.read_parquet(path)
+    if "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"]).dt.date
+    return df
 
 
 def plot_bankroll_curve(records: pd.DataFrame):
@@ -53,10 +74,15 @@ def plot_bankroll_curve(records: pd.DataFrame):
     return fig
 
 
-def predictions_tab():
+# ============================================================
+# Tab: Predictions
+# ============================================================
+
+
+def render_predictions_tab():
     st.header("Predictions")
 
-    pred_date = st.date_input("Date", value=date.today(), key="pred_date")
+    pred_date = st.date_input("Prediction date", value=date.today(), key="pred_date")
 
     preds = _load_predictions(pred_date)
     odds = _load_odds(pred_date)
@@ -76,8 +102,20 @@ def predictions_tab():
         use_container_width=True,
     )
 
+    # Show model metadata if available
+    meta_cols = [
+        c
+        for c in ["model_name", "model_version", "feature_version"]
+        if c in preds.columns
+    ]
+    if meta_cols:
+        meta = preds[meta_cols].drop_duplicates().head(1)
+        st.markdown("**Model Metadata**")
+        st.json(meta.to_dict(orient="records")[0])
+
     if not odds.empty:
         st.subheader("Joined Odds + Predictions")
+
         merged = odds.merge(
             preds,
             on=["game_id", "team"],
@@ -105,6 +143,8 @@ def predictions_tab():
                 "win_probability",
                 "implied_prob",
                 "edge",
+                "model_name",
+                "model_version",
             ]
             if c in merged.columns
         ]
@@ -117,12 +157,17 @@ def predictions_tab():
         )
 
 
-def backtest_tab():
+# ============================================================
+# Tab: Backtest / What-if Simulator
+# ============================================================
+
+
+def render_backtest_tab():
     st.header("Backtest / What-if Simulator")
 
     st.markdown(
-        "_This is a **what-if simulator**: adjust the parameters below to see how the "
-        "strategy would have performed historically under different risk settings._"
+        "_Adjust the parameters below to see how different bankroll and risk "
+        "settings would have performed on historical data._"
     )
 
     col1, col2 = st.columns(2)
@@ -149,6 +194,11 @@ def backtest_tab():
         "Max stake as fraction of bankroll", 0.0, 1.0, 0.05, 0.01
     )
 
+    # Optional: filter by model
+    st.subheader("Model filter (optional)")
+    model_name = st.text_input("Model name (exact match, optional)")
+    model_version = st.text_input("Model version (timestamp, optional)")
+
     if st.button("Run backtest"):
         cfg = BacktestConfig(
             starting_bankroll=starting_bankroll,
@@ -161,11 +211,14 @@ def backtest_tab():
         results = bt.run(
             start_date=start_date.isoformat() if start_date else None,
             end_date=end_date.isoformat() if end_date else None,
+            model_name=model_name or None,
+            model_version=model_version or None,
         )
 
         if not results:
             st.warning(
-                "No results from backtest. Check that predictions, odds, and outcomes exist for this range."
+                "No results from backtest. Check that predictions, odds, and outcomes "
+                "exist for this range and (optional) model selection."
             )
             return
 
@@ -203,7 +256,12 @@ def backtest_tab():
             st.markdown(f"[Download report]({report_path})")
 
 
-def accuracy_tab():
+# ============================================================
+# Tab: Accuracy
+# ============================================================
+
+
+def render_accuracy_tab():
     st.header("Model Accuracy")
 
     threshold = st.slider(
@@ -213,8 +271,11 @@ def accuracy_tab():
         0.5,
         0.01,
     )
-    start_date = st.date_input("Start date (optional)", value=None, key="acc_start")
-    end_date = st.date_input("End date (optional)", value=None, key="acc_end")
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start date (optional)", value=None, key="acc_start")
+    with col2:
+        end_date = st.date_input("End date (optional)", value=None, key="acc_end")
 
     if st.button("Compute accuracy"):
         engine = AccuracyEngine(threshold=threshold)
@@ -249,34 +310,42 @@ def accuracy_tab():
         st.dataframe(sample, use_container_width=True)
 
 
-def strategy_comparison_tab():
+# ============================================================
+# Tab: Strategy Comparison (admin)
+# ============================================================
+
+
+def render_strategy_comparison_tab():
     st.header("Strategy Comparison")
 
-    start_date = st.date_input("Start date", value=None, key="cmp_start")
-    end_date = st.date_input("End date", value=None, key="cmp_end")
+    col1, col2 = st.columns(2)
+    with col1:
+        start_date = st.date_input("Start date", value=None, key="cmp_start")
+    with col2:
+        end_date = st.date_input("End date", value=None, key="cmp_end")
 
     st.markdown("Define a few strategies to compare:")
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
+    col3, col4, col5 = st.columns(3)
+    with col3:
         min_edge_base = st.number_input("Baseline min edge", value=0.0, step=0.01)
-    with col2:
+    with col4:
+        min_edge_conservative = st.number_input(
+            "Main strategy min edge", value=0.03, step=0.01
+        )
+    with col5:
         min_edge_aggressive = st.number_input(
             "Aggressive min edge", value=0.05, step=0.01
         )
-    with col3:
-        min_edge_conservative = st.number_input(
-            "Conservative min edge", value=0.03, step=0.01
-        )
 
-    col4, col5 = st.columns(2)
-    with col4:
+    col6, col7 = st.columns(2)
+    with col6:
         kelly_fraction_base = st.number_input(
             "Baseline Kelly fraction", value=0.0, step=0.05
         )
-    with col5:
+    with col7:
         kelly_fraction_main = st.number_input(
-            "Main strategy Kelly fraction", value=0.25, step=0.05
+            "Main / Aggressive Kelly fraction", value=0.25, step=0.05
         )
 
     if st.button("Compare strategies"):
@@ -318,8 +387,13 @@ def strategy_comparison_tab():
         )
 
 
+# ============================================================
+# Main app
+# ============================================================
+
+
 def main():
-    st.set_page_config(page_title="NBA Analytics Client Portal", layout="wide")
+    st.set_page_config(page_title="NBA Analytics v3 — Client Portal", layout="wide")
 
     require_login()
 
@@ -328,23 +402,39 @@ def main():
         st.session_state.clear()
         st.experimental_rerun()
 
+    # Tabs: admin gets everything, client gets a subset
     if is_admin():
-        tab1, tab2, tab3, tab4 = st.tabs(
-            ["Predictions", "Backtest / What-if", "Accuracy", "Strategy Comparison"]
-        )
+        tab_names = [
+            "Predictions",
+            "Advanced Predictions",
+            "Backtest / What-if",
+            "Accuracy",
+            "Strategy Comparison",
+            "Model Leaderboard",
+            "Team Stability",
+        ]
     else:
-        tab1, tab2, tab3 = st.tabs(["Predictions", "Backtest / What-if", "Accuracy"])
+        tab_names = [
+            "Predictions",
+            "Advanced Predictions",
+            "Backtest / What-if",
+            "Accuracy",
+        ]
 
-    with tab1:
-        predictions_tab()
-    with tab2:
-        backtest_tab()
-    with tab3:
-        accuracy_tab()
+    name_to_renderer = {
+        "Predictions": render_predictions_tab,
+        "Advanced Predictions": render_advanced_predictions_tab,
+        "Backtest / What-if": render_backtest_tab,
+        "Accuracy": render_accuracy_tab,
+        "Strategy Comparison": render_strategy_comparison_tab,
+        "Model Leaderboard": render_model_leaderboard,
+        "Team Stability": render_team_stability_tab,
+    }
 
-    if is_admin():
-        with tab4:
-            strategy_comparison_tab()
+    for tab, name in zip(st.tabs, tab_names):
+        with tab:
+            renderer = name_to_renderer[name]
+            renderer()
 
 
 if __name__ == "__main__":

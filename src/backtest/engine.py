@@ -1,17 +1,24 @@
 # ============================================================
-# Project: NBA Analytics & Betting Engine
+# 🏀 NBA Analytics v3
 # Module: Backtesting Engine
+# File: src/backtest/engine.py
 # Author: Sadiq
 #
 # Description:
 #     Historical backtesting engine for evaluating model-driven
 #     betting strategies using predictions, odds, and outcomes.
+#
+#     Tightenings:
+#       - Uses metadata-aware predictions (model_name, model_version, feature_version)
+#       - Validates input schemas (predictions, odds, outcomes)
+#       - Logs model/feature versions used in backtest
+#       - Enforces bankroll & bet-level integrity
 # ============================================================
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import dataclass, asdict
+from datetime import date
 from typing import Optional
 
 import numpy as np
@@ -51,45 +58,75 @@ def kelly_fraction(win_prob: float, price: float) -> float:
     return max(0.0, k)
 
 
-def current_season_date_range() -> tuple[str, str]:
-    today = datetime.today().date()
-    year = today.year
-
-    if today.month >= 10:
-        start = date(year, 10, 1)
-    else:
-        start = date(year - 1, 10, 1)
-
-    end = today
-    return start.isoformat(), end.isoformat()
-
-
 class Backtester:
     def __init__(self, config: BacktestConfig):
         self.config = config
 
+    # -----------------------------
+    # Public API
+    # -----------------------------
     def run(
-        self, start_date: Optional[str] = None, end_date: Optional[str] = None
+        self,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
     ) -> dict:
-        df = self._load_joined_data(start_date, end_date)
+        """
+        Runs a backtest over the given date range.
+
+        If model_name/model_version are provided, only predictions from that
+        model (and version) are used; otherwise, all available predictions
+        are included.
+        """
+        logger.info(
+            f"🏀 Backtest starting with config={asdict(self.config)}, "
+            f"start_date={start_date}, end_date={end_date}, "
+            f"model_name={model_name}, model_version={model_version}"
+        )
+
+        df = self._load_joined_data(
+            start_date=start_date,
+            end_date=end_date,
+            model_name=model_name,
+            model_version=model_version,
+        )
 
         if df.empty:
-            logger.warning("No data available for backtest in given date range.")
+            logger.warning(
+                "No data available for backtest in given date range / model selection."
+            )
             return {}
+
+        self._validate_joined_schema(df)
 
         df = self._compute_edges(df)
         bets = self._apply_strategy(df)
         results = self._simulate_bankroll(bets)
 
+        logger.success(
+            f"🏀 Backtest complete. Final bankroll={results.get('final_bankroll'):.2f}, "
+            f"ROI={results.get('roi'):.3f}, bets={results.get('num_bets')}"
+        )
+
         return results
 
+    # -----------------------------
+    # Data loading & validation
+    # -----------------------------
     def _load_joined_data(
-        self, start_date: Optional[str], end_date: Optional[str]
+        self,
+        start_date: Optional[str],
+        end_date: Optional[str],
+        model_name: Optional[str],
+        model_version: Optional[str],
     ) -> pd.DataFrame:
+        # Outcomes
         long_df = pd.read_parquet(LONG_SNAPSHOT)
         long_df["date"] = pd.to_datetime(long_df["date"]).dt.date
         long_df = long_df[["game_id", "team", "won", "date"]]
 
+        # Predictions
         pred_files = sorted(PREDICTIONS_DIR.glob("predictions_*.parquet"))
         preds_list = []
 
@@ -104,13 +141,25 @@ class Backtester:
 
             df = pd.read_parquet(path)
             df["date"] = dt
+
+            # Filter by model if specified
+            if model_name is not None:
+                df = df[df.get("model_name") == model_name]
+            if model_version is not None:
+                df = df[df.get("model_version") == model_version]
+
+            if df.empty:
+                continue
+
             preds_list.append(df)
 
         if not preds_list:
+            logger.warning("No prediction files matched the backtest criteria.")
             return pd.DataFrame()
 
         preds = pd.concat(preds_list, ignore_index=True)
 
+        # Odds
         odds_files = sorted(ODDS_DIR.glob("odds_*.parquet"))
         odds_list = []
 
@@ -125,9 +174,11 @@ class Backtester:
 
             df = pd.read_parquet(path)
             df["date"] = dt
+
             odds_list.append(df)
 
         if not odds_list:
+            logger.warning("No odds files matched the backtest criteria.")
             return pd.DataFrame()
 
         odds = pd.concat(odds_list, ignore_index=True)
@@ -141,14 +192,59 @@ class Backtester:
 
         joined = joined.merge(
             long_df,
-            on=["game_id", "team"],
-            how="left",
+            on=["game_id", "team", "date"],
+            how="inner",
         )
 
-        joined = joined.dropna(subset=["won"])
+        if joined.empty:
+            logger.warning(
+                "Joined dataset (odds + preds + outcomes) is empty after merges."
+            )
+            return joined
+
+        # Log model/feature versions present
+        if "model_name" in joined.columns and "model_version" in joined.columns:
+            model_stats = (
+                joined.groupby(["model_name", "model_version", "feature_version"])
+                .size()
+                .reset_index(name="rows")
+            )
+            logger.info(
+                "Backtest using the following model/version/feature_version combinations:\n"
+                f"{model_stats.to_string(index=False)}"
+            )
 
         return joined
 
+    def _validate_joined_schema(self, df: pd.DataFrame):
+        required_cols = [
+            "game_id",
+            "team",
+            "date",
+            "won",
+            "price",  # from odds
+            "win_probability",  # from predictions
+        ]
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(
+                f"Backtest joined dataframe missing required columns: {missing}"
+            )
+
+        if df["game_id"].isna().any():
+            raise ValueError("game_id contains nulls in joined dataframe.")
+        if df["team"].isna().any():
+            raise ValueError("team contains nulls in joined dataframe.")
+        if df["won"].isna().any():
+            raise ValueError("won contains nulls in joined dataframe.")
+        if df["price"].isna().any():
+            raise ValueError("price contains nulls in joined dataframe.")
+        if df["win_probability"].isna().any():
+            raise ValueError("win_probability contains nulls in joined dataframe.")
+
+    # -----------------------------
+    # Strategy / bankroll simulation
+    # -----------------------------
     def _compute_edges(self, df: pd.DataFrame) -> pd.DataFrame:
         df = df.copy()
         df["implied_prob"] = df["price"].apply(american_to_implied)
@@ -160,11 +256,9 @@ class Backtester:
         bankroll = self.config.starting_bankroll
 
         stakes = []
-
         for _, row in df.iterrows():
             edge = row["edge"]
-
-            if edge <= self.config.min_edge:
+            if edge <= self.config.min_edge or bankroll <= 0:
                 stakes.append(0.0)
                 continue
 
@@ -174,16 +268,23 @@ class Backtester:
             stake = bankroll * k_used
             stake = min(stake, bankroll * self.config.max_stake_fraction)
 
+            if stake < 0:
+                stake = 0.0
+
             stakes.append(stake)
 
         df["stake"] = stakes
         df = df[df["stake"] > 0].copy()
 
+        if df.empty:
+            logger.warning("No bets selected under the current strategy parameters.")
+            return df
+
         return df
 
     def _simulate_bankroll(self, bets: pd.DataFrame) -> dict:
         if bets.empty:
-            logger.warning("No bets placed under the current strategy.")
+            logger.warning("No bets to simulate bankroll for.")
             return {}
 
         bets = bets.sort_values("date").reset_index(drop=True)
@@ -194,9 +295,9 @@ class Backtester:
         daily_records = []
 
         for _, row in bets.iterrows():
-            stake = row["stake"]
-            price = row["price"]
-            won = row["won"]
+            stake = float(row["stake"])
+            price = float(row["price"])
+            won = int(row["won"])
 
             if stake <= 0 or bankroll <= 0:
                 bankrolls.append(bankroll)
@@ -209,6 +310,8 @@ class Backtester:
                 profit = stake * (100 / -price) if won == 1 else -stake
 
             bankroll += profit
+            bankroll = max(bankroll, 0.0)  # enforce non-negative bankroll
+
             bankrolls.append(bankroll)
             profits.append(profit)
 
@@ -224,6 +327,9 @@ class Backtester:
                     "stake": stake,
                     "profit": profit,
                     "bankroll_after": bankroll,
+                    "model_name": row.get("model_name"),
+                    "model_version": row.get("model_version"),
+                    "feature_version": row.get("feature_version"),
                 }
             )
 
@@ -231,8 +337,12 @@ class Backtester:
         bets["bankroll_after"] = bankrolls
 
         total_profit = bankroll - self.config.starting_bankroll
-        roi = total_profit / self.config.starting_bankroll
-        hit_rate = (bets["profit"] > 0).mean()
+        roi = (
+            total_profit / self.config.starting_bankroll
+            if self.config.starting_bankroll > 0
+            else 0.0
+        )
+        hit_rate = (bets["profit"] > 0).mean() if not bets.empty else 0.0
         max_drawdown = self._max_drawdown([r["bankroll_after"] for r in daily_records])
 
         num_bets = len(bets)
