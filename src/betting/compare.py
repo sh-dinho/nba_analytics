@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Strategy Comparison
@@ -13,7 +14,6 @@
 #       - bet volume
 # ============================================================
 
-from __future__ import annotations
 
 import pandas as pd
 

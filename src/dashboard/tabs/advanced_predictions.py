@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Dashboard — Advanced Predictions (ML + O/U + ATS)
@@ -15,7 +16,6 @@
 #     This tab is the core of the multi-market prediction suite.
 # ============================================================
 
-from __future__ import annotations
 
 import pandas as pd
 import streamlit as st

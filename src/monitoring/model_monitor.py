@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Author: Sadiq
@@ -5,7 +6,6 @@
 #              and real-world outcomes over time.
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from typing import Dict, Any, List, Optional

@@ -1,90 +1,153 @@
+from __future__ import annotations
+
 # ============================================================
-# 🏀 NBA Analytics v3
+# 🏀 NBA Analytics v4
 # Module: Ingestion Validation
 # File: src/ingestion/validator.py
 # Author: Sadiq
 #
 # Description:
-#     Strict schema validation and integrity checks for
-#     ScoreboardV3 ingestion. Ensures no malformed data enters
-#     the canonical snapshots.
+#     Validates canonical team-game rows produced by the
+#     ingestion pipeline after normalization.
 # ============================================================
 
-from __future__ import annotations
-
-from datetime import date
-from typing import Literal
-
 import pandas as pd
-from pydantic import BaseModel, validator
+from loguru import logger
 
 
-GameStatus = Literal["final", "scheduled", "in_progress"]
+# ------------------------------------------------------------
+# Canonical schema for team-game rows (v4)
+# ------------------------------------------------------------
+
+REQUIRED_COLUMNS = {
+    "game_id",
+    "date",
+    "team",
+    "opponent",
+    "is_home",
+    "score",
+    "opponent_score",
+    "season",
+}
+
+OPTIONAL_COLUMNS = {
+    "status",
+    "schema_version",
+}
 
 
-class GameSchema(BaseModel):
-    game_id: str
-    date: date
-    home_team: str
-    away_team: str
-    home_score: int | None
-    away_score: int | None
-    status: GameStatus
-    season: str | None = None
-
-    @validator("home_team", "away_team")
-    def validate_team(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("Team name cannot be empty")
-        return v
-
-    @validator("home_score", "away_score")
-    def validate_score(cls, v: int | None) -> int | None:
-        if v is None:
-            return v
-        if v < 0:
-            raise ValueError("Score cannot be negative")
-        return v
+# ------------------------------------------------------------
+# Validation
+# ------------------------------------------------------------
 
 
 def validate_ingestion_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Validates a raw ingestion dataframe against GameSchema and
-    enforces basic integrity constraints (uniqueness, non-null keys).
+    Validate canonical team-game rows after normalization.
+
+    v4 rules:
+      - Required columns must exist
+      - Optional columns allowed to be missing
+      - Scores may be NaN for pre-game rows
+      - No negative scores
+      - No null dates
+      - No duplicate (game_id, team)
+      - Each game_id must have exactly 2 rows
+      - Home/away symmetry must hold
+      - Season must be non-null and string-like
     """
-    required_cols = [
-        "game_id",
-        "date",
-        "home_team",
-        "away_team",
-        "home_score",
-        "away_score",
-        "status",
-        "season",
-    ]
+    if df.empty:
+        return df
 
-    missing = [c for c in required_cols if c not in df.columns]
+    # --------------------------------------------------------
+    # Required columns
+    # --------------------------------------------------------
+    missing = REQUIRED_COLUMNS - set(df.columns)
     if missing:
-        raise ValueError(f"Ingestion dataframe missing required columns: {missing}")
+        raise ValueError(f"Validator: Missing required columns: {missing}")
 
-    # Basic integrity checks
-    if not df["game_id"].is_unique:
-        dupes = df["game_id"][df["game_id"].duplicated()].unique()
-        raise ValueError(f"Duplicate game_id detected in ingestion: {dupes[:5]}")
+    # --------------------------------------------------------
+    # Duplicate rows
+    # --------------------------------------------------------
+    dupes = df[df.duplicated(subset=["game_id", "team"], keep=False)]
+    if not dupes.empty:
+        logger.warning(
+            f"Validator: Duplicate game_id/team rows detected: "
+            f"{dupes[['game_id','team']].drop_duplicates().to_dict(orient='records')}"
+        )
 
-    if df["home_team"].isna().any():
-        raise ValueError("Missing home_team values in ingestion dataframe.")
+    # --------------------------------------------------------
+    # Score sanity (allow NaN for pre-game)
+    # --------------------------------------------------------
+    if (df["score"].dropna() < 0).any() or (df["opponent_score"].dropna() < 0).any():
+        raise ValueError("Validator: Negative scores detected.")
 
-    if df["away_team"].isna().any():
-        raise ValueError("Missing away_team values in ingestion dataframe.")
+    # --------------------------------------------------------
+    # Date sanity
+    # --------------------------------------------------------
+    if df["date"].isna().any():
+        raise ValueError("Validator: Null dates detected.")
 
-    # Pydantic validation row by row
-    records = df.to_dict(orient="records")
-    validated_records: list[dict] = []
+    # --------------------------------------------------------
+    # Season sanity
+    # --------------------------------------------------------
+    if df["season"].isna().any():
+        raise ValueError("Validator: Null season values detected.")
 
-    for rec in records:
-        model = GameSchema(**rec)
-        validated_records.append(model.dict())
+    # Season format check (warn only)
+    bad_seasons = df[~df["season"].astype(str).str.match(r"^\d{4}-\d{2}$")]
+    if not bad_seasons.empty:
+        logger.warning(
+            f"Validator: Unexpected season format detected: "
+            f"{bad_seasons['season'].unique()}"
+        )
 
-    return pd.DataFrame(validated_records)
+    # --------------------------------------------------------
+    # Game completeness (each game_id must have exactly 2 rows)
+    # --------------------------------------------------------
+    game_counts = df.groupby("game_id").size()
+    bad_games = game_counts[game_counts != 2]
+
+    if not bad_games.empty:
+        raise ValueError(
+            f"Validator: Incomplete games detected (must have 2 rows): "
+            f"{bad_games.to_dict()}"
+        )
+
+    # --------------------------------------------------------
+    # Home/away symmetry
+    # --------------------------------------------------------
+    def bad_symmetry(g):
+        if len(g) != 2:
+            return True
+        a, b = g.iloc[0], g.iloc[1]
+        return not (a["team"] == b["opponent"] and b["team"] == a["opponent"])
+
+    asym = df.groupby("game_id").apply(bad_symmetry)
+    asym = asym[asym]
+
+    if not asym.empty:
+        raise ValueError(
+            f"Validator: Opponent symmetry errors in games: {asym.index.tolist()}"
+        )
+
+    # --------------------------------------------------------
+    # Score symmetry (warn only for pre-game rows)
+    # --------------------------------------------------------
+    def score_mismatch(g):
+        if g["score"].isna().any() or g["opponent_score"].isna().any():
+            return False  # pre-game rows allowed
+        a, b = g.iloc[0], g.iloc[1]
+        return not (
+            a["score"] == b["opponent_score"] and b["score"] == a["opponent_score"]
+        )
+
+    mismatches = df.groupby("game_id").apply(score_mismatch)
+    mismatches = mismatches[mismatches]
+
+    if not mismatches.empty:
+        logger.warning(
+            f"Validator: Score symmetry mismatches detected: {mismatches.index.tolist()}"
+        )
+
+    return df

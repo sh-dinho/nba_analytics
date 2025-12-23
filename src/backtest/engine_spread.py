@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Backtesting — Spread (ATS)
@@ -16,19 +17,9 @@
 #       - max drawdown
 # ============================================================
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import Optional
-
-import numpy as np
-import pandas as pd
-from loguru import logger
-
 from src.config.paths import (
-    LONG_SNAPSHOT,
     DATA_DIR,
-    ODDS_DIR,
 )
 
 SPREAD_PRED_DIR = DATA_DIR / "predictions_spread"
@@ -167,7 +158,6 @@ class SpreadBacktester:
 #       - max drawdown
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional

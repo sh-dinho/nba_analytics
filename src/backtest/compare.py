@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Module: Strategy Comparison
@@ -8,7 +9,6 @@
 #     and return a comparison table for consulting/demo.
 # ============================================================
 
-from __future__ import annotations
 
 import pandas as pd
 

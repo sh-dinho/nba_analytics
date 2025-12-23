@@ -15,51 +15,36 @@ def check_data():
     print(f"Columns Found: {list(df.columns)}")
 
     # Check for scores
-    games_with_scores = df[df["home_score"].notna()].shape[0]
+    score_cols = ["score_home", "score_away"]
+    games_with_scores = df[df[score_cols].notna().all(axis=1)].shape[0]
     print(f"Games with Scores: {games_with_scores}")
 
     # Safely show recent games
     cols_to_show = [
         c
-        for c in ["date", "home_team", "away_team", "home_score", "status"]
+        for c in [
+            "date",
+            "home_team",
+            "away_team",
+            "score_home",
+            "score_away",
+            "status",
+        ]
         if c in df.columns
     ]
-    print("\n--- Latest 5 Entries ---")
-    print(df.sort_values("date").tail(5)[cols_to_show])
 
+    if "date" in df.columns:
+        print("\n--- Latest 5 Entries by Date ---")
+        print(df.sort_values("date").tail(5)[cols_to_show])
 
-check_data()
+        # Freshness check
+        last_date = pd.to_datetime(df["date"]).max().date()
+        days_ago = (pd.Timestamp.today().date() - last_date).days
+        print(f"\n⏱️ Last game was {days_ago} days ago ({last_date})")
+    else:
+        print("\n⚠️ No 'date' column found, showing last 5 entries by index instead:")
+        print(df.tail(5)[cols_to_show])
 
 
 if __name__ == "__main__":
     check_data()
-# from src.ingestion.pipeline import IngestionPipeline
-# from src.features.builder import FeatureBuilder
-# from src.features.feature_store import FeatureStore
-#
-# # 1. Transform Wide to Long
-# pipeline = IngestionPipeline()
-# df_long = pipeline.load_long_format()
-#
-# # 2. Build Rolling Features (Win rates, etc.)
-# fb = FeatureBuilder(window=10)
-# features_df = fb.build(df_long)
-#
-# # 3. Save to Store
-# fs = FeatureStore()
-# fs.save_snapshot(features_df, kind="training")
-
-# import pandas as pd
-# from datetime import date
-# from src.config.paths import SCHEDULE_SNAPSHOT
-#
-# df = pd.read_parquet(SCHEDULE_SNAPSHOT)
-# today = date.today()
-#
-# print(f"Checking for date: {today} (Type: {type(today)})")
-# print(f"Dates in file: {df['date'].unique()}")
-# print(f"First date type in file: {type(df['date'].iloc[0])}")
-#
-# todays_games = df[df["date"] == today]
-# print(f"\nGames found for today: {len(todays_games)}")
-# print(todays_games)

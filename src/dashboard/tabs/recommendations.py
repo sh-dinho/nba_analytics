@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Dashboard — Betting Recommendations
@@ -14,7 +15,6 @@
 #       src/markets/recommend.py
 # ============================================================
 
-from __future__ import annotations
 
 import pandas as pd
 import streamlit as st

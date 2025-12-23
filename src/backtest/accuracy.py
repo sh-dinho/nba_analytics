@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Module: Accuracy Metrics
@@ -7,7 +8,6 @@
 #     Computes model accuracy metrics over historical predictions.
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Optional

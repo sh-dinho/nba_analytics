@@ -1,170 +1,260 @@
+from __future__ import annotations
+
 # ============================================================
-# 🏀 NBA Analytics v3
+# 🏀 NBA Analytics v4
 # Module: Feature Engineering
 # File: src/features/builder.py
 # Author: Sadiq
 #
 # Description:
-#     Builds strictly point-in-time-correct team-level features
-#     from the canonical long-format game data. Includes:
-#       - rolling win rate
-#       - rolling points for/against
-#     with no leakage (uses only past games).
-#     Validates feature schema and writes optional metadata.
+#     Full-featured, strictly point-in-time-correct feature
+#     builder for canonical team-game data.
+#
+#     Feature set (v4, Option C):
+#       - Basic features (is_home, score_diff)
+#       - Rolling stats (5, 10, 20 games)
+#       - Season-to-date aggregates
+#       - Home/away splits
+#       - Rest days, back-to-back flags
+#       - Opponent-adjusted rolling stats
+#       - Strength-of-schedule metrics
+#       - ELO-style team rating + opponent ELO
+#       - Team form metrics
+#
+#     All features are leakage-safe: only past games are used.
 # ============================================================
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from datetime import datetime
-from pathlib import Path
-from typing import Optional
+from typing import Dict, Callable, Literal, List
 
 import pandas as pd
 from loguru import logger
 
-from src.config.paths import DATA_DIR, LONG_SNAPSHOT
-from src.features.feature_schema import FeatureRow
 
-FEATURES_DIR = DATA_DIR / "features"
-FEATURES_DIR.mkdir(parents=True, exist_ok=True)
+FeatureVersion = Literal["v4"]
+
+
+# ------------------------------------------------------------
+# FeatureSpec
+# ------------------------------------------------------------
 
 
 @dataclass
-class FeatureConfig:
-    window_games: int = 10
-    version: str = "v1"
+class FeatureSpec:
+    name: str
+    description: str
+    builder: Callable[[pd.DataFrame], pd.DataFrame]
+
+
+# ------------------------------------------------------------
+# Registry
+# ------------------------------------------------------------
+
+
+def _build_registry() -> Dict[str, FeatureSpec]:
+    return {
+        "v4": FeatureSpec(
+            name="v4",
+            description="Full feature set: rolling stats, ELO, rest, SOS, form.",
+            builder=_build_v4_features,
+        )
+    }
+
+
+# ------------------------------------------------------------
+# FeatureBuilder
+# ------------------------------------------------------------
 
 
 class FeatureBuilder:
-    def __init__(self, config: Optional[FeatureConfig] = None):
-        self.config = config or FeatureConfig()
+    def __init__(self, version: FeatureVersion = "v4"):
+        self.version = version
+        self._registry = _build_registry()
 
-    def build_from_long(self, df_long: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """
-        Builds team-centric rolling features from the canonical long-format dataframe.
-        Expects columns: ['game_id', 'date', 'team', 'opponent', 'points_for', 'points_against', 'won', 'is_home'].
-        """
-        if df_long is None:
-            if not LONG_SNAPSHOT.exists():
-                raise FileNotFoundError(
-                    f"Long-format snapshot not found: {LONG_SNAPSHOT}"
-                )
-            df_long = pd.read_parquet(LONG_SNAPSHOT)
+        if version not in self._registry:
+            raise ValueError(f"Unknown feature version: {version}")
 
-        required_cols = [
-            "game_id",
-            "date",
-            "team",
-            "opponent",
-            "points_for",
-            "points_against",
-            "won",
-            "is_home",
-        ]
-        missing = [c for c in required_cols if c not in df_long.columns]
-        if missing:
-            raise ValueError(f"Long dataframe missing required columns: {missing}")
-
-        df = df_long.copy()
-        df["date"] = pd.to_datetime(df["date"]).dt.date
-
-        df = df.sort_values(["team", "date"]).reset_index(drop=True)
-
-        window = self.config.window_games
-
-        df["rolling_win_rate"] = (
-            df.groupby("team")["won"]
-            .rolling(window=window, min_periods=1, closed="left")
-            .mean()
-            .reset_index(level=0, drop=True)
+        self.spec = self._registry[version]
+        logger.info(
+            f"FeatureBuilder initialized with version={version}: {self.spec.description}"
         )
 
-        df["rolling_points_for"] = (
-            df.groupby("team")["points_for"]
-            .rolling(window=window, min_periods=1, closed="left")
-            .mean()
-            .reset_index(level=0, drop=True)
+    def build_from_long(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            logger.warning("FeatureBuilder called with empty DataFrame.")
+            return df
+        return self.spec.builder(df)
+
+    def get_feature_names(self) -> List[str]:
+        dummy = self.spec.builder(
+            pd.DataFrame(
+                columns=[
+                    "game_id",
+                    "date",
+                    "team",
+                    "opponent",
+                    "is_home",
+                    "score",
+                    "opponent_score",
+                    "season",
+                ]
+            )
+        )
+        base = {"game_id", "date", "team", "opponent", "season"}
+        return [c for c in dummy.columns if c not in base]
+
+
+# ------------------------------------------------------------
+# v4 Feature Recipe
+# ------------------------------------------------------------
+
+
+def _build_v4_features(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+
+    # Ensure correct types and ordering
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["team", "date", "game_id"])
+
+    # Basic features
+    df["score_diff"] = df["score"] - df["opponent_score"]
+
+    # --------------------------------------------------------
+    # Rolling windows (NaN-safe, leakage-safe)
+    # --------------------------------------------------------
+    windows = [5, 10, 20]
+
+    for w in windows:
+        df[f"roll_points_for_{w}"] = df.groupby("team")["score"].transform(
+            lambda s: s.shift().rolling(w, min_periods=1).mean()
         )
 
-        df["rolling_points_against"] = (
-            df.groupby("team")["points_against"]
-            .rolling(window=window, min_periods=1, closed="left")
-            .mean()
-            .reset_index(level=0, drop=True)
+        df[f"roll_points_against_{w}"] = df.groupby("team")["opponent_score"].transform(
+            lambda s: s.shift().rolling(w, min_periods=1).mean()
         )
 
-        df_features = df[
-            [
-                "game_id",
-                "team",
-                "opponent",
-                "date",
-                "is_home",
-                "rolling_win_rate",
-                "rolling_points_for",
-                "rolling_points_against",
-            ]
-        ].copy()
+        df[f"roll_margin_{w}"] = df.groupby("team")["score_diff"].transform(
+            lambda s: s.shift().rolling(w, min_periods=1).mean()
+        )
 
-        self._validate_features(df_features)
-        self._write_latest_snapshot(df_features)
+        # Rolling win rate — FIXED
+        win_flag = (df["score"] > df["opponent_score"]).astype(float)
+        df[f"roll_win_rate_{w}"] = win_flag.groupby(df["team"]).transform(
+            lambda s: s.shift().rolling(w, min_periods=1).mean()
+        )
 
-        return df_features
+    # --------------------------------------------------------
+    # Season-to-date aggregates (leakage-safe)
+    # --------------------------------------------------------
+    df["season_points_for_avg"] = df.groupby(["team", "season"])["score"].transform(
+        lambda s: s.shift().expanding().mean()
+    )
 
-    def _validate_features(self, df: pd.DataFrame):
-        """
-        Validate each row against FeatureRow schema. This is strict and may be
-        expensive on huge datasets, but it's safe for daily snapshots and
-        consulting-grade correctness.
-        """
-        required_cols = [
-            "game_id",
-            "team",
-            "opponent",
-            "date",
-            "is_home",
-            "rolling_win_rate",
-            "rolling_points_for",
-            "rolling_points_against",
-        ]
-        missing = [c for c in required_cols if c not in df.columns]
-        if missing:
-            raise ValueError(f"Feature dataframe missing required columns: {missing}")
+    df["season_points_against_avg"] = df.groupby(["team", "season"])[
+        "opponent_score"
+    ].transform(lambda s: s.shift().expanding().mean())
 
-        records = df.to_dict(orient="records")
-        for rec in records:
-            FeatureRow(**rec)
+    df["season_margin_avg"] = df.groupby(["team", "season"])["score_diff"].transform(
+        lambda s: s.shift().expanding().mean()
+    )
 
-        logger.info(f"Feature validation passed for {len(df)} rows.")
+    # --------------------------------------------------------
+    # Home/away splits (leakage-safe)
+    # --------------------------------------------------------
+    df["home_points_for_avg"] = df.groupby(["team", "is_home"])["score"].transform(
+        lambda s: s.shift().expanding().mean()
+    )
 
-    def _write_latest_snapshot(self, df: pd.DataFrame):
-        """
-        Writes the latest feature snapshot and metadata (version, generated_at).
-        """
-        version_dir = FEATURES_DIR / self.config.version
-        version_dir.mkdir(parents=True, exist_ok=True)
+    df["home_points_against_avg"] = df.groupby(["team", "is_home"])[
+        "opponent_score"
+    ].transform(lambda s: s.shift().expanding().mean())
 
-        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        snapshot_path = version_dir / f"features_{ts}.parquet"
-        latest_path = version_dir / "features_latest.parquet"
-        meta_path = version_dir / "features_metadata.json"
+    # --------------------------------------------------------
+    # Rest days
+    # --------------------------------------------------------
+    df["prev_date"] = df.groupby("team")["date"].shift()
+    df["rest_days"] = (df["date"] - df["prev_date"]).dt.days
+    df["is_b2b"] = (df["rest_days"] == 1).astype(int)
 
-        df.to_parquet(snapshot_path, index=False)
-        df.to_parquet(latest_path, index=False)
+    # --------------------------------------------------------
+    # Opponent-adjusted stats (correct merge: game_id)
+    # --------------------------------------------------------
+    for w in [5, 10]:
+        opp_col = f"opp_roll_margin_{w}"
+        df = df.merge(
+            df[["game_id", "team", f"roll_margin_{w}"]].rename(
+                columns={"team": "opponent", f"roll_margin_{w}": opp_col}
+            ),
+            on=["game_id", "opponent"],
+            how="left",
+        )
 
-        metadata = {
-            "version": self.config.version,
-            "generated_at_utc": datetime.utcnow().isoformat(),
-            "rows": int(len(df)),
-            "columns": df.columns.tolist(),
-            "snapshot_path": str(snapshot_path),
-        }
+    # --------------------------------------------------------
+    # Strength of schedule (SOS)
+    # --------------------------------------------------------
+    df["sos"] = df.groupby("team")["opponent_score"].transform(
+        lambda s: s.shift().rolling(10, min_periods=1).mean()
+    )
 
-        import json
+    # --------------------------------------------------------
+    # ELO (NaN-safe)
+    # --------------------------------------------------------
+    df = _apply_elo(df)
 
-        meta_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    # Opponent ELO (correct merge: game_id)
+    df = df.merge(
+        df[["game_id", "team", "elo"]].rename(
+            columns={"team": "opponent", "elo": "opp_elo"}
+        ),
+        on=["game_id", "opponent"],
+        how="left",
+    )
 
-        logger.success(f"Feature snapshot written → {snapshot_path}")
-        logger.info(f"Feature latest alias updated → {latest_path}")
-        logger.info(f"Feature metadata written → {meta_path}")
+    # --------------------------------------------------------
+    # Team form (last 3 games)
+    # --------------------------------------------------------
+    df["form_last3"] = df.groupby("team")["score_diff"].transform(
+        lambda s: s.shift().rolling(3, min_periods=1).mean()
+    )
+
+    # Cleanup
+    df = df.drop(columns=["prev_date"])
+    df = df.sort_values(["date", "game_id", "team"])
+
+    return df
+
+
+# ------------------------------------------------------------
+# ELO System (NaN-safe)
+# ------------------------------------------------------------
+
+
+def _apply_elo(df: pd.DataFrame, base_elo: float = 1500, k: float = 20) -> pd.DataFrame:
+    df = df.sort_values(["team", "date", "game_id"]).copy()
+
+    teams = df["team"].unique()
+    elo = {t: base_elo for t in teams}
+
+    elos = []
+
+    for _, row in df.iterrows():
+        t = row["team"]
+        o = row["opponent"]
+
+        elo_t = elo.get(t, base_elo)
+        elo_o = elo.get(o, base_elo)
+
+        # Skip pre-game rows (NaN scores)
+        if pd.isna(row["score"]) or pd.isna(row["opponent_score"]):
+            elos.append(elo_t)
+            continue
+
+        expected = 1 / (1 + 10 ** ((elo_o - elo_t) / 400))
+        actual = 1 if row["score"] > row["opponent_score"] else 0
+
+        new_elo = elo_t + k * (actual - expected)
+        elo[t] = new_elo
+        elos.append(new_elo)
+
+    df["elo"] = elos
+    return df

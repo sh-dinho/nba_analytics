@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Telegram Alerts — Betting Recommendations
@@ -8,7 +9,6 @@
 #     Sends daily betting recommendations to Telegram.
 # ============================================================
 
-from __future__ import annotations
 
 import pandas as pd
 from loguru import logger

@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Backtesting — Totals (Over/Under)
@@ -17,7 +18,6 @@
 #       - per-bet logs
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date

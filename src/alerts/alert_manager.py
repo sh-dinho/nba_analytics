@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Author: Sadiq
@@ -5,7 +6,6 @@
 #              monitoring, and betting alerts to Telegram.
 # ============================================================
 
-from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional

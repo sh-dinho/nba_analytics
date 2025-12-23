@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Backtest Report Generator
@@ -12,7 +13,6 @@
 #       - executive insights
 # ============================================================
 
-from __future__ import annotations
 
 import json
 from datetime import datetime

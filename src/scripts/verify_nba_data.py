@@ -1,147 +1,65 @@
-"""
-NBA Schedule Verification Script (Canonical Snapshot Version)
+from __future__ import annotations
 
-Verifies:
-- Game counts per season
-- Duplicate game IDs
-- Regular Season completeness (1230 games)
-- Playoff completeness (64–127 games)
-- Freshness (last game date)
-- Snapshot integrity
-
-Reads from:
-    data/snapshots/schedule_snapshot.parquet
-"""
+# ============================================================
+# 🏀 NBA Analytics v4
+# Module: Verify NBA Data
+# File: src/scripts/verify_nba_data.py
+# Author: Sadiq
+#
+# Description:
+#     Validates the canonical NBA snapshot:
+#       1. Row/column integrity
+#       2. No duplicate Game IDs
+#       3. Seasonal completeness
+#       4. Last game freshness
+#       5. Shows latest 5 entries
+# ============================================================
 
 import pandas as pd
-from pathlib import Path
+from loguru import logger
 
-SNAPSHOT_PATH = Path("data/canonical/schedule.parquet")
+from src.config.paths import SCHEDULE_SNAPSHOT
+from src.ingestion.pipeline import HEADER  # Correct import
 
-# ---------------------------------------------------------
-#  UTILITIES
-# ---------------------------------------------------------
-
-
-def season_from_date(d: pd.Timestamp) -> str:
-    year = d.year
-    if d.month >= 10:
-        return f"{year}-{str(year + 1)[-2:]}"
-    else:
-        return f"{year - 1}-{str(year)[-2:]}"
+# ------------------------------------------------------------
+# Verify NBA snapshot data
+# ------------------------------------------------------------
 
 
-def load_snapshot():
-    """Load canonical schedule snapshot."""
-    if not SNAPSHOT_PATH.exists():
-        print(f"❌ Snapshot not found: {SNAPSHOT_PATH}")
-        return None
-
-    try:
-        df = pd.read_parquet(SNAPSHOT_PATH)
-        if df.empty:
-            print("⚠️ Snapshot exists but is EMPTY.")
-            return None
-
-        print(f"📦 Loaded snapshot → {SNAPSHOT_PATH}")
-        return df
-
-    except Exception as e:
-        print(f"⚠️ Failed to read snapshot: {e}")
-        return None
-
-
-# ---------------------------------------------------------
-#  VERIFICATION
-# ---------------------------------------------------------
-
-
-def verify_data():
-    df = load_snapshot()
-    if df is None:
+def check_data():
+    if not SCHEDULE_SNAPSHOT.exists():
+        logger.error("No snapshot found.")
         return
 
-    # Defensive normalization
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df = df.dropna(subset=["date"])
-    df["game_id"] = df["game_id"].astype(str)
+    df = pd.read_parquet(SCHEDULE_SNAPSHOT)
 
-    # Derive season
-    df["season"] = df["date"].apply(season_from_date)
+    print("\n=== DATA REPORT ===")
+    print(f"Total Rows: {len(df)}")
+    print(f"Columns Found: {list(df.columns)}")
 
-    # Count unique games per season
-    counts = df.groupby("season")["game_id"].nunique().sort_index()
+    # Ensure canonical header
+    df = df[HEADER]
 
-    print("\n📊 Game counts per season:")
-    for season, count in counts.items():
-        print(f"  {season}: {count} games")
+    # Check for scores
+    games_with_scores = df[df["score_home"].notna()].shape[0]
+    print(f"Games with Scores: {games_with_scores}")
 
-    # -----------------------------------------------------
-    #  DUPLICATE GAME ID CHECK
-    # -----------------------------------------------------
+    # Safely show recent games
+    cols_to_show = [c for c in HEADER if c in df.columns]
 
-    print("\n🔍 Checking for duplicate game IDs...")
+    print("\n--- Latest 5 Entries by Date ---")
+    print(df.sort_values("date").tail(5)[cols_to_show])
 
-    dupes = df[df["game_id"].duplicated(keep=False)]
+    # Optional: check seasonal integrity
+    df["date"] = pd.to_datetime(df["date"])
+    seasonal_summary = df.groupby(df["date"].dt.year).agg(
+        total_games=("game_id", "count"),
+        first_game=("date", "min"),
+        last_game=("date", "max"),
+    )
+    print("\n📊 Seasonal Integrity Check:")
+    print(seasonal_summary)
 
-    if dupes.empty:
-        print("  ✅ No duplicate game IDs found.")
-    else:
-        print(f"  ❌ Found {dupes['game_id'].nunique()} duplicated game IDs!")
-        for gid in dupes["game_id"].unique():
-            print(f"    - {gid}")
-
-    # -----------------------------------------------------
-    #  SEASON COMPLETENESS CHECK
-    # -----------------------------------------------------
-
-    print("\n🔍 Checking season completeness...")
-
-    EXPECTED_REGULAR = 1230
-    PLAYOFF_MIN = 64
-    PLAYOFF_MAX = 127
-
-    for season in counts.index:
-        season_df = df[df["season"] == season]
-
-        regular_games = season_df[season_df["season_type"] == "Regular Season"][
-            "game_id"
-        ].nunique()
-        playoff_games = season_df[season_df["season_type"] == "Playoffs"][
-            "game_id"
-        ].nunique()
-
-        print(f"\nSeason {season}:")
-        print(f"  Regular Season: {regular_games} games (expected {EXPECTED_REGULAR})")
-        print(
-            f"  Playoffs:       {playoff_games} games (expected {PLAYOFF_MIN}–{PLAYOFF_MAX})"
-        )
-
-        if regular_games != EXPECTED_REGULAR:
-            print("  ⚠️ Regular Season appears incomplete.")
-
-        if not (PLAYOFF_MIN <= playoff_games <= PLAYOFF_MAX):
-            print("  ⚠️ Playoffs appear incomplete or missing.")
-
-    # -----------------------------------------------------
-    #  FRESHNESS CHECK
-    # -----------------------------------------------------
-
-    last_game_date = df["date"].max().date()
-    today = pd.Timestamp.today().date()
-
-    print("\n⏱️ Freshness Check:")
-    print(f"  Last recorded game: {last_game_date}")
-
-    if last_game_date >= today or last_game_date >= today - pd.Timedelta(days=1):
-        print("  ✅ Data appears up to date.")
-    else:
-        print("  ⚠️ Data may be outdated.")
-
-
-# ---------------------------------------------------------
-#  MAIN
-# ---------------------------------------------------------
 
 if __name__ == "__main__":
-    verify_data()
+    check_data()

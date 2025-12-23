@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Dashboard — Model Leaderboard Tab
@@ -21,7 +22,6 @@
 #       - Promote a model to production
 # ============================================================
 
-from __future__ import annotations
 
 import json
 from pathlib import Path

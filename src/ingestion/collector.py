@@ -1,120 +1,177 @@
+from __future__ import annotations
+
 # ============================================================
-# 🏀 NBA Analytics v3
-# Module: Ingestion Collector
+# 🏀 NBA Analytics v4
+# Module: Collector (ScoreboardV3 Fetcher)
 # File: src/ingestion/collector.py
 # Author: Sadiq
-#
-# Description:
-#     Fetches daily scoreboard data from nba_api (ScoreboardV3),
-#     applies retry logic, and returns a raw normalized dataframe
-#     ready for validation and persistence.
 # ============================================================
-
-from __future__ import annotations
 
 import time
 from datetime import date
-from typing import Callable
 
 import pandas as pd
 from loguru import logger
+
 from nba_api.stats.endpoints import ScoreboardV3
+from nba_api.stats.library.http import NBAStatsHTTP
 
 
-def _retry(func: Callable[[], pd.DataFrame], max_retries: int = 3) -> pd.DataFrame:
-    last_exc: Exception | None = None
-    for attempt in range(max_retries):
+# ------------------------------------------------------------
+# Lazy + resilient session initialization
+# ------------------------------------------------------------
+
+_session = None
+
+
+def _get_session():
+    """
+    Initialize NBAStatsHTTP session lazily and safely.
+    Never raise on import. Always return a usable session.
+    """
+    global _session
+    if _session is not None:
+        return _session
+
+    try:
+        http = NBAStatsHTTP()
+
+        # Try common session attributes across versions
+        if hasattr(http, "_session") and http._session is not None:
+            _session = http._session
+        elif hasattr(http, "_init_session"):
+            _session = http._init_session()
+        elif hasattr(http, "session"):
+            _session = http.session
+        else:
+            logger.warning(
+                "NBAStatsHTTP session attribute not found; using fallback session"
+            )
+            _session = NBAStatsHTTP().session
+
+    except Exception as e:
+        logger.error(f"NBAStatsHTTP initialization failed: {e}")
+        logger.warning("Falling back to a plain requests.Session()")
+        import requests
+
+        _session = requests.Session()
+
+    # Update headers to avoid Cloudflare blocks
+    _session.headers.update(
+        {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Referer": "https://www.nba.com/",
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+    )
+
+    return _session
+
+
+# ------------------------------------------------------------
+# Retry wrapper
+# ------------------------------------------------------------
+
+
+def _retry(func, retries: int = 3, base_delay: float = 1.0):
+    for attempt in range(retries):
         try:
             return func()
         except Exception as e:
-            last_exc = e
-            wait = 2**attempt
             logger.warning(
-                f"Ingestion retry {attempt + 1}/{max_retries} failed: {e}. "
-                f"Sleeping {wait}s before next attempt."
+                f"Retry {attempt + 1}/{retries} failed: {e}. Sleeping {base_delay}s."
             )
-            time.sleep(wait)
-    assert last_exc is not None
-    raise last_exc
+            time.sleep(base_delay)
+            base_delay *= 2
+
+    logger.error("All retries failed. Returning empty DataFrame.")
+    return pd.DataFrame()
 
 
-def _fetch_scoreboard_raw(target_date: date) -> pd.DataFrame:
-    """
-    Low-level wrapper around ScoreboardV3. Returns a dataframe with the
-    raw 'gameHeader' data if available, otherwise an empty dataframe.
-    """
-    logger.info(f"📅 Fetching ScoreboardV3 for {target_date}")
-    sb = ScoreboardV3(game_date=target_date.strftime("%Y-%m-%d"))
-    data_sets = sb.get_dict().get("resultSets", []) or sb.get_normalized_dict()
+# ------------------------------------------------------------
+# Schema detection
+# ------------------------------------------------------------
 
-    # Handle both old-style ("resultSets") and normalized-style keys
-    game_header_df = None
 
-    if isinstance(data_sets, dict) and "GameHeader" in data_sets:
-        game_header_df = pd.DataFrame(data_sets["GameHeader"])
-    elif isinstance(data_sets, list):
-        for ds in data_sets:
-            if ds.get("name") == "GameHeader":
-                game_header_df = pd.DataFrame(
-                    ds.get("rowSet", []), columns=ds.get("headers", [])
-                )
-                break
+def detect_schema(df: pd.DataFrame) -> str:
+    cols = set(df.columns)
 
-    if game_header_df is None or game_header_df.empty:
-        logger.warning(
-            f"No valid game header found in ScoreboardV3 datasets for {target_date}"
-        )
-        return pd.DataFrame()
+    if {"homeTeamScore", "visitorTeamScore"} & cols:
+        return "v3_legacy"
+    if {"homeScore", "awayScore"} & cols:
+        return "v3_modern"
+    if "games" in cols:
+        return "v3_header"
 
-    return game_header_df
+    return "unknown"
+
+
+# ------------------------------------------------------------
+# Core fetch
+# ------------------------------------------------------------
 
 
 def fetch_scoreboard(target_date: date) -> pd.DataFrame:
     """
-    Public ingestion entry point for a single date.
-    Returns a normalized dataframe with columns:
-    ['game_id', 'date', 'home_team', 'away_team',
-     'home_score', 'away_score', 'status', 'season']
+    Fetch ScoreboardV3 for a given date.
+    Uses lazy session initialization and retry logic.
     """
-    df_raw = _retry(lambda: _fetch_scoreboard_raw(target_date))
 
-    if df_raw.empty:
-        return df_raw
+    def _fetch():
+        session = _get_session()  # noqa: F841 (ensures headers/session set up)
 
-    # Normalize columns depending on nba_api schema
-    # Expect columns like: 'GAME_ID', 'GAME_DATE_EST', 'HOME_TEAM_ID', 'VISITOR_TEAM_ID', etc.
-    cols = {c.upper(): c for c in df_raw.columns}
+        logger.debug(f"Fetching ScoreboardV3 for {target_date}")
 
-    def _get(col: str, default=None):
-        return (
-            df_raw[cols.get(col, col)]
-            if cols.get(col, col) in df_raw.columns
-            else default
+        sb = ScoreboardV3(
+            game_date=target_date.strftime("%Y-%m-%d"),
+            timeout=10,
         )
 
-    df = pd.DataFrame(
-        {
-            "game_id": _get("GAME_ID"),
-            "date": pd.to_datetime(
-                _get("GAME_DATE_EST") or _get("GAME_DATE") or target_date
-            ).dt.date,
-            "home_team": _get("HOME_TEAM_NAME")
-            or _get("HOME_TEAM_ABBREVIATION")
-            or _get("HOME_TEAM_ID"),
-            "away_team": _get("VISITOR_TEAM_NAME")
-            or _get("VISITOR_TEAM_ABBREVIATION")
-            or _get("VISITOR_TEAM_ID"),
-            "home_score": _get("PTS_HOME") or _get("PTS") or 0,
-            "away_score": _get("PTS_VISITOR") or _get("PTS") or 0,
-            "status": _get("GAME_STATUS_TEXT") or "scheduled",
-        }
-    )
+        frames = sb.get_data_frames()
+        if not frames:
+            raise ValueError("ScoreboardV3 returned no tables")
 
-    # Basic season inference: season spanning from October to June
-    df["season"] = df["date"].apply(
-        lambda d: (
-            f"{d.year}-{d.year + 1}" if d.month >= 10 else f"{d.year - 1}-{d.year}"
+        df = frames[0]
+
+        logger.debug(f"Columns returned for {target_date}: {list(df.columns)}")
+
+        # --------------------------------------------------------
+        # Schema drift guard — never fatal
+        # --------------------------------------------------------
+        if "gameId" not in df.columns:
+            logger.warning(
+                f"ScoreboardV3: 'gameId' missing for {target_date}. "
+                "Skipping date safely."
+            )
+            return pd.DataFrame()
+
+        valid_ids = (
+            df.get("gameId").astype(str).str.strip().replace("None", pd.NA).dropna()
         )
-    )
 
-    return df
+        if valid_ids.empty:
+            logger.warning(
+                f"ScoreboardV3: No valid gameId values for {target_date}. "
+                "Skipping date safely."
+            )
+            return pd.DataFrame()
+
+        schema = detect_schema(df)
+        logger.info(f"📐 ScoreboardV3 schema detected for {target_date}: {schema}")
+
+        df["fetch_date"] = target_date
+        df["schema_version"] = schema
+        return df
+
+    df_raw = _retry(_fetch)
+
+    if df_raw is None or df_raw.empty:
+        logger.debug(f"No games returned for {target_date}")
+        return pd.DataFrame()
+
+    logger.debug(f"Fetched {len(df_raw)} rows for {target_date}")
+    return df_raw

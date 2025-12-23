@@ -1,91 +1,33 @@
+from __future__ import annotations
+
 # ============================================================
-# 🏀 NBA Analytics v3
+# 🏀 NBA Analytics v4
 # Module: Moneyline Prediction Pipeline
 # File: src/model/predict.py
 # Author: Sadiq
 #
 # Description:
 #     Loads the latest moneyline model from the registry,
-#     builds features for a target date, and generates
-#     win_probability predictions for each team.
+#     builds team-game features for a target date using the
+#     canonical long snapshot and FeatureBuilder v4, and
+#     generates win_probability for each team row.
 #
-#     This cleaned-up version standardizes:
-#       - model loading
-#       - metadata handling
-#       - feature building
-#       - prediction output
-#       - compatibility with older helper names
+#     v4 alignment:
+#       - Uses LONG_SNAPSHOT (team-game rows)
+#       - Uses FeatureBuilder(version=...)
+#       - Uses Model Registry v4 (load_model_and_metadata)
+#       - Two rows per game (home + away)
 # ============================================================
 
-from __future__ import annotations
-
-import json
 from datetime import date
-from pathlib import Path
-from typing import Tuple, Dict, Any
+from typing import Any
 
 import pandas as pd
 from loguru import logger
 
-from src.config.paths import (
-    LONG_SNAPSHOT,
-    SCHEDULE_SNAPSHOT,
-    MODEL_REGISTRY_DIR,
-    PREDICTIONS_DIR,
-)
-from src.features.builder import FeatureBuilder, FeatureConfig
-
-
-# ------------------------------------------------------------
-# Registry helpers
-# ------------------------------------------------------------
-
-
-def _load_registry() -> dict:
-    """Load the model registry index.json."""
-    index_path = MODEL_REGISTRY_DIR / "index.json"
-    if not index_path.exists():
-        raise FileNotFoundError(f"Model registry index not found at {index_path}")
-    return json.loads(index_path.read_text())
-
-
-def _get_latest_model_metadata(model_type: str = "moneyline") -> dict:
-    """Return metadata for the latest model of a given type."""
-    registry = _load_registry()
-    models = registry.get("models", [])
-
-    filtered = [m for m in models if m.get("model_type") == model_type]
-    if not filtered:
-        raise RuntimeError(f"No models of type '{model_type}' found in registry.")
-
-    # Prefer production models if available
-    prod = [m for m in filtered if m.get("is_production")]
-    candidates = prod or filtered
-
-    # Sort by creation time
-    latest = sorted(candidates, key=lambda m: m["created_at_utc"])[-1]
-
-    logger.info(
-        f"[Moneyline] Using model '{latest['model_name']}' version {latest['version']} "
-        f"(production={latest.get('is_production', False)})"
-    )
-    return latest
-
-
-def _load_model_and_metadata() -> Tuple[Any, dict]:
-    """Load the latest moneyline model and its metadata."""
-    meta = _get_latest_model_metadata("moneyline")
-    model_path = Path(meta["path"])
-
-    if not model_path.exists():
-        raise FileNotFoundError(f"Model file not found at {model_path}")
-
-    model = pd.read_pickle(model_path)
-    return model, meta
-
-
-# Backwards compatibility alias
-_load_model_and_meta = _load_model_and_metadata
+from src.config.paths import LONG_SNAPSHOT, MONEYLINE_PRED_DIR
+from src.features.builder import FeatureBuilder
+from src.model.registry import load_model_and_metadata
 
 
 # ------------------------------------------------------------
@@ -93,22 +35,24 @@ _load_model_and_meta = _load_model_and_metadata
 # ------------------------------------------------------------
 
 
-def _load_schedule(pred_date: date) -> pd.DataFrame:
-    """Load schedule rows for the target date."""
-    df = pd.read_parquet(SCHEDULE_SNAPSHOT)
-    df["date"] = pd.to_datetime(df["date"]).dt.date
-    todays = df[df["date"] == pred_date].copy()
+def _load_canonical_long() -> pd.DataFrame:
+    if not LONG_SNAPSHOT.exists():
+        raise FileNotFoundError(f"Canonical long snapshot not found at {LONG_SNAPSHOT}")
+    df = pd.read_parquet(LONG_SNAPSHOT)
+    df["date"] = pd.to_datetime(df["date"])
+    return df
+
+
+def _load_rows_for_date(pred_date: date) -> pd.DataFrame:
+    """
+    Load team-game rows for games on pred_date (both home and away).
+    """
+    df = _load_canonical_long()
+    todays = df[df["date"].dt.date == pred_date].copy()
 
     if todays.empty:
         logger.warning(f"[Moneyline] No games scheduled for {pred_date}.")
     return todays
-
-
-def _load_long() -> pd.DataFrame:
-    """Load canonical long-format dataset."""
-    df = pd.read_parquet(LONG_SNAPSHOT)
-    df["date"] = pd.to_datetime(df["date"]).dt.date
-    return df
 
 
 # ------------------------------------------------------------
@@ -118,50 +62,35 @@ def _load_long() -> pd.DataFrame:
 
 def _build_prediction_features(pred_date: date, feature_version: str) -> pd.DataFrame:
     """
-    Build team-level features for all teams playing on pred_date.
+    Build features for both home and away team rows on pred_date
+    using only historical data up to (and including) pred_date.
     """
-    df_long = _load_long()
-    df_hist = df_long[df_long["date"] <= pred_date].copy()
+    df = _load_canonical_long()
 
+    # Use history up to prediction date
+    df_hist = df[df["date"].dt.date <= pred_date].copy()
     if df_hist.empty:
         logger.warning(f"[Moneyline] No historical data available up to {pred_date}.")
         return pd.DataFrame()
 
-    fb = FeatureBuilder(config=FeatureConfig(version=feature_version))
-    features = fb.build_from_long(df_hist)
+    fb = FeatureBuilder(version=feature_version)
+    all_features = fb.build_from_long(df_hist)
 
-    # Join schedule to get only teams playing today
-    todays = _load_schedule(pred_date)
+    # Team rows for today's games
+    todays = _load_rows_for_date(pred_date)
     if todays.empty:
         return pd.DataFrame()
 
-    # Map game_id -> opponent
-    opp_map = todays[["game_id", "home_team", "away_team"]].assign(
-        home_opponent=lambda df: df["away_team"],
-        away_opponent=lambda df: df["home_team"],
-    )
-
-    # Expand to team rows
-    team_rows = pd.DataFrame(
-        {
-            "game_id": todays["game_id"].tolist() * 2,
-            "team": todays["home_team"].tolist() + todays["away_team"].tolist(),
-            "opponent": todays["away_team"].tolist() + todays["home_team"].tolist(),
-            "date": pred_date,
-        }
-    )
-
-    merged = team_rows.merge(
-        features,
-        on=["game_id", "team", "date"],
+    key_cols = ["game_id", "team", "date"]
+    merged = todays[key_cols + ["opponent", "is_home"]].merge(
+        all_features,
+        on=key_cols,
         how="left",
     )
 
-    missing = (
-        merged["win_probability"].isna().sum() if "win_probability" in merged else None
-    )
-    if missing:
-        logger.debug(f"[Moneyline] Missing features for {missing} rows.")
+    missing_count = merged.isna().any(axis=1).sum()
+    if missing_count:
+        logger.debug(f"[Moneyline] Missing feature values for {missing_count} rows.")
 
     return merged
 
@@ -172,27 +101,31 @@ def _build_prediction_features(pred_date: date, feature_version: str) -> pd.Data
 
 
 def _predict_moneyline(
-    model, df_features: pd.DataFrame, feature_cols: list[str]
+    model: Any,
+    df_features: pd.DataFrame,
+    feature_cols: list[str],
 ) -> pd.DataFrame:
-    """Run model.predict() and return win_probability."""
+    """
+    Run model.predict_proba() and return win_probability for each team row.
+    """
     missing = [c for c in feature_cols if c not in df_features.columns]
     if missing:
-        raise KeyError(f"Missing feature columns for prediction: {missing}")
+        raise KeyError(f"[Moneyline] Missing feature columns: {missing}")
 
     X = df_features[feature_cols]
-    preds = model.predict(X)
+    probs = model.predict_proba(X)[:, 1]
 
-    out = df_features[["game_id", "team", "opponent", "date"]].copy()
-    out["win_probability"] = preds
+    out = df_features[["game_id", "date", "team", "opponent", "is_home"]].copy()
+    out["win_probability"] = probs
     return out
 
 
-def _save_predictions(df: pd.DataFrame, pred_date: date, meta: dict):
-    """Save predictions to parquet with metadata."""
-    out_path = PREDICTIONS_DIR / f"predictions_{pred_date}.parquet"
+def _save_predictions(df: pd.DataFrame, pred_date: date, meta: dict) -> None:
+    MONEYLINE_PRED_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = MONEYLINE_PRED_DIR / f"moneyline_{pred_date}.parquet"
 
     df = df.copy()
-    df["model_name"] = meta["model_name"]
+    df["model_type"] = meta["model_type"]
     df["model_version"] = meta["version"]
     df["feature_version"] = meta["feature_version"]
 
@@ -208,11 +141,17 @@ def _save_predictions(df: pd.DataFrame, pred_date: date, meta: dict):
 def run_prediction_for_date(pred_date: date | None = None) -> pd.DataFrame:
     """
     Main entry point for moneyline predictions.
+
+    Steps:
+      1. Load latest moneyline model from registry
+      2. Build team-game features for pred_date
+      3. Predict win_probability for each team row
+      4. Save predictions with model metadata
     """
     pred_date = pred_date or date.today()
     logger.info(f"🏀 Running moneyline prediction for {pred_date}")
 
-    model, meta = _load_model_and_metadata()
+    model, meta = load_model_and_metadata(model_type="moneyline")
     feature_version = meta["feature_version"]
     feature_cols = meta["feature_cols"]
 

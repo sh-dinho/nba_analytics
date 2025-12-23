@@ -1,440 +1,294 @@
-# ============================================================
-# 🏀 NBA Analytics v3
-# Module: Dashboard App
-# File: src/dashboard/app.py
-# Author: Sadiq
-#
-# Description:
-#     Streamlit-based client portal for NBA Analytics v3:
-#       - Predictions tab
-#       - Backtest / What-if simulator
-#       - Accuracy tab
-#       - Strategy Comparison (admin)
-#       - Model Leaderboard (admin)
-#
-#     Integrates with:
-#       - Model registry (index.json)
-#       - Backtesting engine
-#       - Accuracy engine
-#       - Reports generator
-#       - Auth module for role-based views
-# ============================================================
-
 from __future__ import annotations
 
 from datetime import date
 
-import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
+from loguru import logger
 
-from src.config.paths import PREDICTIONS_DIR, ODDS_DIR
-from src.backtest.engine import Backtester, BacktestConfig
-from src.backtest.accuracy import AccuracyEngine
-from src.backtest.compare import compare_strategies
-from src.dashboard.auth import require_login, is_admin
-from src.reports.backtest_report import generate_backtest_accuracy_report
-from src.dashboard.tabs.model_leaderboard import render_model_leaderboard
-from src.dashboard.tabs.advanced_predictions import render_advanced_predictions_tab
-from src.dashboard.tabs.team_stability import render_team_stability_tab
-
-# ============================================================
-# Helpers: data loading & plotting
-# ============================================================
+from src.config.paths import (
+    MONEYLINE_PRED_DIR,
+    TOTALS_PRED_DIR,
+    SPREAD_PRED_DIR,
+    COMBINED_PRED_DIR,
+)
 
 
-def _load_predictions(pred_date: date) -> pd.DataFrame:
-    path = PREDICTIONS_DIR / f"predictions_{pred_date}.parquet"
+# ------------------------------------------------------------
+# Loaders
+# ------------------------------------------------------------
+
+
+def _load_moneyline(pred_date: date) -> pd.DataFrame:
+    """
+    Load moneyline predictions for a given date.
+
+    Expected path pattern (v4):
+      data/predictions_moneyline/moneyline_{date}.parquet
+    """
+    path = MONEYLINE_PRED_DIR / f"moneyline_{pred_date}.parquet"
     if not path.exists():
+        logger.warning(f"[Dashboard] Moneyline file not found: {path}")
         return pd.DataFrame()
-    df = pd.read_parquet(path)
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"]).dt.date
-    return df
+    return pd.read_parquet(path)
 
 
-def _load_odds(pred_date: date) -> pd.DataFrame:
-    path = ODDS_DIR / f"odds_{pred_date}.parquet"
+def _load_totals(pred_date: date) -> pd.DataFrame:
+    """
+    Load totals predictions for a given date.
+
+    Expected path pattern:
+      data/predictions_totals/totals_{date}.parquet
+    """
+    path = TOTALS_PRED_DIR / f"totals_{pred_date}.parquet"
     if not path.exists():
+        logger.warning(f"[Dashboard] Totals file not found: {path}")
         return pd.DataFrame()
-    df = pd.read_parquet(path)
-    if "date" in df.columns:
-        df["date"] = pd.to_datetime(df["date"]).dt.date
-    return df
+    return pd.read_parquet(path)
 
 
-def plot_bankroll_curve(records: pd.DataFrame):
-    fig, ax = plt.subplots(figsize=(8, 4))
-    records = records.sort_values("date")
-    ax.plot(records["date"], records["bankroll_after"], marker="o")
-    ax.set_title("Bankroll Over Time")
-    ax.set_ylabel("Bankroll")
-    ax.tick_params(axis="x", rotation=45)
-    fig.tight_layout()
-    return fig
+def _load_spread(pred_date: date) -> pd.DataFrame:
+    """
+    Load spread predictions for a given date.
+
+    Expected path pattern:
+      data/predictions_spread/spread_{date}.parquet
+    """
+    path = SPREAD_PRED_DIR / f"spread_{pred_date}.parquet"
+    if not path.exists():
+        logger.warning(f"[Dashboard] Spread file not found: {path}")
+        return pd.DataFrame()
+    return pd.read_parquet(path)
 
 
-# ============================================================
-# Tab: Predictions
-# ============================================================
+def _load_combined(pred_date: date) -> pd.DataFrame:
+    """
+    Load combined predictions.
+
+    v4 orchestrator saves:
+      data/predictions_combined/combined_{date}.parquet
+    """
+    path = COMBINED_PRED_DIR / f"combined_{pred_date}.parquet"
+    if not path.exists():
+        logger.warning(f"[Dashboard] Combined predictions not found: {path}")
+        return pd.DataFrame()
+    return pd.read_parquet(path)
 
 
-def render_predictions_tab():
-    st.header("Predictions")
+# ------------------------------------------------------------
+# Combine predictions (fallback if combined file missing)
+# ------------------------------------------------------------
 
-    pred_date = st.date_input("Prediction date", value=date.today(), key="pred_date")
 
-    preds = _load_predictions(pred_date)
-    odds = _load_odds(pred_date)
+def _combine_predictions(pred_date: date) -> pd.DataFrame:
+    """
+    Try to load pre-merged combined predictions; if not found,
+    reconstruct from individual prediction files where possible.
+    """
+    combined = _load_combined(pred_date)
+    if not combined.empty:
+        logger.info("[Dashboard] Using pre-combined predictions file.")
+        return combined
 
-    if preds.empty:
-        st.warning(f"No predictions found for {pred_date}.")
-        return
+    # Fallback: manually join individual predictions
+    ml = _load_moneyline(pred_date)
+    totals = _load_totals(pred_date)
+    spread = _load_spread(pred_date)
 
-    st.subheader("Model Predictions (team-centric)")
-    cols = [
-        c
-        for c in ["game_id", "team", "opponent", "is_home", "win_probability"]
-        if c in preds.columns
-    ]
-    st.dataframe(
-        preds[cols].sort_values("win_probability", ascending=False),
-        use_container_width=True,
-    )
+    if ml.empty and totals.empty and spread.empty:
+        logger.warning("[Dashboard] No individual prediction files found to combine.")
+        return pd.DataFrame()
 
-    # Show model metadata if available
-    meta_cols = [
-        c
-        for c in ["model_name", "model_version", "feature_version"]
-        if c in preds.columns
-    ]
-    if meta_cols:
-        meta = preds[meta_cols].drop_duplicates().head(1)
-        st.markdown("**Model Metadata**")
-        st.json(meta.to_dict(orient="records")[0])
+    # Moneyline: collapse home/away rows
+    if not ml.empty:
+        if "is_home" not in ml.columns:
+            logger.error(
+                "[Dashboard] Moneyline predictions missing 'is_home' column; "
+                "cannot pivot to home/away rows."
+            )
+            ml_combined = pd.DataFrame()
+        else:
+            ml_home = ml[ml["is_home"] == 1].rename(
+                columns={"team": "home_team", "opponent": "away_team"}
+            )
+            ml_away = ml[ml["is_home"] == 0].rename(
+                columns={"team": "away_team", "opponent": "home_team"}
+            )
 
-    if not odds.empty:
-        st.subheader("Joined Odds + Predictions")
+            ml_home = ml_home[
+                ["game_id", "date", "home_team", "away_team", "win_probability"]
+            ].rename(columns={"win_probability": "win_probability_home"})
 
-        merged = odds.merge(
-            preds,
-            on=["game_id", "team"],
-            how="inner",
-            suffixes=("_odds", "_pred"),
-        )
+            ml_away = ml_away[["game_id", "win_probability"]].rename(
+                columns={"win_probability": "win_probability_away"}
+            )
 
-        if "price" in merged.columns and "win_probability" in merged.columns:
+            ml_combined = ml_home.merge(ml_away, on="game_id", how="left")
+    else:
+        ml_combined = pd.DataFrame()
 
-            def american_to_implied(p):
-                if p > 0:
-                    return 100 / (p + 100)
-                else:
-                    return -p / (-p + 100)
-
-            merged["implied_prob"] = merged["price"].apply(american_to_implied)
-            merged["edge"] = merged["win_probability"] - merged["implied_prob"]
-
-        display_cols = [
-            c
-            for c in [
-                "game_id",
-                "team",
-                "price",
-                "win_probability",
-                "implied_prob",
-                "edge",
-                "model_name",
-                "model_version",
-            ]
-            if c in merged.columns
+    # Totals
+    if not totals.empty:
+        totals_trim = totals[
+            ["game_id", "home_team", "away_team", "predicted_total_points"]
         ]
+    else:
+        totals_trim = pd.DataFrame()
 
-        st.dataframe(
-            merged[display_cols].sort_values(
-                "edge", ascending=False, na_position="last"
-            ),
-            use_container_width=True,
+    # Spread
+    if not spread.empty:
+        spread_trim = spread[["game_id", "home_team", "away_team", "predicted_margin"]]
+    else:
+        spread_trim = pd.DataFrame()
+
+    # Merge everything
+    combined = ml_combined
+    if combined.empty:
+        if not totals_trim.empty:
+            combined = totals_trim.copy()
+        elif not spread_trim.empty:
+            combined = spread_trim.copy()
+
+    if combined.empty:
+        logger.warning("[Dashboard] Could not create any combined DataFrame.")
+        return pd.DataFrame()
+
+    if not totals_trim.empty:
+        combined = combined.merge(
+            totals_trim,
+            on=["game_id", "home_team", "away_team"],
+            how="left",
+            suffixes=("", "_totals"),
         )
 
-
-# ============================================================
-# Tab: Backtest / What-if Simulator
-# ============================================================
-
-
-def render_backtest_tab():
-    st.header("Backtest / What-if Simulator")
-
-    st.markdown(
-        "_Adjust the parameters below to see how different bankroll and risk "
-        "settings would have performed on historical data._"
-    )
-
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("Start date", value=None, key="bt_start")
-    with col2:
-        end_date = st.date_input("End date", value=None, key="bt_end")
-
-    col3, col4, col5 = st.columns(3)
-    with col3:
-        starting_bankroll = st.number_input(
-            "Starting bankroll", value=1000.0, min_value=0.0
-        )
-    with col4:
-        min_edge = st.number_input(
-            "Min edge to bet", value=0.03, min_value=0.0, max_value=1.0, step=0.01
-        )
-    with col5:
-        kelly_fraction = st.number_input(
-            "Kelly fraction", value=0.25, min_value=0.0, max_value=1.0, step=0.05
+    if not spread_trim.empty:
+        combined = combined.merge(
+            spread_trim,
+            on=["game_id", "home_team", "away_team"],
+            how="left",
+            suffixes=("", "_spread"),
         )
 
-    max_stake_fraction = st.slider(
-        "Max stake as fraction of bankroll", 0.0, 1.0, 0.05, 0.01
-    )
-
-    # Optional: filter by model
-    st.subheader("Model filter (optional)")
-    model_name = st.text_input("Model name (exact match, optional)")
-    model_version = st.text_input("Model version (timestamp, optional)")
-
-    if st.button("Run backtest"):
-        cfg = BacktestConfig(
-            starting_bankroll=starting_bankroll,
-            min_edge=min_edge,
-            kelly_fraction=kelly_fraction,
-            max_stake_fraction=max_stake_fraction,
-        )
-
-        bt = Backtester(cfg)
-        results = bt.run(
-            start_date=start_date.isoformat() if start_date else None,
-            end_date=end_date.isoformat() if end_date else None,
-            model_name=model_name or None,
-            model_version=model_version or None,
-        )
-
-        if not results:
-            st.warning(
-                "No results from backtest. Check that predictions, odds, and outcomes "
-                "exist for this range and (optional) model selection."
-            )
-            return
-
-        st.subheader("Summary metrics")
-        st.write(f"Final bankroll: {results['final_bankroll']:.2f}")
-        st.write(f"Total profit: {results['total_profit']:.2f}")
-        st.write(f"ROI: {results['roi']:.3f}")
-        st.write(f"Hit rate: {results['hit_rate']:.3f}")
-        st.write(f"Max drawdown: {results['max_drawdown']:.3f}")
-        st.write(
-            f"Bets: {results['num_bets']}, Wins: {results['num_wins']}, "
-            f"Losses: {results['num_losses']}, Pushes: {results['num_pushes']}"
-        )
-
-        records = results["records"]
-        if not records.empty:
-            st.subheader("Bankroll curve")
-            fig = plot_bankroll_curve(records)
-            st.pyplot(fig, clear_figure=True)
-
-            st.subheader("Per-bet log")
-            st.dataframe(
-                records.sort_values("date"),
-                use_container_width=True,
-            )
-
-        if st.button("Generate client-ready report"):
-            report_path = generate_backtest_accuracy_report(
-                start_date=start_date.isoformat() if start_date else None,
-                end_date=end_date.isoformat() if end_date else None,
-                config=cfg,
-                decision_threshold=0.5,
-            )
-            st.success(f"Report generated: {report_path}")
-            st.markdown(f"[Download report]({report_path})")
+    return combined
 
 
-# ============================================================
-# Tab: Accuracy
-# ============================================================
+def get_today() -> date:
+    return date.today()
 
 
-def render_accuracy_tab():
-    st.header("Model Accuracy")
-
-    threshold = st.slider(
-        "Decision threshold (win_probability >= threshold => predict win)",
-        0.0,
-        1.0,
-        0.5,
-        0.01,
-    )
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("Start date (optional)", value=None, key="acc_start")
-    with col2:
-        end_date = st.date_input("End date (optional)", value=None, key="acc_end")
-
-    if st.button("Compute accuracy"):
-        engine = AccuracyEngine(threshold=threshold)
-        res = engine.run(
-            start_date=start_date.isoformat() if start_date else None,
-            end_date=end_date.isoformat() if end_date else None,
-        )
-
-        if res.total_examples == 0:
-            st.warning("No data for accuracy computation in this range.")
-            return
-
-        st.subheader("Overall")
-        st.write(f"Overall accuracy: {res.overall_accuracy:.3f}")
-        st.write(f"Total examples: {res.total_examples}")
-
-        if not res.by_season.empty:
-            st.subheader("By season")
-            st.dataframe(res.by_season, use_container_width=True)
-
-        st.subheader("Sample predictions vs outcomes")
-        sample_cols = [
-            "date",
-            "game_id",
-            "team",
-            "win_probability",
-            "won",
-            "predicted_win",
-            "correct",
-        ]
-        sample = res.raw[sample_cols].sort_values("date", ascending=False).head(200)
-        st.dataframe(sample, use_container_width=True)
-
-
-# ============================================================
-# Tab: Strategy Comparison (admin)
-# ============================================================
-
-
-def render_strategy_comparison_tab():
-    st.header("Strategy Comparison")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        start_date = st.date_input("Start date", value=None, key="cmp_start")
-    with col2:
-        end_date = st.date_input("End date", value=None, key="cmp_end")
-
-    st.markdown("Define a few strategies to compare:")
-
-    col3, col4, col5 = st.columns(3)
-    with col3:
-        min_edge_base = st.number_input("Baseline min edge", value=0.0, step=0.01)
-    with col4:
-        min_edge_conservative = st.number_input(
-            "Main strategy min edge", value=0.03, step=0.01
-        )
-    with col5:
-        min_edge_aggressive = st.number_input(
-            "Aggressive min edge", value=0.05, step=0.01
-        )
-
-    col6, col7 = st.columns(2)
-    with col6:
-        kelly_fraction_base = st.number_input(
-            "Baseline Kelly fraction", value=0.0, step=0.05
-        )
-    with col7:
-        kelly_fraction_main = st.number_input(
-            "Main / Aggressive Kelly fraction", value=0.25, step=0.05
-        )
-
-    if st.button("Compare strategies"):
-        configs = {
-            "Flat no-edge baseline": BacktestConfig(
-                starting_bankroll=1000.0,
-                min_edge=min_edge_base,
-                kelly_fraction=kelly_fraction_base,
-                max_stake_fraction=0.02,
-            ),
-            "Main strategy": BacktestConfig(
-                starting_bankroll=1000.0,
-                min_edge=min_edge_conservative,
-                kelly_fraction=kelly_fraction_main,
-                max_stake_fraction=0.05,
-            ),
-            "Aggressive edge strategy": BacktestConfig(
-                starting_bankroll=1000.0,
-                min_edge=min_edge_aggressive,
-                kelly_fraction=kelly_fraction_main,
-                max_stake_fraction=0.1,
-            ),
-        }
-
-        df = compare_strategies(
-            configs,
-            start_date=start_date.isoformat() if start_date else None,
-            end_date=end_date.isoformat() if end_date else None,
-        )
-
-        if df.empty or not df["has_data"].any():
-            st.warning("No data for comparison in this range.")
-            return
-
-        st.subheader("Strategy comparison table")
-        st.dataframe(
-            df.sort_values("roi", ascending=False),
-            use_container_width=True,
-        )
-
-
-# ============================================================
-# Main app
-# ============================================================
+# ------------------------------------------------------------
+# Streamlit App
+# ------------------------------------------------------------
 
 
 def main():
-    st.set_page_config(page_title="NBA Analytics v3 — Client Portal", layout="wide")
+    st.set_page_config(page_title="NBA Predictions Dashboard", layout="wide")
 
-    require_login()
+    st.title("🏀 NBA Predictions Dashboard (v4)")
+    st.markdown(
+        "Explore daily model outputs for moneyline, totals, and spread predictions."
+    )
 
-    st.sidebar.write(f"Logged in as: **{st.session_state['username']}**")
-    if st.sidebar.button("Logout"):
-        st.session_state.clear()
-        st.experimental_rerun()
+    # Sidebar controls
+    today = date.today()
+    pred_date = st.sidebar.date_input("Prediction date", value=today)
+    if isinstance(pred_date, str):
+        pred_date = date.fromisoformat(pred_date)
 
-    # Tabs: admin gets everything, client gets a subset
-    if is_admin():
-        tab_names = [
-            "Predictions",
-            "Advanced Predictions",
-            "Backtest / What-if",
-            "Accuracy",
-            "Strategy Comparison",
-            "Model Leaderboard",
-            "Team Stability",
+    team_filter = st.sidebar.text_input(
+        "Filter by team (tricode or name; optional)",
+        value="",
+        help="Partial match on home or away team.",
+    )
+
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Powered by NBA Analytics v4")
+
+    # Load predictions
+    combined = _combine_predictions(pred_date)
+
+    if combined.empty:
+        st.warning(f"No predictions found for {pred_date}.")
+        return
+
+    # Apply team filter
+    if team_filter.strip():
+        t = team_filter.strip().lower()
+        combined = combined[
+            combined["home_team"].astype(str).str.lower().str.contains(t)
+            | combined["away_team"].astype(str).str.lower().str.contains(t)
         ]
+
+    if combined.empty:
+        st.warning("No games match the current filter.")
+        return
+
+    # Model versions
+    if "model_version" in combined.columns:
+        versions = sorted(combined["model_version"].dropna().unique().tolist())
+        st.caption(f"Model versions used: {versions}")
     else:
-        tab_names = [
-            "Predictions",
-            "Advanced Predictions",
-            "Backtest / What-if",
-            "Accuracy",
-        ]
+        st.caption("Model version info unavailable.")
 
-    name_to_renderer = {
-        "Predictions": render_predictions_tab,
-        "Advanced Predictions": render_advanced_predictions_tab,
-        "Backtest / What-if": render_backtest_tab,
-        "Accuracy": render_accuracy_tab,
-        "Strategy Comparison": render_strategy_comparison_tab,
-        "Model Leaderboard": render_model_leaderboard,
-        "Team Stability": render_team_stability_tab,
-    }
+    # Summary metrics
+    st.subheader(f"Games on {pred_date}")
+    col1, col2, col3, col4 = st.columns(4)
 
-    for tab, name in zip(st.tabs, tab_names):
-        with tab:
-            renderer = name_to_renderer[name]
-            renderer()
+    with col1:
+        st.metric("Games", len(combined))
+
+    with col2:
+        if "win_probability_home" in combined.columns:
+            fav = combined["win_probability_home"].max()
+            st.metric("Highest home win prob", f"{fav:.1%}")
+        else:
+            st.metric("Highest home win prob", "N/A")
+
+    with col3:
+        if "predicted_total_points" in combined.columns:
+            max_total = combined["predicted_total_points"].max()
+            st.metric("Max predicted total", f"{max_total:.1f}")
+        else:
+            st.metric("Max predicted total", "N/A")
+
+    with col4:
+        if "predicted_margin" in combined.columns:
+            max_abs_margin = combined["predicted_margin"].abs().max()
+            st.metric("Largest edge (abs margin)", f"{max_abs_margin:.1f}")
+        else:
+            st.metric("Largest edge", "N/A")
+
+    # Detailed table
+    st.subheader("Game-level predictions")
+
+    display_cols = [
+        "game_id",
+        "home_team",
+        "away_team",
+        "win_probability_home",
+        "win_probability_away",
+        "predicted_total_points",
+        "predicted_margin",
+    ]
+    display_cols = [c for c in display_cols if c in combined.columns]
+
+    st.dataframe(
+        combined[display_cols].sort_values("game_id"),
+        use_container_width=True,
+    )
+
+    # Optional: edges
+    edge_cols = [c for c in ["home_edge", "away_edge"] if c in combined.columns]
+    if edge_cols:
+        st.subheader("Edges vs Market")
+        edges_view = combined[["game_id", "home_team", "away_team"] + edge_cols].copy()
+        for c in edge_cols:
+            edges_view[c] = edges_view[c] * 100.0
+        st.dataframe(edges_view.sort_values(edge_cols, ascending=False))
+
+    # Raw data
+    with st.expander("Show raw prediction data"):
+        st.dataframe(combined, use_container_width=True)
 
 
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Dashboard — Team Stability (Avoid / Watch)
@@ -15,7 +16,6 @@
 #     Powered by TeamStabilityEngine.
 # ============================================================
 
-from __future__ import annotations
 
 import matplotlib.pyplot as plt
 import streamlit as st

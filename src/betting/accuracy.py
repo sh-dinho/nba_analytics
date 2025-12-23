@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Accuracy Engine
@@ -12,7 +13,6 @@
 #       - sample predictions table
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date

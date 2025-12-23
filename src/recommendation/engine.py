@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Author: Sadiq
@@ -5,7 +6,6 @@
 #              betting recommendations with confidence scoring.
 # ============================================================
 
-from __future__ import annotations
 
 from typing import List
 

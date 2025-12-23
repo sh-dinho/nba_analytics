@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Author: Sadiq
@@ -6,7 +7,6 @@
 #              dashboard metrics into a single snapshot.
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from datetime import datetime, date

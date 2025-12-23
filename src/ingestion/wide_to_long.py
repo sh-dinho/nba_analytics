@@ -1,175 +1,228 @@
-# ============================================================
-# Project: NBA Analytics & Betting Engine
-# Author: Sadiq
-# Description: Convert canonical wide-format schedule into
-#              long-format team-level rows for modeling.
-# ============================================================
-
 from __future__ import annotations
+
+# ============================================================
+# 🏀 NBA Analytics v4
+# Project: NBA Analytics & Betting Engine
+# Module: Wide → Long Converter (Legacy / Fallback)
+# File: src/ingestion/wide_to_long.py
+# Author: Sadiq
+#
+# Description:
+#     Converts canonical WIDE-format schedule rows into
+#     TEAM-GAME (long) rows for modeling.
+#
+# IMPORTANT (v4):
+#     - The v4 normalizer already outputs TEAM-GAME rows.
+#     - This module is ONLY used as a fallback if a future
+#       ingestion source provides WIDE-format data.
+#     - If input is already long, it is passed through safely.
+# ============================================================
 
 import pandas as pd
 from loguru import logger
 
 
-def wide_to_long(df_wide: pd.DataFrame) -> pd.DataFrame:
+# ------------------------------------------------------------
+# Schema helpers
+# ------------------------------------------------------------
+
+LONG_COLUMNS = {
+    "game_id",
+    "date",
+    "team",
+    "opponent",
+    "is_home",
+    "score",
+    "opponent_score",
+    "season",
+}
+
+WIDE_COLUMNS = {
+    "game_id",
+    "date",
+    "home_team",
+    "away_team",
+    "home_score",
+    "away_score",
+    "season",
+}
+
+# NEW: minimal scoreboard schema (no season, different score names)
+MINIMAL_COLUMNS = {
+    "game_id",
+    "date",
+    "home_team",
+    "away_team",
+    "score_home",
+    "score_away",
+}
+
+
+def _is_long_format(df: pd.DataFrame) -> bool:
+    return LONG_COLUMNS.issubset(df.columns)
+
+
+def _is_wide_format(df: pd.DataFrame) -> bool:
+    return WIDE_COLUMNS.issubset(df.columns)
+
+
+def _is_minimal_format(df: pd.DataFrame) -> bool:
+    return MINIMAL_COLUMNS.issubset(df.columns)
+
+
+# ------------------------------------------------------------
+# Main conversion function
+# ------------------------------------------------------------
+
+
+def wide_to_long(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Convert canonical wide-format schedule into long-format team-level rows.
+    Convert WIDE-format schedule rows into TEAM-GAME (long) rows.
 
-    Expected input schema (one row per game):
-        game_id       : str
-        date          : datetime64[ns]
-        season        : int
-        season_type   : str
-        home_team     : str
-        away_team     : str
-        home_score    : float or None
-        away_score    : float or None
-        status        : {"scheduled","final","unknown"}
+    Behavior:
+        - If df is already LONG → return as-is
+        - If df is WIDE → convert to LONG
+        - If df is MINIMAL → convert to LONG (fallback)
+        - Otherwise → raise explicit error
 
-    Output schema (two rows per game):
-        game_id
-        date
-        season
-        season_type
-        team
-        opponent
-        is_home
-        points_for
-        points_against
-        won
-        status
-        game_number   (per-team sequential game index within season)
+    Returns:
+        DataFrame in TEAM-GAME (long) format
     """
+    if df.empty:
+        return df
 
-    required = {
-        "game_id",
-        "date",
-        "season",
-        "season_type",
-        "home_team",
-        "away_team",
-        "home_score",
-        "away_score",
-        "status",
-    }
+    # --------------------------------------------------------
+    # Case 1: Already long (v4 canonical)
+    # --------------------------------------------------------
+    if _is_long_format(df):
+        logger.debug("wide_to_long: input already long-format; passing through")
+        return df.copy()
 
-    missing = required - set(df_wide.columns)
-    if missing:
-        raise ValueError(f"wide_to_long(): Missing required columns: {missing}")
+    # --------------------------------------------------------
+    # Case 2: Proper wide format → convert
+    # --------------------------------------------------------
+    if _is_wide_format(df):
+        logger.info("wide_to_long: converting wide-format data to team-game rows")
 
-    if df_wide.empty:
-        logger.info("wide_to_long(): received empty DataFrame.")
-        return pd.DataFrame(
-            columns=[
+        status = df["status"] if "status" in df.columns else None
+        schema_version = (
+            df["schema_version"] if "schema_version" in df.columns else None
+        )
+
+        home = pd.DataFrame(
+            {
+                "game_id": df["game_id"],
+                "date": df["date"],
+                "team": df["home_team"],
+                "opponent": df["away_team"],
+                "is_home": 1,
+                "score": df["home_score"],
+                "opponent_score": df["away_score"],
+                "season": df["season"],
+                "status": status,
+                "schema_version": schema_version,
+            }
+        )
+
+        away = pd.DataFrame(
+            {
+                "game_id": df["game_id"],
+                "date": df["date"],
+                "team": df["away_team"],
+                "opponent": df["home_team"],
+                "is_home": 0,
+                "score": df["away_score"],
+                "opponent_score": df["home_score"],
+                "season": df["season"],
+                "status": status,
+                "schema_version": schema_version,
+            }
+        )
+
+        long_df = pd.concat([home, away], ignore_index=True)
+
+        return long_df[
+            [
                 "game_id",
                 "date",
-                "season",
-                "season_type",
                 "team",
                 "opponent",
                 "is_home",
-                "points_for",
-                "points_against",
-                "won",
+                "score",
+                "opponent_score",
+                "season",
                 "status",
-                "game_number",
+                "schema_version",
             ]
-        )
-
-    df = df_wide.copy()
-
-    # ----------------------------------------------------------------------
-    # Build home rows
-    # ----------------------------------------------------------------------
-    home = pd.DataFrame(
-        {
-            "game_id": df["game_id"],
-            "date": df["date"],
-            "season": df["season"],
-            "season_type": df["season_type"],
-            "team": df["home_team"],
-            "opponent": df["away_team"],
-            "is_home": 1,
-            "points_for": df["home_score"],
-            "points_against": df["away_score"],
-            "status": df["status"],
-        }
-    )
-
-    # ----------------------------------------------------------------------
-    # Build away rows
-    # ----------------------------------------------------------------------
-    away = pd.DataFrame(
-        {
-            "game_id": df["game_id"],
-            "date": df["date"],
-            "season": df["season"],
-            "season_type": df["season_type"],
-            "team": df["away_team"],
-            "opponent": df["home_team"],
-            "is_home": 0,
-            "points_for": df["away_score"],
-            "points_against": df["home_score"],
-            "status": df["status"],
-        }
-    )
-
-    # ----------------------------------------------------------------------
-    # Combine
-    # ----------------------------------------------------------------------
-    long_df = pd.concat([home, away], ignore_index=True)
-
-    # ----------------------------------------------------------------------
-    # Compute win/loss (only for final games)
-    # ----------------------------------------------------------------------
-    def compute_win(row):
-        if row["status"] != "final":
-            return None
-        if pd.isna(row["points_for"]) or pd.isna(row["points_against"]):
-            return None
-        return int(row["points_for"] > row["points_against"])
-
-    long_df["won"] = long_df.apply(compute_win, axis=1)
-
-    # ----------------------------------------------------------------------
-    # Sort for game_number assignment
-    # ----------------------------------------------------------------------
-    long_df = long_df.sort_values(["team", "season", "date", "game_id"])
-
-    # ----------------------------------------------------------------------
-    # Assign per-team game_number within each season
-    # ----------------------------------------------------------------------
-    long_df["game_number"] = (
-        long_df.groupby(["team", "season"]).cumcount().astype("int64")
-    )
-
-    # ----------------------------------------------------------------------
-    # Final sanity checks
-    # ----------------------------------------------------------------------
-    before = len(long_df)
-    long_df = long_df.dropna(subset=["team", "opponent"])
-    dropped = before - len(long_df)
-    if dropped:
-        logger.warning(
-            f"wide_to_long(): dropped {dropped} rows with missing team/opponent."
-        )
-
-    # Enforce column order
-    long_df = long_df[
-        [
-            "game_id",
-            "date",
-            "season",
-            "season_type",
-            "team",
-            "opponent",
-            "is_home",
-            "points_for",
-            "points_against",
-            "won",
-            "status",
-            "game_number",
         ]
-    ]
 
-    return long_df
+    # --------------------------------------------------------
+    # NEW Case 3: Minimal scoreboard schema (fallback)
+    # --------------------------------------------------------
+    if _is_minimal_format(df):
+        logger.warning(
+            "wide_to_long: using MINIMAL scoreboard schema fallback "
+            "(no season, score_home/score_away)."
+        )
+
+        # infer season if possible
+        if "season" in df.columns:
+            season = df["season"]
+        else:
+            # best-effort: season = year of date
+            season = pd.to_datetime(df["date"]).dt.year
+
+        home = pd.DataFrame(
+            {
+                "game_id": df["game_id"],
+                "date": df["date"],
+                "team": df["home_team"],
+                "opponent": df["away_team"],
+                "is_home": 1,
+                "score": df["score_home"],
+                "opponent_score": df["score_away"],
+                "season": season,
+                "status": None,
+                "schema_version": "minimal",
+            }
+        )
+
+        away = pd.DataFrame(
+            {
+                "game_id": df["game_id"],
+                "date": df["date"],
+                "team": df["away_team"],
+                "opponent": df["home_team"],
+                "is_home": 0,
+                "score": df["score_away"],
+                "opponent_score": df["score_home"],
+                "season": season,
+                "status": None,
+                "schema_version": "minimal",
+            }
+        )
+
+        long_df = pd.concat([home, away], ignore_index=True)
+
+        return long_df[
+            [
+                "game_id",
+                "date",
+                "team",
+                "opponent",
+                "is_home",
+                "score",
+                "opponent_score",
+                "season",
+                "status",
+                "schema_version",
+            ]
+        ]
+
+    # --------------------------------------------------------
+    # Unknown schema → explicit error
+    # --------------------------------------------------------
+    raise ValueError(
+        "wide_to_long received DataFrame with unknown schema. "
+        f"Columns={list(df.columns)}"
+    )

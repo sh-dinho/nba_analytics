@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # 🏀 NBA Analytics v3
 # Module: Backtesting — Multi-Market (ML + O/U + ATS)
@@ -18,7 +19,6 @@
 #       - Full bet log
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 import pandas as pd
