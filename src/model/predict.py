@@ -1,120 +1,244 @@
-"""
-Prediction Pipeline
--------------------
-Loads the latest trained model, builds features for a given date's games,
-generates predictions, and saves them.
-"""
+from __future__ import annotations
+
+# ============================================================
+# 🏀 NBA Analytics v4
+# Module: Moneyline Prediction Pipeline
+# File: src/model/predict.py
+# Author: Sadiq
+#
+# Description:
+#     Loads the latest moneyline model from the registry,
+#     builds team-game features for a target date using the
+#     canonical long snapshot and FeatureBuilder v4, and
+#     generates win_probability for each team row.
+#
+#     This version includes full v4 schema normalization:
+#       - Drop identity columns (D1)
+#       - Drop non-numeric columns
+#       - Add missing numeric columns with 0 (C3)
+#       - Fill NaNs with 0 (C3)
+#       - Restrict to training feature columns only
+#       - Enforce strict training column order (O1)
+#       - Robust ModelWrapper prediction
+# ============================================================
+
+from datetime import date
+from typing import Any
 
 import pandas as pd
-import joblib
-from datetime import date
 from loguru import logger
-from pathlib import Path
 
-# Import exactly what is defined in your paths.py
-from src.config.paths import (
-    MODEL_REGISTRY_DIR,
-    SCHEDULE_SNAPSHOT,
-    LONG_SNAPSHOT,  # This appears to be your features/historical data
-    PREDICTIONS_DIR,
-)
+from src.config.paths import LONG_SNAPSHOT, MONEYLINE_PRED_DIR
+from src.features.builder import FeatureBuilder
+from src.model.registry import load_model_and_metadata
 
 
-def _get_production_model():
-    """Finds the most recent model in the registry."""
-    models = list(MODEL_REGISTRY_DIR.glob("*.joblib"))
-    if not models:
-        raise FileNotFoundError(f"No models found in {MODEL_REGISTRY_DIR}")
-
-    # Sort by modification time to get the latest trained model
-    latest_model = max(models, key=lambda p: p.stat().st_mtime)
-    return latest_model
+# ------------------------------------------------------------
+# Data loading
+# ------------------------------------------------------------
 
 
-def _build_prediction_features(matchups_df, features_df):
-    """Joins matchups with team features using a Home/Away prefix strategy."""
-    # Ensure team IDs/Names are strings for the merge
-    matchups_df["home_team"] = matchups_df["home_team"].astype(str)
-    matchups_df["away_team"] = matchups_df["away_team"].astype(str)
-
-    # We join features twice: once for Home stats, once for Away stats
-    home_feats = features_df.add_prefix("home_")
-    away_feats = features_df.add_prefix("away_")
-
-    # Merge Home Team data
-    pred_df = matchups_df.merge(
-        home_feats, left_on="home_team", right_on="home_team", how="left"
-    )
-    # Merge Away Team data
-    pred_df = pred_df.merge(
-        away_feats, left_on="away_team", right_on="away_team", how="left"
-    )
-
-    # Drop non-numeric metadata that isn't a model feature
-    cols_to_drop = ["game_id", "date", "home_team", "away_team", "status", "season"]
-    X = pred_df.drop(
-        columns=[c for c in cols_to_drop if c in pred_df.columns], errors="ignore"
-    )
-
-    return X, pred_df
-
-
-def run_prediction_for_date(target_date: date):
-    """Orchestrates the full prediction flow for a specific date."""
-    logger.info(f"Generating predictions for: {target_date}")
-
-    # 1. Load Schedule and Filter for target_date
-    if not SCHEDULE_SNAPSHOT.exists():
-        logger.error(f"Missing schedule snapshot: {SCHEDULE_SNAPSHOT}")
-        return
-
-    df_schedule = pd.read_parquet(SCHEDULE_SNAPSHOT)
-
-    # Handle date conversion to ensure matching
-    df_schedule["date"] = pd.to_datetime(df_schedule["date"]).dt.date
-    todays_games = df_schedule[df_schedule["date"] == target_date].copy()
-
-    if todays_games.empty:
-        logger.warning(f"No games scheduled for {target_date}.")
-        return
-
-    # 2. Load Features (using LONG_SNAPSHOT as the source of team stats)
+def _load_canonical_long() -> pd.DataFrame:
+    """
+    Load the canonical long-format dataset.
+    """
     if not LONG_SNAPSHOT.exists():
-        logger.error("Feature snapshot (LONG_SNAPSHOT) not found.")
-        return
+        raise FileNotFoundError(f"Canonical long snapshot not found at {LONG_SNAPSHOT}")
 
-    features_df = pd.read_parquet(LONG_SNAPSHOT)
-    # If LONG_SNAPSHOT has multiple rows per team, get the most recent one
-    features_df = features_df.sort_values("date").groupby("team_id").tail(1)
+    df = pd.read_parquet(LONG_SNAPSHOT)
+    df["date"] = pd.to_datetime(df["date"])
+    return df
 
-    # 3. Prepare Feature Matrix
-    X, combined_df = _build_prediction_features(todays_games, features_df)
 
-    # 4. Load Model and Predict
-    model_path = _get_production_model()
-    logger.info(f"Predicting with model: {model_path.name}")
-    model_data = joblib.load(model_path)
+def _load_rows_for_date(pred_date: date) -> pd.DataFrame:
+    """
+    Load team-game rows for games on pred_date (both home and away).
+    """
+    df = _load_canonical_long()
+    todays = df[df["date"].dt.date == pred_date].copy()
 
-    # Handle if model is wrapped in a dict or is a raw pipeline
-    model = model_data["model"] if isinstance(model_data, dict) else model_data
+    if todays.empty:
+        logger.warning(f"[Moneyline] No games scheduled for {pred_date}.")
+    return todays
 
-    probs = model.predict_proba(X)[:, 1]
 
-    # 5. Format Results
-    results = todays_games[["game_id", "home_team", "away_team"]].copy()
-    results["home_win_probability"] = probs
-    results["predicted_winner"] = results.apply(
-        lambda x: x["home_team"] if x["home_win_probability"] > 0.5 else x["away_team"],
-        axis=1,
+# ------------------------------------------------------------
+# Feature building
+# ------------------------------------------------------------
+
+
+def _build_prediction_features(pred_date: date, feature_version: str) -> pd.DataFrame:
+    """
+    Build features for both home and away team rows on pred_date
+    using only historical data up to (and including) pred_date.
+    """
+    df = _load_canonical_long()
+
+    # Use history up to prediction date
+    df_hist = df[df["date"].dt.date <= pred_date].copy()
+    if df_hist.empty:
+        logger.warning(f"[Moneyline] No historical data available up to {pred_date}.")
+        return pd.DataFrame()
+
+    fb = FeatureBuilder(version=feature_version)
+    all_features = fb.build_from_long(df_hist)
+
+    # Team rows for today's games
+    todays = _load_rows_for_date(pred_date)
+    if todays.empty:
+        return pd.DataFrame()
+
+    key_cols = ["game_id", "team", "date"]
+    merged = todays[key_cols + ["opponent", "is_home"]].merge(
+        all_features,
+        on=key_cols,
+        how="left",
     )
 
-    # 6. Save
-    out_path = PREDICTIONS_DIR / f"preds_{target_date}.csv"
-    results.to_csv(out_path, index=False)
-    logger.success(f"Predictions saved to {out_path}")
+    missing_count = merged.isna().any(axis=1).sum()
+    if missing_count:
+        logger.debug(f"[Moneyline] Missing feature values for {missing_count} rows.")
 
-    return results
+    return merged
+
+
+# ------------------------------------------------------------
+# Prediction-time schema normalization (C3 + O1 + D1)
+# ------------------------------------------------------------
+
+IDENTITY_COLS = [
+    "game_id",
+    "date",
+    "team",
+    "opponent",
+    "is_home",
+    "opponent_score",
+    "status",
+    "schema_version",
+]
+
+
+def _normalize_features(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
+    """
+    Normalize prediction-time features to match training-time schema.
+
+    Steps:
+      1. Drop identity columns (D1)
+      2. Drop non-numeric columns
+      3. Add missing numeric columns with 0 (C3)
+      4. Fill NaNs with 0 (C3)
+      5. Restrict to training feature columns only
+      6. Enforce strict training column order (O1)
+    """
+
+    df = df.copy()
+
+    # 1. Drop identity columns
+    df = df.drop(columns=[c for c in IDENTITY_COLS if c in df.columns], errors="ignore")
+
+    # 2. Keep only numeric columns
+    df = df.select_dtypes(include=["number"])
+
+    # 3. Add missing numeric columns with 0
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    # 4. Fill NaNs with 0
+    df = df.fillna(0.0)
+
+    # 5. Restrict to training feature columns only
+    df = df[[c for c in feature_cols if c in df.columns]]
+
+    # 6. Enforce strict training column order
+    df = df[feature_cols]
+
+    return df
+
+
+# ------------------------------------------------------------
+# Prediction
+# ------------------------------------------------------------
+
+
+def _predict_moneyline(
+    model: Any,
+    df_features: pd.DataFrame,
+    feature_cols: list[str],
+) -> pd.DataFrame:
+    """
+    Run model.predict_proba() and return win_probability for each team row.
+    """
+
+    # Normalize features to match training schema
+    X = _normalize_features(df_features, feature_cols)
+
+    # Robust prediction via ModelWrapper
+    try:
+        if hasattr(model, "predict_proba"):
+            probs = model.predict_proba(X)[:, 1]
+        elif hasattr(model, "predict"):
+            logger.warning(
+                "[Moneyline] Model has no predict_proba; using predict() as probability."
+            )
+            probs = model.predict(X)
+        else:
+            logger.error(f"[Moneyline] Unsupported model type: {type(model)}")
+            return pd.DataFrame()
+    except Exception as e:
+        logger.error(f"[Moneyline] Model prediction failed: {e}")
+        return pd.DataFrame()
+
+    # Build output frame
+    out = df_features[["game_id", "date", "team", "opponent", "is_home"]].copy()
+    out["win_probability"] = probs
+    return out
+
+
+def _save_predictions(df: pd.DataFrame, pred_date: date, meta: dict) -> None:
+    MONEYLINE_PRED_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = MONEYLINE_PRED_DIR / f"moneyline_{pred_date}.parquet"
+
+    df = df.copy()
+    df["model_type"] = meta["model_type"]
+    df["model_version"] = meta["version"]
+    df["feature_version"] = meta["feature_version"]
+
+    df.to_parquet(out_path, index=False)
+    logger.success(f"[Moneyline] Predictions saved → {out_path}")
+
+
+# ------------------------------------------------------------
+# Public API
+# ------------------------------------------------------------
+
+
+def run_prediction_for_date(pred_date: date | None = None) -> pd.DataFrame:
+    """
+    Main entry point for moneyline predictions.
+    """
+    pred_date = pred_date or date.today()
+    logger.info(f"🏀 Running moneyline prediction for {pred_date}")
+
+    model, meta = load_model_and_metadata(model_type="moneyline")
+    feature_version = meta["feature_version"]
+    feature_cols = meta["feature_cols"]
+
+    df_features = _build_prediction_features(pred_date, feature_version)
+    if df_features.empty:
+        logger.warning(f"[Moneyline] No features available for {pred_date}.")
+        return pd.DataFrame()
+
+    pred_df = _predict_moneyline(model, df_features, feature_cols)
+    if pred_df.empty:
+        logger.warning(f"[Moneyline] No predictions generated for {pred_date}.")
+        return pd.DataFrame()
+
+    _save_predictions(pred_df, pred_date, meta)
+
+    logger.success(f"🏀 Moneyline prediction pipeline complete for {pred_date}")
+    return pred_df
 
 
 if __name__ == "__main__":
-    run_prediction_for_date(date.today())
+    run_prediction_for_date()

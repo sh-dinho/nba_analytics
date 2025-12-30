@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Module: Telegram Alerts
@@ -9,7 +10,6 @@
 #       - Bankroll charts via matplotlib figures
 # ============================================================
 
-from __future__ import annotations
 
 import os
 import tempfile

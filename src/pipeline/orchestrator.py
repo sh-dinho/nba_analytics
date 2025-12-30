@@ -1,133 +1,127 @@
+from __future__ import annotations
+
 # ============================================================
-# Project: NBA Analytics & Betting Engine
-# Module: Daily Orchestrator
+# 🏀 NBA Analytics Orchestrator v3
+# File: src/pipeline/orchestrator.py
 # Author: Sadiq
 #
 # Description:
-#     Runs the full daily pipeline:
-#       1. Incremental ingestion (Pull scores + schedule)
-#       2. Model predictions (Win probabilities)
-#       3. Betting pipeline (Calculate edges and EV)
-#       4. Run summary logging and optional alerts
+#     Single entry point for the daily NBA engine:
+#       1. Ingest yesterday + today (ScoreboardV3)
+#       2. Build canonical, long-format, and feature snapshots
+#       3. Run prediction pipelines:
+#            - Moneyline (win probability)
+#            - Totals (over/under)
+#            - Spread (ATS)
+#       4. Log a clear summary and return structured results.
 # ============================================================
 
-from __future__ import annotations
-import json
-from dataclasses import dataclass, asdict
-from datetime import date, datetime, timezone
-from typing import Callable, Optional
+from datetime import date
+from typing import Optional, Dict, Any
+
 from loguru import logger
 
-from src.config.paths import (
-    PREDICTIONS_DIR,
-    ORCHESTRATOR_LOG_DIR,
-)
-
-from src.ingestion.pipeline import IngestionPipeline
-from src.model.predict import run_prediction_for_date
-from src.alerts.telegram import send_telegram_message
+from src.ingestion.pipeline import run_today_ingestion
+from src.model.predict import run_prediction_for_date as run_moneyline
+from src.model.predict_totals import run_prediction_for_date as run_totals
+from src.model.predict_spread import run_prediction_for_date as run_spread
 
 
-@dataclass
-class StepResult:
-    name: str
-    status: str
-    started_at: str
-    ended_at: str
-    error: Optional[str] = None
+def run_daily_ingestion(pred_date: date) -> None:
+    """
+    Run ingestion for yesterday + today, rebuilding:
+      - canonical schedule snapshot
+      - long-format snapshot
+      - feature snapshot (via FeatureBuilder)
+    """
+    logger.info(f"📥 Starting daily ingestion around prediction date {pred_date}")
+    _ = run_today_ingestion(today=pred_date, feature_version="v1")
+    logger.success("📥 Daily ingestion complete (canonical + long + features updated).")
 
 
-@dataclass
-class RunSummary:
-    run_date: str
-    target_date: str
-    steps: list[StepResult]
+def run_prediction_stage(pred_date: date) -> Dict[str, Optional[Any]]:
+    """
+    Run all prediction pipelines for the given date.
+    Returns a dict with DataFrames (or None on failure) for:
+      - moneyline
+      - totals
+      - spread
+    """
+    logger.info(f"🤖 Starting prediction stage for {pred_date}")
+
+    results: Dict[str, Optional[Any]] = {
+        "moneyline": None,
+        "totals": None,
+        "spread": None,
+    }
+
+    # --------------------------------------------------------
+    # Moneyline
+    # --------------------------------------------------------
+    try:
+        logger.info("🔹 Running Moneyline Predictions...")
+        df_moneyline = run_moneyline(pred_date)
+        results["moneyline"] = df_moneyline
+        logger.info(f"   ✔ Moneyline predictions complete ({len(df_moneyline)} rows)")
+    except Exception as e:
+        logger.error(f"   ❌ Moneyline prediction failed: {e}")
+
+    # --------------------------------------------------------
+    # Totals
+    # --------------------------------------------------------
+    try:
+        logger.info("🔹 Running Totals Predictions...")
+        df_totals = run_totals(pred_date)
+        results["totals"] = df_totals
+        logger.info(f"   ✔ Totals predictions complete ({len(df_totals)} rows)")
+    except Exception as e:
+        logger.error(f"   ❌ Totals prediction failed: {e}")
+
+    # --------------------------------------------------------
+    # Spread
+    # --------------------------------------------------------
+    try:
+        logger.info("🔹 Running Spread Predictions...")
+        df_spread = run_spread(pred_date)
+        results["spread"] = df_spread
+        logger.info(f"   ✔ Spread predictions complete ({len(df_spread)} rows)")
+    except Exception as e:
+        logger.error(f"   ❌ Spread prediction failed: {e}")
+
+    # --------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------
+    logger.info("--------------------------------------------------")
+    logger.info("🏁 Prediction Summary:")
+    logger.info(
+        f"   Moneyline: {'OK' if results['moneyline'] is not None else 'FAILED'}"
+    )
+    logger.info(f"   Totals:    {'OK' if results['totals'] is not None else 'FAILED'}")
+    logger.info(f"   Spread:    {'OK' if results['spread'] is not None else 'FAILED'}")
+    logger.info("--------------------------------------------------")
+
+    return results
 
 
-class Orchestrator:
-    def __init__(self, notify: bool = True):
-        ORCHESTRATOR_LOG_DIR.mkdir(parents=True, exist_ok=True)
-        self.notify = notify
-        # Use IngestionPipeline to update local snapshots
-        self.pipeline = IngestionPipeline()
+def run_full_pipeline(pred_date: Optional[date] = None) -> Dict[str, Optional[Any]]:
+    """
+    Full daily pipeline:
+      1. Ingest (yesterday + today)
+      2. Build features (via ingestion pipeline)
+      3. Run all prediction heads for pred_date
+    """
+    pred_date = pred_date or date.today()
+    logger.info(f"🏀 Starting FULL daily pipeline for {pred_date}")
 
-    def run_daily(self, target_date: Optional[date] = None, dry_run_bets: bool = True):
-        target_date = target_date or date.today()
-        run_date_str = datetime.now(timezone.utc).isoformat()
-        logger.info(f"🚀 Starting NBA Orchestrator for {target_date}")
+    # 1) Ingestion / features
+    run_daily_ingestion(pred_date)
 
-        steps: list[StepResult] = [
-            self._run_step("ingestion_incremental", self._step_ingestion_incremental),
-            self._run_step("predict", lambda: self._step_predict(target_date)),
-            self._run_step(
-                "value_bets",
-                lambda: self._step_betting_pipeline(target_date, dry_run_bets),
-            ),
-        ]
+    # 2) Predictions
+    results = run_prediction_stage(pred_date)
 
-        # Step 1: Incremental ingestion (Pull scores + schedule)
-
-        # Step 2: Model predictions
-
-        # Step 3: Betting pipeline
-
-        summary = RunSummary(
-            run_date=run_date_str, target_date=str(target_date), steps=steps
-        )
-        self._log_run_summary(summary)
-        self._maybe_notify(summary)
-        logger.success("✅ Orchestration complete.")
-
-    def _run_step(self, name: str, func: Callable[[], Optional[object]]) -> StepResult:
-        started_at = datetime.now(timezone.utc).isoformat()
-        error_msg, status = None, "success"
-        try:
-            func()
-        except Exception as e:
-            status, error_msg = "failed", str(e)
-            logger.error(f"Step '{name}' failed: {error_msg}")
-
-        return StepResult(
-            name=name,
-            status=status,
-            started_at=started_at,
-            ended_at=datetime.now(timezone.utc).isoformat(),
-            error=error_msg,
-        )
-
-    def _step_ingestion_incremental(self):
-        """Fetches latest data and updates local snapshots."""
-        self.pipeline.run_today_ingestion()
-
-    def _step_predict(self, target_date: date):
-        run_prediction_for_date(target_date)
-
-    def _step_betting_pipeline(self, target_date: date, dry_run_bets: bool = True):
-        preds_path = PREDICTIONS_DIR / f"predictions_{target_date}.parquet"
-        if not preds_path.exists():
-            logger.warning(
-                f"No predictions found for {target_date}. Skipping betting analysis."
-            )
-            return
-        logger.info(f"Betting analysis completed for {target_date}")
-
-    def _log_run_summary(self, summary: RunSummary):
-        log_path = ORCHESTRATOR_LOG_DIR / "orchestrator_runs.log"
-        with log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(summary)) + "\n")
-
-    def _maybe_notify(self, summary: RunSummary):
-        if not self.notify:
-            return
-        msg = (
-            f"NBA Pipeline status for {summary.target_date}: {summary.steps[0].status}"
-        )
-        try:
-            send_telegram_message(msg)
-        except Exception as e:
-            # Graceful failure if credentials are missing
-            logger.warning(f"Notification failed: {e}")
+    logger.success(f"🏀 Full daily pipeline complete for {pred_date}")
+    return results
 
 
 if __name__ == "__main__":
-    Orchestrator(notify=True).run_daily()
+    run_full_pipeline()

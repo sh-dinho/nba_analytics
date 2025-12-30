@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Author: Sadiq
@@ -5,7 +6,6 @@
 #              prepare for integration with simulators or books.
 # ============================================================
 
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional

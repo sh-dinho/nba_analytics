@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Author: Sadiq
@@ -5,7 +6,6 @@
 #              predictions, odds, bet logs, and model registry.
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta, date

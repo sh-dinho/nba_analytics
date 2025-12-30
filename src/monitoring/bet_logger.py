@@ -1,3 +1,4 @@
+from __future__ import annotations
 # ============================================================
 # Project: NBA Analytics & Betting Engine
 # Author: Sadiq
@@ -5,7 +6,6 @@
 #              profit, ROI, and daily performance summaries.
 # ============================================================
 
-from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from datetime import datetime
