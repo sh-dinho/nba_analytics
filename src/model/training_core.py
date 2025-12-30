@@ -1,24 +1,5 @@
 from __future__ import annotations
 
-# ============================================================
-# 🏀 NBA Analytics v4
-# Module: Training Core
-# File: src/model/training_core.py
-# Author: Sadiq
-#
-# Description:
-#     Trains models, evaluates them, saves artifacts, and
-#     registers metadata in the v4 model registry.
-#
-#     v4 alignment:
-#       - Uses FeatureBuilder v4 outputs
-#       - Auto-derives moneyline targets from scores if missing
-#       - Persists sklearn models under MODEL_DIR
-#       - Registers feature_version + feature_cols for prediction
-#       - Drops non-numeric columns
-#       - Fills NaN values with 0 (safe for ML models)
-# ============================================================
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Any, List
@@ -32,6 +13,28 @@ from sklearn.model_selection import train_test_split
 
 from src.config.paths import MODEL_DIR
 from src.model.registry import register_model
+from src.model.schema import SchemaSaver
+
+
+# ============================================================
+# 🏀 NBA Analytics v4
+# Module: Training Core
+# File: src/model/training_core.py
+# Author: Sadiq
+#
+# Description:
+#     Trains models, evaluates them, saves artifacts, and
+#     registers metadata in the v4 model registry.
+#
+#     v4 alignment:
+#       - Uses FeatureBuilder v4 outputs (upstream)
+#       - Auto-derives moneyline targets from scores if missing
+#       - Persists sklearn models under MODEL_DIR
+#       - Registers feature_version + feature_cols for prediction
+#       - Drops non-numeric columns
+#       - Fills NaN values with 0 (safe for ML models)
+#       - Saves training-time schema using SchemaSaver
+# ============================================================
 
 
 # ------------------------------------------------------------
@@ -171,7 +174,7 @@ def _evaluate_model(
         )
 
     probs = model.predict_proba(X_val)[:, 1]
-    return {"log_loss": log_loss(y_val, probs)}
+    return {"log_loss": float(log_loss(y_val, probs))}
 
 
 # ------------------------------------------------------------
@@ -204,10 +207,13 @@ def train_and_register_model(
     model_type: str,
     df: pd.DataFrame,
     feature_version: str,
-) -> None:
+) -> ModelMetadata:
     """
     Train a model of given type on the provided feature DataFrame,
-    evaluate it, save the artifact, and register metadata.
+    evaluate it, save the artifact, save the training schema,
+    and register metadata.
+
+    Returns the ModelMetadata for convenience.
     """
     logger.info(f"[TrainingCore] Training model_type={model_type}")
 
@@ -241,13 +247,26 @@ def train_and_register_model(
     # Validation
     # --------------------------------------------------------
     metrics = _evaluate_model(model, X_val, y_val)
-    logger.info(f"[TrainingCore] Validation metric={metrics}")
+    logger.info(f"[TrainingCore] Validation metrics={metrics}")
+
+    # Version stamp
+    version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
     # --------------------------------------------------------
     # Save artifact
     # --------------------------------------------------------
-    version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
     _save_model_artifact(model, model_type, version)
+
+    # --------------------------------------------------------
+    # Save training schema (FIXED: Using SchemaSaver)
+    # --------------------------------------------------------
+    out_dir = MODEL_DIR / model_type
+    schema_path = out_dir / f"{version}_schema.json"
+
+    # Using the centralized saver from src.model.schema
+    SchemaSaver(
+        model_type=model_type, model_version=version, feature_version=feature_version
+    ).save(X, schema_path)
 
     # --------------------------------------------------------
     # Register model metadata
@@ -263,3 +282,9 @@ def train_and_register_model(
     )
 
     register_model(meta)
+    logger.info(
+        f"[TrainingCore] Registered model_type={model_type}, "
+        f"version={version}, production={meta.is_production}"
+    )
+
+    return meta

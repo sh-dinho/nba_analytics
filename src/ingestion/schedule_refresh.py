@@ -2,64 +2,47 @@ from __future__ import annotations
 
 # ============================================================
 # 🏀 NBA Analytics v4
-# Module: Schedule Refresh
+# Module: Schedule Refresh (Smart + Lightweight)
 # File: src/ingestion/schedule_refresh.py
-#
-# Description:
-#     Automatically ensures that season_schedule.parquet exists
-#     and is reasonably fresh. If missing or stale, it triggers
-#     a re-scrape from ESPN.
-#
-#     Public API:
-#       - refresh_schedule_if_needed()
 # ============================================================
 
-from datetime import datetime, timedelta
-from pathlib import Path
-
+from datetime import date, timedelta
+import pandas as pd
 from loguru import logger
 
-from src.config.paths import SEASON_SCHEDULE_PATH
+from src.config.paths import SCHEDULE_SNAPSHOT
+from src.ingestion.pipeline import ingest_dates
 from src.ingestion.schedule_scraper import build_season_schedule
 
 
-def _guess_current_season_start_year(today: datetime) -> int:
+def refresh_schedule_if_needed(today: date) -> pd.DataFrame:
     """
-    For a given date, infer the season_start_year.
-    Example:
-      - Nov 2024 → 2024 (2024-25 season)
-      - Mar 2025 → 2024 (still 2024-25)
-      - Jul 2025 → 2025 (next season if scraping early)
+    v4 logic:
+    - If schedule is missing → rebuild full season
+    - If schedule exists but is behind → ingest only missing days
+    - Never rebuild full season during daily predictions
     """
-    year = today.year
-    if today.month >= 7:
-        return year
-    return year - 1
 
+    # Case 1 — No schedule exists at all
+    if not SCHEDULE_SNAPSHOT.exists():
+        logger.warning("[ScheduleRefresh] No schedule found — full rebuild required.")
+        season_start_year = today.year if today.month >= 7 else today.year - 1
+        return build_season_schedule(season_start_year)
 
-def _is_stale(path: Path, max_age_days: int = 1) -> bool:
-    if not path.exists():
-        return True
-    mtime = datetime.fromtimestamp(path.stat().st_mtime)
-    return (datetime.now() - mtime) > timedelta(days=max_age_days)
+    # Case 2 — Schedule exists
+    df = pd.read_parquet(SCHEDULE_SNAPSHOT)
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    last_date = df["date"].max()
 
+    # Already fresh
+    if last_date >= today:
+        logger.info("[ScheduleRefresh] Schedule is fresh.")
+        return df
 
-def refresh_schedule_if_needed(max_age_days: int = 1) -> None:
-    """
-    Ensure SEASON_SCHEDULE_PATH exists and is not older than
-    max_age_days. If missing or stale, re-scrape from ESPN.
-    """
-    if not _is_stale(SEASON_SCHEDULE_PATH, max_age_days=max_age_days):
-        logger.info(
-            f"[ScheduleRefresh] Season schedule at {SEASON_SCHEDULE_PATH} "
-            f"is fresh (<= {max_age_days} days old)."
-        )
-        return
+    # Case 3 — Only ingest missing days
+    missing_days = pd.date_range(last_date + timedelta(days=1), today)
+    missing_days = [d.date() for d in missing_days]
 
-    today = datetime.now()
-    season_start_year = _guess_current_season_start_year(today)
-    logger.warning(
-        f"[ScheduleRefresh] Season schedule missing or stale. "
-        f"Rebuilding for season {season_start_year}-{season_start_year + 1}."
-    )
-    build_season_schedule(season_start_year=season_start_year)
+    logger.info(f"[ScheduleRefresh] Ingesting missing days: {missing_days}")
+
+    return ingest_dates(missing_days, feature_version="v1")

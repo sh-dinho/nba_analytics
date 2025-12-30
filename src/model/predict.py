@@ -12,11 +12,14 @@ from __future__ import annotations
 #     canonical long snapshot and FeatureBuilder v4, and
 #     generates win_probability for each team row.
 #
-#     v4 alignment:
-#       - Uses LONG_SNAPSHOT (team-game rows)
-#       - Uses FeatureBuilder(version=...)
-#       - Uses Model Registry v4 (load_model_and_metadata)
-#       - Two rows per game (home + away)
+#     This version includes full v4 schema normalization:
+#       - Drop identity columns (D1)
+#       - Drop non-numeric columns
+#       - Add missing numeric columns with 0 (C3)
+#       - Fill NaNs with 0 (C3)
+#       - Restrict to training feature columns only
+#       - Enforce strict training column order (O1)
+#       - Robust ModelWrapper prediction
 # ============================================================
 
 from datetime import date
@@ -36,8 +39,12 @@ from src.model.registry import load_model_and_metadata
 
 
 def _load_canonical_long() -> pd.DataFrame:
+    """
+    Load the canonical long-format dataset.
+    """
     if not LONG_SNAPSHOT.exists():
         raise FileNotFoundError(f"Canonical long snapshot not found at {LONG_SNAPSHOT}")
+
     df = pd.read_parquet(LONG_SNAPSHOT)
     df["date"] = pd.to_datetime(df["date"])
     return df
@@ -96,6 +103,60 @@ def _build_prediction_features(pred_date: date, feature_version: str) -> pd.Data
 
 
 # ------------------------------------------------------------
+# Prediction-time schema normalization (C3 + O1 + D1)
+# ------------------------------------------------------------
+
+IDENTITY_COLS = [
+    "game_id",
+    "date",
+    "team",
+    "opponent",
+    "is_home",
+    "opponent_score",
+    "status",
+    "schema_version",
+]
+
+
+def _normalize_features(df: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
+    """
+    Normalize prediction-time features to match training-time schema.
+
+    Steps:
+      1. Drop identity columns (D1)
+      2. Drop non-numeric columns
+      3. Add missing numeric columns with 0 (C3)
+      4. Fill NaNs with 0 (C3)
+      5. Restrict to training feature columns only
+      6. Enforce strict training column order (O1)
+    """
+
+    df = df.copy()
+
+    # 1. Drop identity columns
+    df = df.drop(columns=[c for c in IDENTITY_COLS if c in df.columns], errors="ignore")
+
+    # 2. Keep only numeric columns
+    df = df.select_dtypes(include=["number"])
+
+    # 3. Add missing numeric columns with 0
+    for col in feature_cols:
+        if col not in df.columns:
+            df[col] = 0.0
+
+    # 4. Fill NaNs with 0
+    df = df.fillna(0.0)
+
+    # 5. Restrict to training feature columns only
+    df = df[[c for c in feature_cols if c in df.columns]]
+
+    # 6. Enforce strict training column order
+    df = df[feature_cols]
+
+    return df
+
+
+# ------------------------------------------------------------
 # Prediction
 # ------------------------------------------------------------
 
@@ -108,13 +169,27 @@ def _predict_moneyline(
     """
     Run model.predict_proba() and return win_probability for each team row.
     """
-    missing = [c for c in feature_cols if c not in df_features.columns]
-    if missing:
-        raise KeyError(f"[Moneyline] Missing feature columns: {missing}")
 
-    X = df_features[feature_cols]
-    probs = model.predict_proba(X)[:, 1]
+    # Normalize features to match training schema
+    X = _normalize_features(df_features, feature_cols)
 
+    # Robust prediction via ModelWrapper
+    try:
+        if hasattr(model, "predict_proba"):
+            probs = model.predict_proba(X)[:, 1]
+        elif hasattr(model, "predict"):
+            logger.warning(
+                "[Moneyline] Model has no predict_proba; using predict() as probability."
+            )
+            probs = model.predict(X)
+        else:
+            logger.error(f"[Moneyline] Unsupported model type: {type(model)}")
+            return pd.DataFrame()
+    except Exception as e:
+        logger.error(f"[Moneyline] Model prediction failed: {e}")
+        return pd.DataFrame()
+
+    # Build output frame
     out = df_features[["game_id", "date", "team", "opponent", "is_home"]].copy()
     out["win_probability"] = probs
     return out
@@ -141,12 +216,6 @@ def _save_predictions(df: pd.DataFrame, pred_date: date, meta: dict) -> None:
 def run_prediction_for_date(pred_date: date | None = None) -> pd.DataFrame:
     """
     Main entry point for moneyline predictions.
-
-    Steps:
-      1. Load latest moneyline model from registry
-      2. Build team-game features for pred_date
-      3. Predict win_probability for each team row
-      4. Save predictions with model metadata
     """
     pred_date = pred_date or date.today()
     logger.info(f"🏀 Running moneyline prediction for {pred_date}")
@@ -161,6 +230,10 @@ def run_prediction_for_date(pred_date: date | None = None) -> pd.DataFrame:
         return pd.DataFrame()
 
     pred_df = _predict_moneyline(model, df_features, feature_cols)
+    if pred_df.empty:
+        logger.warning(f"[Moneyline] No predictions generated for {pred_date}.")
+        return pd.DataFrame()
+
     _save_predictions(pred_df, pred_date, meta)
 
     logger.success(f"🏀 Moneyline prediction pipeline complete for {pred_date}")

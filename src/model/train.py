@@ -9,13 +9,21 @@ from __future__ import annotations
 # Description:
 #     Trains a classification model on point‑in‑time correct
 #     team‑game features. Saves the model into the v4 registry
-#     with full metadata:
+#     with full metadata AND a training‑time schema file:
+#
 #       - model_type (moneyline / totals / spread)
 #       - feature_version
-#       - feature columns
+#       - feature columns (ordered)
 #       - date range
 #       - metrics
 #       - production flag
+#       - schema JSON (dtypes, min/max, mean/std, missing)
+#
+#     This schema is used at prediction time to enforce:
+#       - strict ordering (O1)
+#       - full imputation (C3)
+#       - identity‑column removal (D1)
+#       - drift detection
 # ============================================================
 
 from dataclasses import dataclass, asdict
@@ -29,9 +37,10 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 
-from src.config.paths import SCHEDULE_SNAPSHOT
+from src.config.paths import SCHEDULE_SNAPSHOT, MODEL_DIR
 from src.features.builder import FeatureBuilder
 from src.model.registry import register_model, ModelMetadata
+from src.model.schema import SchemaSaver  # ⭐ NEW
 
 
 # ------------------------------------------------------------
@@ -43,7 +52,7 @@ from src.model.registry import register_model, ModelMetadata
 class TrainingConfig:
     model_type: str = "moneyline"  # moneyline | totals | spread
     model_name: str = "rf_moneyline"
-    feature_version: str = "v1"
+    feature_version: str = "v4"
     test_size: float = 0.2
     random_state: int = 42
     n_estimators: int = 300
@@ -57,6 +66,9 @@ class TrainingConfig:
 
 
 def _load_team_game() -> pd.DataFrame:
+    """
+    Load the canonical schedule snapshot (team-game rows).
+    """
     if not SCHEDULE_SNAPSHOT.exists():
         raise FileNotFoundError(f"Canonical schedule not found at {SCHEDULE_SNAPSHOT}")
 
@@ -71,6 +83,9 @@ def _load_team_game() -> pd.DataFrame:
 
 
 def _build_features(cfg: TrainingConfig) -> pd.DataFrame:
+    """
+    Build training features using FeatureBuilder v4.
+    """
     df = _load_team_game()
 
     fb = FeatureBuilder(version=cfg.feature_version)
@@ -100,6 +115,10 @@ def _build_features(cfg: TrainingConfig) -> pd.DataFrame:
 
 
 def _time_split(df: pd.DataFrame, cfg: TrainingConfig):
+    """
+    Time-based train/test split.
+    Falls back to random split if needed.
+    """
     df = df.sort_values("date")
     unique_dates = sorted(df["date"].unique())
 
@@ -112,6 +131,7 @@ def _time_split(df: pd.DataFrame, cfg: TrainingConfig):
     train_df = df[df["date"] < cutoff_date]
     test_df = df[df["date"] >= cutoff_date]
 
+    # Fallback to random split
     if train_df.empty or test_df.empty:
         logger.warning("Time split failed → falling back to random split.")
         features = [
@@ -148,7 +168,7 @@ def _time_split(df: pd.DataFrame, cfg: TrainingConfig):
 
 
 # ------------------------------------------------------------
-# Save model to registry
+# Save model + schema to registry
 # ------------------------------------------------------------
 
 
@@ -161,6 +181,9 @@ def _save_model(
     train_acc,
     test_acc,
 ):
+    """
+    Save model artifact + metadata + training schema.
+    """
     timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
     meta = ModelMetadata(
@@ -181,14 +204,23 @@ def _save_model(
     )
 
     # Save model file
-    model_path = Path("data/model_registry") / meta.path
+    model_path = MODEL_DIR / cfg.model_type / f"{timestamp}.pkl"
     model_path.parent.mkdir(parents=True, exist_ok=True)
     pd.to_pickle(model, model_path)
+
+    # ⭐ NEW: Save training schema
+    schema_path = MODEL_DIR / cfg.model_type / f"{timestamp}_schema.json"
+    SchemaSaver(
+        model_type=cfg.model_type,
+        model_version=timestamp,
+        feature_version=cfg.feature_version,
+    ).save(pd.DataFrame(columns=feature_cols), schema_path)
 
     # Register metadata
     register_model(meta)
 
     logger.success(f"Model saved → {model_path}")
+    logger.success(f"Schema saved → {schema_path}")
     logger.success(f"Model registered → {meta.model_name} ({meta.version})")
 
 
@@ -198,6 +230,9 @@ def _save_model(
 
 
 def train_model(cfg: Optional[TrainingConfig] = None):
+    """
+    Train a model and save it with full metadata + schema.
+    """
     cfg = cfg or TrainingConfig()
     logger.info(f"🏀 Starting model training with config:\n{asdict(cfg)}")
 

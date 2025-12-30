@@ -15,10 +15,11 @@ from __future__ import annotations
 #       - Trains ONLY the regression model (margin)
 #       - Skips ATS classification cleanly
 #
-#     Uses:
-#       - Canonical long snapshot
+#     v4 alignment:
 #       - FeatureBuilder v4
-#       - training_core helpers (numeric-only + NaN handling)
+#       - Numeric-only features
+#       - NaN-safe training
+#       - Training-time schema saving (NEW)
 #       - Model Registry v4
 # ============================================================
 
@@ -26,6 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List, Tuple
 
+import numpy as np
 import pandas as pd
 from loguru import logger
 from sklearn.ensemble import RandomForestRegressor
@@ -42,6 +44,7 @@ from src.config.paths import LONG_SNAPSHOT, MODEL_DIR
 from src.features.builder import FeatureBuilder
 from src.model.registry import register_model
 from src.model.training_core import _drop_non_numeric_features, _fill_missing_values
+from src.model.schema import FeatureSchema  # ⭐ NEW
 
 
 # ------------------------------------------------------------
@@ -66,7 +69,7 @@ class SpreadTrainingConfig:
 
 def _load_long() -> pd.DataFrame:
     df = pd.read_parquet(LONG_SNAPSHOT)
-    df["date"] = pd.to_datetime(df["date"])  # keep datetime64[ns] for merging
+    df["date"] = pd.to_datetime(df["date"])
     return df
 
 
@@ -76,25 +79,14 @@ def _load_long() -> pd.DataFrame:
 
 
 def _build_training_frame(cfg: SpreadTrainingConfig) -> Tuple[pd.DataFrame, bool]:
-    """
-    Build training frame with features + targets.
-
-    Returns:
-        merged: DataFrame with features + margin + ats_cover (may be None)
-        do_classification: bool indicating whether ATS classification is possible
-    """
     df = _load_long()
 
     fb = FeatureBuilder(version=cfg.feature_version)
     features = fb.build_from_long(df)
 
-    # Only home rows → one row per game
     df_home = df[df["is_home"] == 1].copy()
-
-    # Regression target
     df_home["margin"] = df_home["score"] - df_home["opponent_score"]
 
-    # ATS classification only if sportsbook data exists
     if "spread_line" not in df_home.columns:
         logger.warning(
             "[Spread] No spread_line column found — ATS classification disabled."
@@ -111,7 +103,6 @@ def _build_training_frame(cfg: SpreadTrainingConfig) -> Tuple[pd.DataFrame, bool
         how="inner",
     )
 
-    # Need margin for regression; ats_cover may be None if classification disabled
     merged = merged.dropna(subset=["margin"])
     return merged, do_classification
 
@@ -151,11 +142,46 @@ def _time_split(df: pd.DataFrame, cfg: SpreadTrainingConfig):
 
 
 # ------------------------------------------------------------
+# Schema saving (NEW)
+# ------------------------------------------------------------
+
+
+def _save_schema(model_type: str, version: str, feature_version: str, X: pd.DataFrame):
+    cols = list(X.columns)
+
+    schema = FeatureSchema(
+        model_type=model_type,
+        model_version=version,
+        feature_version=feature_version,
+        created_at=datetime.utcnow().isoformat(),
+        feature_cols=cols,
+        dtypes={c: str(X[c].dtype) for c in cols},
+        min={c: float(np.nanmin(X[c])) for c in cols},
+        max={c: float(np.nanmax(X[c])) for c in cols},
+        mean={c: float(np.nanmean(X[c])) for c in cols},
+        std={c: float(np.nanstd(X[c])) for c in cols},
+        missing={c: int(X[c].isna().sum()) for c in cols},
+    )
+
+    out_dir = MODEL_DIR / model_type
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    schema_path = out_dir / f"{version}_schema.json"
+    schema_path.write_text(
+        pd.io.json.dumps(schema.to_dict(), indent=2), encoding="utf-8"
+    )
+
+    logger.success(f"[Spread] Saved schema → {schema_path}")
+
+
+# ------------------------------------------------------------
 # Save model + metadata
 # ------------------------------------------------------------
 
 
-def _save_model(model, model_type: str, feature_cols: List[str], metrics: dict):
+def _save_model(
+    model, model_type: str, feature_cols: List[str], metrics: dict, X_full: pd.DataFrame
+):
     version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
     out_dir = MODEL_DIR / model_type
@@ -163,6 +189,9 @@ def _save_model(model, model_type: str, feature_cols: List[str], metrics: dict):
 
     model_path = out_dir / f"{version}.pkl"
     pd.to_pickle(model, model_path)
+
+    # ⭐ Save schema
+    _save_schema(model_type, version, "v4", X_full)
 
     meta = {
         "model_type": model_type,
@@ -187,8 +216,7 @@ def _save_model(model, model_type: str, feature_cols: List[str], metrics: dict):
 def train_spread_models(cfg: Optional[SpreadTrainingConfig] = None):
     cfg = cfg or SpreadTrainingConfig()
     logger.info(
-        "🏀 Training spread models "
-        "(regression always, ATS classification only if sportsbook lines exist)"
+        "🏀 Training spread models (regression always, ATS classification optional)"
     )
 
     df, do_classification = _build_training_frame(cfg)
@@ -206,10 +234,8 @@ def train_spread_models(cfg: Optional[SpreadTrainingConfig] = None):
     ) = _time_split(df, cfg)
 
     # Clean features
-    X_train = _drop_non_numeric_features(X_train)
-    X_test = _drop_non_numeric_features(X_test)
-    X_train = _fill_missing_values(X_train)
-    X_test = _fill_missing_values(X_test)
+    X_train = _fill_missing_values(_drop_non_numeric_features(X_train))
+    X_test = _fill_missing_values(_drop_non_numeric_features(X_test))
 
     # --------------------------------------------------------
     # Regression model (margin)
@@ -240,27 +266,25 @@ def train_spread_models(cfg: Optional[SpreadTrainingConfig] = None):
         "train_end_date": str(end_date),
     }
 
-    _save_model(reg, "spread_regression", feature_cols, reg_metrics)
+    # Save regression model + schema
+    _save_model(reg, "spread_regression", feature_cols, reg_metrics, X_train)
 
     # --------------------------------------------------------
     # Classification model (ATS cover) — optional
     # --------------------------------------------------------
     if do_classification and y_ats_train.notna().any():
-        logger.info(
-            "[Spread] Training ATS classification model (spread_line detected)."
-        )
+        logger.info("[Spread] Training ATS classification model")
 
-        # Filter out any rows where ats_cover is NaN (defensive)
         mask_train = y_ats_train.notna()
         mask_test = y_ats_test.notna()
 
         X_train_clf = X_train[mask_train]
         X_test_clf = X_test[mask_test]
-        y_ats_train_clf = y_ats_train[mask_train]
-        y_ats_test_clf = y_ats_test[mask_test]
+        y_train_clf = y_ats_train[mask_train]
+        y_test_clf = y_ats_test[mask_test]
 
         clf = LogisticRegression(max_iter=500)
-        clf.fit(X_train_clf, y_ats_train_clf)
+        clf.fit(X_train_clf, y_train_clf)
 
         clf_train_pred = clf.predict(X_train_clf)
         clf_test_pred = clf.predict(X_test_clf)
@@ -270,25 +294,22 @@ def train_spread_models(cfg: Optional[SpreadTrainingConfig] = None):
 
         clf_metrics = {
             "target": "ats_cover",
-            "train_accuracy": float(accuracy_score(y_ats_train_clf, clf_train_pred)),
-            "test_accuracy": float(accuracy_score(y_ats_test_clf, clf_test_pred)),
-            "train_log_loss": float(log_loss(y_ats_train_clf, clf_train_prob)),
-            "test_log_loss": float(log_loss(y_ats_test_clf, clf_test_prob)),
+            "train_accuracy": float(accuracy_score(y_train_clf, clf_train_pred)),
+            "test_accuracy": float(accuracy_score(y_test_clf, clf_test_pred)),
+            "train_log_loss": float(log_loss(y_train_clf, clf_train_prob)),
+            "test_log_loss": float(log_loss(y_test_clf, clf_test_prob)),
             "train_start_date": str(start_date),
             "train_end_date": str(end_date),
         }
 
-        _save_model(clf, "spread_classification", feature_cols, clf_metrics)
-    else:
-        logger.info(
-            "[Spread] ATS classification skipped "
-            "(no sportsbook spread_line available)."
+        _save_model(
+            clf, "spread_classification", feature_cols, clf_metrics, X_train_clf
         )
 
-    logger.success(
-        "🏀 Spread regression model trained "
-        "(and ATS classification if sportsbook data was available)"
-    )
+    else:
+        logger.info("[Spread] ATS classification skipped (no sportsbook data)")
+
+    logger.success("🏀 Spread models trained successfully")
     return reg
 
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 # 🏀 NBA Analytics v4
 # Module: Model Registry
 # File: src/model/registry.py
-# Author: Sadiq
 #
 # Description:
 #     Central registry for all models (moneyline, totals,
@@ -12,11 +11,19 @@ from __future__ import annotations
 #
 #     Features:
 #       - Persistent JSON index (v4 schema)
-#       - Backward compatible register_model(meta)
+#       - Register model metadata
 #       - Load model + metadata by type/version/production flag
 #       - List models
 #       - Promote model to production (enforce single prod per type)
 #       - Delete model + artifact
+#
+#     Cleaned:
+#       - Removed dead code
+#       - Removed unused imports
+#       - Removed MODEL_REGISTRY_INDEX
+#       - Removed duplicate index loaders
+#       - Unified internal helpers
+#       - Ensured consistent naming + structure
 # ============================================================
 
 from dataclasses import asdict, is_dataclass
@@ -27,38 +34,58 @@ import json
 import pandas as pd
 from loguru import logger
 
-from src.config.paths import MODEL_DIR, MODEL_REGISTRY_PATH, MODEL_REGISTRY_INDEX
-
-# ------------------------------------------------------------
-# Registry schema / constants
-# ------------------------------------------------------------
-
-# Registry JSON structure:
-# {
-#   "models": [
-#     {
-#       "model_type": "moneyline",
-#       "version": "20251223184546",
-#       "created_at": "...",
-#       "is_production": false,
-#       "feature_version": "v4",
-#       "feature_cols": [...],
-#       "metrics": {...}
-#     },
-#     ...
-#   ]
-# }
-
-REGISTRY_ROOT: Path = MODEL_REGISTRY_PATH.parent
+from src.config.paths import MODEL_DIR, MODEL_REGISTRY_PATH
 
 
 # ------------------------------------------------------------
-# Low-level IO helpers
+# Unified model wrapper
+# ------------------------------------------------------------
+
+
+class ModelWrapper:
+    """
+    v4 unified model interface.
+    Ensures all loaded models expose predict() and optionally predict_proba().
+    """
+
+    def __init__(self, model: Any):
+        self.model = model
+
+    def predict(self, X):
+        if hasattr(self.model, "predict"):
+            return self.model.predict(X)
+
+        if hasattr(self.model, "shape") and getattr(self.model, "shape", [0])[0] == len(
+            X
+        ):
+            logger.warning(
+                "[ModelWrapper] Treating underlying array as precomputed predictions."
+            )
+            return self.model
+
+        if isinstance(self.model, (list, tuple)) and len(self.model) == len(X):
+            logger.warning(
+                "[ModelWrapper] Treating underlying sequence as precomputed predictions."
+            )
+            return pd.Series(self.model).values
+
+        raise TypeError(f"Unsupported model type for prediction: {type(self.model)}")
+
+    def predict_proba(self, X):
+        if hasattr(self.model, "predict_proba"):
+            return self.model.predict_proba(X)
+        raise AttributeError(
+            f"Underlying model has no predict_proba: {type(self.model)}"
+        )
+
+
+# ------------------------------------------------------------
+# Internal helpers
 # ------------------------------------------------------------
 
 
 def _ensure_registry_dir() -> None:
-    REGISTRY_ROOT.mkdir(parents=True, exist_ok=True)
+    MODEL_REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _load_registry() -> Dict[str, Any]:
@@ -66,7 +93,7 @@ def _load_registry() -> Dict[str, Any]:
 
     if not MODEL_REGISTRY_PATH.exists():
         logger.warning(
-            f"Registry index not found at {MODEL_REGISTRY_PATH} — creating new registry."
+            f"Registry not found → creating new registry at {MODEL_REGISTRY_PATH}"
         )
         return {"models": []}
 
@@ -74,10 +101,9 @@ def _load_registry() -> Dict[str, Any]:
         with MODEL_REGISTRY_PATH.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except Exception as e:
-        logger.error(f"Failed to load registry index; resetting. Error: {e}")
+        logger.error(f"Failed to load registry; resetting. Error: {e}")
         return {"models": []}
 
-    # Basic shape validation
     if (
         not isinstance(data, dict)
         or "models" not in data
@@ -96,19 +122,7 @@ def _save_registry(index: Dict[str, Any]) -> None:
     logger.info(f"Registry updated → {MODEL_REGISTRY_PATH}")
 
 
-# ------------------------------------------------------------
-# Utilities
-# ------------------------------------------------------------
-
-
 def _meta_to_dict(meta: Any) -> Dict[str, Any]:
-    """
-    Normalize metadata into a plain dict.
-
-    Accepts:
-      - dataclass instances (training_core moneyline)
-      - plain dicts (totals, spread trainers)
-    """
     if is_dataclass(meta):
         return asdict(meta)
     if isinstance(meta, dict):
@@ -133,25 +147,16 @@ def _filter_models(
 
 
 def _select_latest(models: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """
-    Select latest model by version (timestamp string) or created_at as fallback.
-    """
     if not models:
         raise ValueError("No models available to select latest from.")
 
-    # Prefer version (timestamp-like); fallback to created_at
     def key_fn(m: Dict[str, Any]) -> str:
-        v = m.get("version") or m.get("created_at") or ""
-        return str(v)
+        return str(m.get("version") or m.get("created_at") or "")
 
     return max(models, key=key_fn)
 
 
 def _artifact_path(model_type: str, version: str) -> Path:
-    """
-    Artifact path convention:
-      MODEL_DIR / <model_type> / <version>.pkl
-    """
     return MODEL_DIR / model_type / f"{version}.pkl"
 
 
@@ -161,37 +166,21 @@ def _artifact_path(model_type: str, version: str) -> Path:
 
 
 def register_model(meta: Any) -> None:
-    """
-    Register a model in the v4 registry.
-
-    Accepts:
-      - dataclass instances (moneyline via training_core)
-      - plain dicts (totals, spread trainers)
-
-    Behavior:
-      - Normalizes metadata to dict
-      - Appends to registry
-      - Does NOT automatically change production flags
-        (use promote_model for that)
-    """
     index = _load_registry()
     meta_dict = _meta_to_dict(meta)
 
-    # Basic sanity checks
-    required_fields = ["model_type", "version"]
-    missing = [f for f in required_fields if f not in meta_dict]
+    required = ["model_type", "version"]
+    missing = [f for f in required if f not in meta_dict]
     if missing:
         raise ValueError(f"Metadata missing required fields: {missing}")
 
-    if "is_production" not in meta_dict:
-        meta_dict["is_production"] = False
+    meta_dict.setdefault("is_production", False)
 
     index.setdefault("models", []).append(meta_dict)
     _save_registry(index)
 
     logger.success(
-        f"Registered model version={meta_dict['version']} "
-        f"type={meta_dict['model_type']}"
+        f"Registered model version={meta_dict['version']} type={meta_dict['model_type']}"
     )
 
 
@@ -204,37 +193,16 @@ def list_models(
     model_type: Optional[str] = None,
     production_only: bool = False,
 ) -> List[Dict[str, Any]]:
-    """
-    List models in the registry.
-
-    Args:
-        model_type: Optional filter by type (e.g., "moneyline").
-        production_only: If True, only return models with is_production=True.
-
-    Returns:
-        List of metadata dicts.
-    """
     index = _load_registry()
-    models = _filter_models(
-        index, model_type=model_type, production_only=production_only
-    )
-    return models
+    return _filter_models(index, model_type=model_type, production_only=production_only)
 
 
 # ------------------------------------------------------------
-# Public API: Model promotion (production flag enforcement)
+# Public API: Promote model
 # ------------------------------------------------------------
 
 
 def promote_model(model_type: str, version: str) -> None:
-    """
-    Mark a specific model as production and demote all other models
-    of the same type.
-
-    Args:
-        model_type: Model type (e.g., "moneyline", "totals").
-        version: Version string to promote.
-    """
     index = _load_registry()
     models = index.get("models", [])
 
@@ -250,7 +218,7 @@ def promote_model(model_type: str, version: str) -> None:
 
     if not found:
         raise ValueError(
-            f"No model found to promote for type={model_type}, version={version}"
+            f"No model found to promote: type={model_type}, version={version}"
         )
 
     _save_registry(index)
@@ -258,18 +226,11 @@ def promote_model(model_type: str, version: str) -> None:
 
 
 # ------------------------------------------------------------
-# Public API: Model deletion
+# Public API: Delete model
 # ------------------------------------------------------------
 
 
 def delete_model(model_type: str, version: str) -> None:
-    """
-    Delete a model from the registry and remove its artifact file.
-
-    Args:
-        model_type: Model type.
-        version: Version string.
-    """
     index = _load_registry()
     models = index.get("models", [])
 
@@ -283,7 +244,7 @@ def delete_model(model_type: str, version: str) -> None:
 
     if removed == 0:
         logger.warning(
-            f"No model found to delete for type={model_type}, version={version}"
+            f"No model found to delete: type={model_type}, version={version}"
         )
     else:
         logger.info(f"Deleted registry entry for type={model_type}, version={version}")
@@ -291,7 +252,6 @@ def delete_model(model_type: str, version: str) -> None:
     index["models"] = models
     _save_registry(index)
 
-    # Remove artifact file
     path = _artifact_path(model_type, version)
     if path.exists():
         try:
@@ -311,19 +271,6 @@ def load_model_and_metadata(
     version: Optional[str] = None,
     production_only: bool = False,
 ) -> Tuple[Any, Dict[str, Any]]:
-    """
-    Load a model artifact and its metadata.
-
-    Args:
-        model_type: Model type to load.
-        version: Optional specific version. If None:
-            - if production_only=True → load latest production model
-            - else → load latest model by version
-        production_only: Whether to restrict search to production models.
-
-    Returns:
-        (model, metadata_dict)
-    """
     index = _load_registry()
     candidates = _filter_models(
         index, model_type=model_type, production_only=production_only
@@ -333,7 +280,6 @@ def load_model_and_metadata(
         raise ValueError(f"No models found for type={model_type}")
 
     if version is not None:
-        # Filter by requested version
         candidates = [m for m in candidates if m.get("version") == version]
         if not candidates:
             raise ValueError(
@@ -341,7 +287,6 @@ def load_model_and_metadata(
             )
         meta = candidates[0]
     else:
-        # Select latest (by version or created_at)
         meta = _select_latest(candidates)
 
     model_version = meta["version"]
@@ -352,23 +297,8 @@ def load_model_and_metadata(
             f"Model artifact not found at {path} for type={model_type}, version={model_version}"
         )
 
-    model = pd.read_pickle(path)
+    raw_model = pd.read_pickle(path)
+    model = ModelWrapper(raw_model)
+
     logger.info(f"Loaded model type={model_type}, version={model_version} from {path}")
     return model, meta
-
-
-def _load_index() -> dict:
-    """
-    Load the model registry index JSON file.
-    Returns an empty structure if missing or corrupted.
-    """
-    if not MODEL_REGISTRY_INDEX.exists():
-        logger.warning(f"[Registry] Index not found: {MODEL_REGISTRY_INDEX}")
-        return {"models": []}
-
-    try:
-        with open(MODEL_REGISTRY_INDEX, "r") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"[Registry] Failed to load index: {e}")
-        return {"models": []}

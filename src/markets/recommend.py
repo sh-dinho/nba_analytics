@@ -1,34 +1,15 @@
-# ============================================================
-# 🏀 NBA Analytics v3
-# Module: Automated Betting Recommendations
-# File: src/markets/recommend.py
-# Author: Sadiq
-#
-# Description:
-#     Produces unified betting recommendations across:
-#       - Moneyline (ML)
-#       - Totals (Over/Under)
-#       - Spread (ATS)
-#
-#     Includes:
-#       - Edge-based confidence scoring
-#       - Volatility penalties
-#       - Team stability penalties
-#       - Back-to-back fatigue flags
-#       - Injury uncertainty flags (placeholder for future)
-#
-#     Output:
-#       A clean recommendation table ready for:
-#         - Dashboard (Advanced Predictions tab)
-#         - Telegram alerts
-#         - Daily reports
-# ============================================================
-
 from __future__ import annotations
 
-import pandas as pd
+# ============================================================
+# 🏀 NBA Analytics v4
+# Module: Automated Betting Recommendations
+# File: src/markets/recommend.py
+# ============================================================
+
 from dataclasses import dataclass
 from typing import Optional
+
+import pandas as pd
 from loguru import logger
 
 from src.analytics.team_stability import (
@@ -45,15 +26,47 @@ class RecommendationConfig:
     min_bets: int = 20
 
 
+def implied_prob(odds: float) -> float:
+    if odds > 0:
+        return 100 / (odds + 100)
+    return -odds / (-odds + 100)
+
+
+def _normalize(value: float, min_val: float, max_val: float) -> float:
+    if pd.isna(value) or max_val == min_val:
+        return 0.0
+    return max(0.0, min(1.0, (value - min_val) / (max_val - min_val)))
+
+
+def _compute_recommendation_score(row: pd.Series) -> float:
+    p = row.get("win_probability", 0.0)
+    edge = row.get("ml_edge", 0.0)
+    stability = row.get("stability_score", 0.0)
+
+    p_norm = _normalize(p, 0.50, 0.70)
+    edge_norm = _normalize(edge, 0.00, 0.08)
+    stab_norm = _normalize(stability, 0.0, 1.0)
+
+    w_p = 0.4
+    w_edge = 0.4
+    w_stab = 0.2
+
+    score = w_p * p_norm + w_edge * edge_norm + w_stab * stab_norm
+    return float(max(0.0, min(1.0, score)))
+
+
+def _compute_confidence_index(score: float) -> int:
+    if pd.isna(score):
+        return 0
+    return int(round(100 * max(0.0, min(1.0, score))))
+
+
 def _merge_prediction_frames(
     ml: pd.DataFrame,
     totals: pd.DataFrame,
     spread: pd.DataFrame,
     odds: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Merge all prediction frames into a single table keyed by game_id.
-    """
     df = ml.merge(odds, on="game_id", how="left")
     df = df.merge(totals, on="game_id", how="left")
     df = df.merge(spread, on="game_id", how="left")
@@ -61,15 +74,20 @@ def _merge_prediction_frames(
 
 
 def _apply_filters(df: pd.DataFrame, cfg: RecommendationConfig) -> pd.DataFrame:
-    """
-    Apply probability, edge, and stability filters.
-    """
     if df.empty:
         return df
 
-    # Moneyline edge: model win_prob minus implied probability from American odds
-    # price is expected to be American odds like -110, +120, etc.
-    df["ml_edge"] = df["win_probability"] - (1 / (1 + abs(df["price"]) / 100))
+    if "price" not in df.columns:
+        df["ml_edge"] = 0.0
+    else:
+        df["ml_edge"] = df.apply(
+            lambda r: (
+                r["win_probability"] - implied_prob(r["price"])
+                if pd.notna(r.get("price"))
+                else 0.0
+            ),
+            axis=1,
+        )
 
     filtered = df[
         (df["win_probability"] >= cfg.min_probability)
@@ -80,49 +98,6 @@ def _apply_filters(df: pd.DataFrame, cfg: RecommendationConfig) -> pd.DataFrame:
     return filtered
 
 
-def _normalize(value: float, min_val: float, max_val: float) -> float:
-    """
-    Normalize a value into [0, 1] given a range.
-    """
-    if pd.isna(value):
-        return 0.0
-    if max_val == min_val:
-        return 0.0
-    return max(0.0, min(1.0, (value - min_val) / (max_val - min_val)))
-
-
-def _compute_recommendation_score(row: pd.Series) -> float:
-    """
-    Combine edge, probability, and stability into a single score in [0, 1].
-    This is intentionally simple and transparent.
-    """
-    p = row.get("win_probability", 0.0)
-    edge = row.get("ml_edge", 0.0)
-    stability = row.get("stability_score", 0.0)
-
-    # Soft caps for normalization
-    p_norm = _normalize(p, 0.50, 0.70)  # 50%–70% range
-    edge_norm = _normalize(edge, 0.00, 0.08)  # 0%–8% edge range
-    stab_norm = _normalize(stability, 0.0, 1.0)  # stability already in [0,1] ideally
-
-    # Weights (tunable)
-    w_p = 0.4
-    w_edge = 0.4
-    w_stab = 0.2
-
-    score = w_p * p_norm + w_edge * edge_norm + w_stab * stab_norm
-    return float(max(0.0, min(1.0, score)))
-
-
-def _compute_confidence_index(score: float) -> int:
-    """
-    Map recommendation_score in [0, 1] to a 0–100 confidence index.
-    """
-    if pd.isna(score):
-        return 0
-    return int(round(100 * max(0.0, min(1.0, score))))
-
-
 def generate_recommendations(
     ml: pd.DataFrame,
     totals: pd.DataFrame,
@@ -130,26 +105,16 @@ def generate_recommendations(
     odds: pd.DataFrame,
     cfg: Optional[RecommendationConfig] = None,
 ) -> pd.DataFrame:
-    """
-    Generate automated betting recommendations by combining:
-    - moneyline predictions
-    - totals predictions
-    - spread predictions
-    - market odds
-    - team stability scores
-    """
     cfg = cfg or RecommendationConfig()
 
-    logger.info("🏀 Generating automated betting recommendations")
+    logger.info("🏀 Generating automated betting recommendations (v4)")
 
-    # Merge all predictions
     df = _merge_prediction_frames(ml, totals, spread, odds)
 
     if df.empty:
         logger.warning("No prediction data available for recommendations.")
         return pd.DataFrame()
 
-    # Compute team stability using the new API
     stability_cfg = TeamStabilityConfig(
         start=None,
         end=None,
@@ -162,27 +127,25 @@ def generate_recommendations(
     )
 
     if stability_df.empty:
-        logger.warning("Team stability data unavailable; skipping stability filter.")
+        logger.warning("Team stability data unavailable; using zero stability.")
         df["stability_score"] = 0.0
     else:
         df = df.merge(stability_df, on="team", how="left")
         df["stability_score"] = df["stability_score"].fillna(0.0)
 
-    # Apply filters (including min_probability, min_edge, min_stability)
     df = _apply_filters(df, cfg)
 
     if df.empty:
         logger.warning("No recommendations after applying filters.")
         return pd.DataFrame()
 
-    # Scoring model + confidence index
     df["recommendation_score"] = df.apply(_compute_recommendation_score, axis=1)
     df["confidence_index"] = df["recommendation_score"].apply(_compute_confidence_index)
 
-    # Sort by best opportunities first
-    df = df.sort_values("recommendation_score", ascending=False).reset_index(drop=True)
+    for col in ["predicted_total", "market_total", "predicted_margin", "market_spread"]:
+        if col not in df.columns:
+            df[col] = pd.NA
 
-    # Final recommendation label
     df["recommendation"] = df.apply(
         lambda row: (
             f"Bet {row['team']} ML "
@@ -193,12 +156,15 @@ def generate_recommendations(
         axis=1,
     )
 
+    df = df.sort_values("recommendation_score", ascending=False).reset_index(drop=True)
+
     return df[
         [
             "game_id",
             "team",
             "opponent",
             "win_probability",
+            "price",
             "ml_edge",
             "predicted_total",
             "predicted_margin",
@@ -213,10 +179,6 @@ def generate_recommendations(
 
 
 def summarize_recommendations_for_dashboard(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Produce a clean, dashboard‑ready summary of recommendations.
-    Assumes df is the output of generate_recommendations.
-    """
     if df.empty:
         return pd.DataFrame(
             columns=[
@@ -228,6 +190,7 @@ def summarize_recommendations_for_dashboard(df: pd.DataFrame) -> pd.DataFrame:
                 "edge_pct",
                 "win_probability",
                 "stability_score",
+                "price",
             ]
         )
 
@@ -238,7 +201,6 @@ def summarize_recommendations_for_dashboard(df: pd.DataFrame) -> pd.DataFrame:
     out["win_probability"] = (out["win_probability"] * 100).round(1)
     out["stability_score"] = out["stability_score"].round(2)
 
-    # Keep highest‑scoring recommendation per team/game
     out = (
         out.sort_values("recommendation_score", ascending=False)
         .groupby(["game_id", "team"], as_index=False)
@@ -255,5 +217,6 @@ def summarize_recommendations_for_dashboard(df: pd.DataFrame) -> pd.DataFrame:
             "edge_pct",
             "win_probability",
             "stability_score",
+            "price",
         ]
     ].rename(columns={"recommendation": "bet"})

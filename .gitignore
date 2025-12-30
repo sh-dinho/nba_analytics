@@ -84,6 +84,7 @@ temp/
 # Environment / Secrets
 # ============================================================
 *.env
+.env
 .env.*
 secrets.json
 credentials.json
