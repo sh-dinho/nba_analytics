@@ -1,8 +1,9 @@
 # ============================================================
-# PyCharm / IntelliJ
+# IDE / Editor
 # ============================================================
 .idea/
 *.iml
+.vscode/
 
 # ============================================================
 # Python
@@ -12,21 +13,22 @@ __pycache__/
 *.pyo
 *.pyd
 *.pdb
+*.log
 *.pkl
 *.pickle
-*.log
 
-# Byte-compiled / optimized / DLL files
+# Compiled extensions
 *.so
 *.dylib
 *.dll
 
 # Virtual environments
 venv/
-.env/
 .venv/
 env/
 ENV/
+.env
+.env.*
 
 # Jupyter
 .ipynb_checkpoints/
@@ -49,7 +51,7 @@ Thumbs.db
 # Project-specific (NBA Analytics Engine)
 # ============================================================
 
-# Data directories
+# Canonical data directories
 data/
 !data/.gitkeep
 
@@ -81,11 +83,8 @@ temp/
 .cache/
 
 # ============================================================
-# Environment / Secrets
+# Secrets
 # ============================================================
-*.env
-.env
-.env.*
 secrets.json
 credentials.json
 
@@ -93,8 +92,3 @@ credentials.json
 # Streamlit
 # ============================================================
 .streamlit/
-
-# ============================================================
-# VSCode (if you ever open it there)
-# ============================================================
-.vscode/

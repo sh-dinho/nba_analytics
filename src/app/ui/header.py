@@ -1,21 +1,30 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
-# Module: Streamlit UI Header
+# 🏀 NBA Analytics v5.0
+# Name: Streamlit UI Header
 # File: src/app/ui/header.py
+# Purpose: Render global app header with version and tagline.
 # ============================================================
 
 import streamlit as st
 
+APP_VERSION = "5.0.0"
+
 
 def render_header() -> None:
     st.markdown(
-        """
-        <div style="padding: 10px 0; border-bottom: 1px solid #444;">
-            <h1 style="margin: 0; font-size: 30px;">🏀 NBA Analytics v4</h1>
-            <p style="margin: 0; font-size: 14px; color: #888;">
-                Canonical ingestion • v4 features • schema-aware models • auto-promotion • betting analytics
+        f"""
+        <div style="
+            padding: 12px 0;
+            border-bottom: 1px solid #444;
+            margin-bottom: 10px;
+        ">
+            <h1 style="margin: 0; font-size: 30px;">
+                🏀 NBA Analytics v{APP_VERSION}
+            </h1>
+            <p style="margin: 0; font-size: 14px; color: #aaa;">
+                Automated recommendations • Smart parlays • Model registry • Pipeline health • Bet tracking • Simulation lab
             </p>
         </div>
         """,

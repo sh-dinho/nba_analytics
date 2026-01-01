@@ -1,0 +1,34 @@
+# ============================================================
+# Line endings
+# ============================================================
+* text=auto eol=lf
+
+# ============================================================
+# Python files
+# ============================================================
+*.py text diff=python
+
+# JSON / YAML
+*.json text
+*.yaml text
+*.yml text
+
+# Notebooks
+*.ipynb text
+
+# Parquet / binary data
+*.parquet binary
+*.pkl binary
+*.pickle binary
+
+# Images
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+
+# Logs
+*.log text
+
+# Shell scripts
+*.sh text eol=lf

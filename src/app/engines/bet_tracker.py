@@ -1,21 +1,29 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
-# Module: Bet Tracker Engine
+# 🏀 NBA Analytics v5.0
+# Name: Bet Tracker Engine
 # File: src/app/engines/bet_tracker.py
+# Purpose: Persistent bet logging, ROI/Sharpe, Kelly, and
+#          bankroll simulation utilities.
 # ============================================================
 
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-import fcntl
 import numpy as np
 import pandas as pd
 from loguru import logger
 
 from src.config.paths import BET_LOG_PATH
+
+try:
+    import fcntl
+
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False
 
 
 @dataclass
@@ -33,6 +41,9 @@ class BetRecord:
     payout: float
     edge: Optional[float] = None
     confidence: Optional[str] = None
+    confidence_rank: Optional[int] = None
+    model_version: Optional[str] = None
+    source: Optional[str] = None  # e.g. "manual", "automated", "parlay_builder"
 
 
 def _ensure_log_exists() -> None:
@@ -53,6 +64,9 @@ def _ensure_log_exists() -> None:
                 "payout",
                 "edge",
                 "confidence",
+                "confidence_rank",
+                "model_version",
+                "source",
             ]
         )
         df.to_csv(BET_LOG_PATH, index=False)
@@ -61,19 +75,42 @@ def _ensure_log_exists() -> None:
 
 def load_bets() -> pd.DataFrame:
     _ensure_log_exists()
-    return pd.read_csv(BET_LOG_PATH)
+    df = pd.read_csv(
+        BET_LOG_PATH,
+        dtype={
+            "bet_id": str,
+            "date": str,
+            "game_date": str,
+            "market": str,
+            "team": str,
+            "opponent": str,
+            "bet_description": str,
+            "odds": float,
+            "stake": float,
+            "result": str,
+            "payout": float,
+            "edge": float,
+            "confidence": str,
+            "confidence_rank": float,
+            "model_version": str,
+            "source": str,
+        },
+    )
+    return df
 
 
-def append_bet(record: BetRecord):
+def append_bet(record: BetRecord) -> None:
     _ensure_log_exists()
     new_data = pd.DataFrame([asdict(record)])
 
     with open(BET_LOG_PATH, "a") as f:
         try:
-            fcntl.flock(f, fcntl.LOCK_EX)  # Lock the file for writing
+            if HAS_FCNTL:
+                fcntl.flock(f, fcntl.LOCK_EX)
             new_data.to_csv(f, header=False, index=False)
         finally:
-            fcntl.flock(f, fcntl.LOCK_UN)  # Release lock
+            if HAS_FCNTL:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _american_odds_profit(odds: float, stake: float) -> float:
@@ -103,7 +140,15 @@ def update_bet_result(bet_id: str, result: str) -> None:
     df.at[idx, "result"] = result
     df.at[idx, "payout"] = float(profit)
 
-    df.to_csv(BET_LOG_PATH, index=False)
+    with open(BET_LOG_PATH, "w") as f:
+        try:
+            if HAS_FCNTL:
+                fcntl.flock(f, fcntl.LOCK_EX)
+            df.to_csv(f, index=False)
+        finally:
+            if HAS_FCNTL:
+                fcntl.flock(f, fcntl.LOCK_UN)
+
     logger.info(f"[BetTracker] Updated bet {bet_id} → {result}, payout={profit}")
 
 
@@ -151,6 +196,16 @@ def compute_sharpe_ratio(df: pd.DataFrame) -> float:
 
 
 def kelly_fraction(win_prob: float, odds: float) -> float:
+    """
+    Kelly fraction f* = (b*p - q) / b, where:
+      - b is decimal odds minus 1 for the bet
+      - p is win probability
+      - q = 1 - p
+    """
+    if win_prob > 1:
+        win_prob /= 100.0
+    win_prob = min(max(win_prob, 0.0001), 0.9999)
+
     if odds > 0:
         b = odds / 100.0
     else:
@@ -167,6 +222,9 @@ def simulate_bankroll(
     n_sims: int = 3000,
     horizon: int = 200,
 ) -> np.ndarray:
+    """
+    Simple flat-stake bankroll simulation using historical payout distribution.
+    """
     n = len(payouts)
     results = np.zeros((n_sims, horizon), dtype=float)
 
@@ -181,4 +239,7 @@ def simulate_bankroll(
 
 
 def new_bet_id() -> str:
-    return datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+    # High-res timestamp + random suffix to avoid collisions
+    from uuid import uuid4
+
+    return datetime.utcnow().strftime("%Y%m%d%H%M%S%f") + "_" + uuid4().hex[:6]

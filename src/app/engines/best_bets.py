@@ -1,37 +1,24 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
-# Module: Best Bets Engine
+# 🏀 NBA Analytics v5.0
+# Name: Best Bets Engine
 # File: src/app/engines/best_bets.py
-#
-# Description:
-#     Combines moneyline, totals, and spread predictions into a
-#     single "best bets" table with:
-#       - market
-#       - bet description
-#       - odds (if available)
-#       - model win probability (if available)
-#       - edge
-#       - confidence tier (High/Medium/Low)
+# Purpose: Combine ML, totals, and spread predictions into a
+#          unified best-bets table with edges and confidence.
 # ============================================================
 
 from datetime import date
-from typing import Optional
+from typing import Optional, Dict
 
 import pandas as pd
 
 from src.model.predict import run_prediction_for_date
 from src.model.predict_totals import run_totals_prediction_for_date
 from src.model.predict_spread import run_spread_prediction_for_date
+from src.app.engines.betting_math import implied_prob
 
-
-def implied_prob(odds: Optional[float]) -> Optional[float]:
-    if odds is None:
-        return None
-    if odds > 0:
-        return 100 / (odds + 100)
-    return -odds / (-odds + 100)
+CONF_RANK: Dict[str, int] = {"High": 3, "Medium": 2, "Low": 1, "None": 0}
 
 
 def _confidence_from_edge_pct(edge: float) -> str:
@@ -55,21 +42,37 @@ def _confidence_from_points(diff: float) -> str:
 
 
 def compute_best_bets(pred_date: date) -> pd.DataFrame:
+    """
+    Build a unified best-bets table for a given prediction date.
+    Moneyline bets use EV edge; totals and spreads use point-difference.
+    """
     ml = run_prediction_for_date(pred_date)
     tot = run_totals_prediction_for_date(pred_date)
     sp = run_spread_prediction_for_date(pred_date)
 
     bets = []
 
+    # -------------------------
     # Moneyline
+    # -------------------------
     if not ml.empty and {"moneyline_odds", "win_probability"} <= set(ml.columns):
         ml = ml.copy()
+
+        # Normalize win_probability to 0–1 if needed
+        ml["win_probability"] = ml["win_probability"].apply(
+            lambda x: x / 100.0 if x > 1 else x
+        )
+
         ml["implied"] = ml["moneyline_odds"].apply(implied_prob)
         ml["edge"] = ml["win_probability"] - ml["implied"]
 
         for _, r in ml.iterrows():
             if r["edge"] <= 0:
                 continue
+
+            edge_val = float(r["edge"])
+            conf = _confidence_from_edge_pct(edge_val)
+
             bets.append(
                 {
                     "market": "Moneyline",
@@ -78,12 +81,15 @@ def compute_best_bets(pred_date: date) -> pd.DataFrame:
                     "bet": f"{r['team']} ML",
                     "odds": float(r["moneyline_odds"]),
                     "win_prob": float(r["win_probability"]),
-                    "edge": float(r["edge"]),
-                    "confidence": _confidence_from_edge_pct(float(r["edge"])),
+                    "edge": edge_val,
+                    "confidence": conf,
+                    "confidence_rank": CONF_RANK[conf],
                 }
             )
 
+    # -------------------------
     # Totals
+    # -------------------------
     if not tot.empty and {"total_line", "predicted_total_points"} <= set(tot.columns):
         tot = tot.copy()
         tot["diff"] = tot["predicted_total_points"] - tot["total_line"]
@@ -92,21 +98,28 @@ def compute_best_bets(pred_date: date) -> pd.DataFrame:
             diff = float(r["diff"])
             if abs(diff) < 2:
                 continue
+
             direction = "Over" if diff > 0 else "Under"
+            diff_abs = abs(diff)
+            conf = _confidence_from_points(diff_abs)
+
             bets.append(
                 {
                     "market": "Totals",
                     "team": r["home_team"],
                     "opponent": r["away_team"],
-                    "bet": f"{direction} {r['total_line']}",
+                    "bet": f"{direction} {float(r['total_line']):.1f}",
                     "odds": None,
                     "win_prob": None,
-                    "edge": abs(diff),
-                    "confidence": _confidence_from_points(abs(diff)),
+                    "edge": diff_abs,
+                    "confidence": conf,
+                    "confidence_rank": CONF_RANK[conf],
                 }
             )
 
+    # -------------------------
     # Spread
+    # -------------------------
     if not sp.empty and {"spread_line", "predicted_margin"} <= set(sp.columns):
         sp = sp.copy()
         sp["diff"] = sp["predicted_margin"] - sp["spread_line"]
@@ -115,17 +128,23 @@ def compute_best_bets(pred_date: date) -> pd.DataFrame:
             diff = float(r["diff"])
             if abs(diff) < 2:
                 continue
-            direction = r["home_team"] if diff > 0 else r["away_team"]
+
+            line = float(r["spread_line"])
+            direction_team = r["home_team"] if diff > 0 else r["away_team"]
+            diff_abs = abs(diff)
+            conf = _confidence_from_points(diff_abs)
+
             bets.append(
                 {
                     "market": "Spread",
                     "team": r["home_team"],
                     "opponent": r["away_team"],
-                    "bet": f"{direction} ATS",
+                    "bet": f"{direction_team} {line:+.1f}",
                     "odds": None,
                     "win_prob": None,
-                    "edge": abs(diff),
-                    "confidence": _confidence_from_points(abs(diff)),
+                    "edge": diff_abs,
+                    "confidence": conf,
+                    "confidence_rank": CONF_RANK[conf],
                 }
             )
 
@@ -133,4 +152,6 @@ def compute_best_bets(pred_date: date) -> pd.DataFrame:
     if df.empty:
         return df
 
-    return df.sort_values(["confidence", "edge"], ascending=[True, False])
+    return df.sort_values(
+        ["confidence_rank", "edge"], ascending=[False, False]
+    ).reset_index(drop=True)

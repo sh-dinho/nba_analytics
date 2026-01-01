@@ -1,60 +1,151 @@
+from __future__ import annotations
+
 # ============================================================
+# 🏀 NBA Analytics
+# Module: Unified Recommendation Pipeline
 # File: src/betting/recommendations.py
+# Author: Sadiq
+#
+# Description:
+#     High-level wrapper that ties together:
+#       • value bet construction
+#       • recommendation ranking
+#       • auto-bet execution (optional)
+#       • dashboard export
+#       • alert export
 # ============================================================
 
 import pandas as pd
+from loguru import logger
+
+from src.betting.value_bets import build_value_bets
+from src.betting.recommend_bets import recommend_bets
+from src.betting.auto_bet import execute_bets
 
 
-def recommend_bets(bets_df, min_edge=0.03, min_ev=0.0, max_kelly=0.05, bankroll=100):
-    if bets_df.empty:
-        return bets_df
+class RecommendationPipeline:
+    """
+    Unified pipeline for generating and optionally executing
+    betting recommendations.
 
-    df = bets_df.copy()
+    Parameters
+    ----------
+    bankroll : float
+        Current bankroll used for stake sizing.
+    min_edge : float | None
+        Minimum required edge for a bet to be considered.
+    min_ev : float | None
+        Minimum expected value per unit.
+    max_kelly : float | None
+        Maximum Kelly fraction allowed.
+    """
 
-    df = df[df["edge"] >= min_edge]
-    df = df[df["ev_per_unit"] >= min_ev]
-    df = df[df["kelly_fraction"] <= max_kelly]
+    def __init__(
+        self,
+        bankroll: float,
+        min_edge: float | None = None,
+        min_ev: float | None = None,
+        max_kelly: float | None = None,
+    ):
+        self.bankroll = bankroll
+        self.min_edge = min_edge
+        self.min_ev = min_ev
+        self.max_kelly = max_kelly
 
-    if df.empty:
-        return df
+    # --------------------------------------------------------
+    # Main pipeline
+    # --------------------------------------------------------
+    def run(
+        self,
+        predictions: pd.DataFrame,
+        odds: pd.DataFrame,
+        execute: bool = False,
+        dry_run: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Run the unified recommendation pipeline.
 
-    df["recommended_stake"] = bankroll * df["kelly_fraction"]
+        Steps:
+            1. Build value bets
+            2. Rank + filter recommendations
+            3. Optionally execute bets
+        """
+        logger.info("🏀 Starting unified recommendation pipeline")
 
-    df["confidence"] = (
-        df["edge"] * 50 + df["ev_per_unit"] * 30 + df["kelly_fraction"] * 20
-    ) * 100
+        # Step 1 — Value bets
+        value_bets = build_value_bets(predictions, odds)
+        if value_bets.empty:
+            logger.warning("No value bets found.")
+            return value_bets
 
-    df = df.sort_values("confidence", ascending=False)
-
-    return df
-
-
-def explain_confidence(row):
-    reasons = []
-
-    if row["edge"] > 0.10:
-        reasons.append(
-            "Model probability is significantly higher than market implied probability."
+        # Step 2 — Recommendations
+        recs = recommend_bets(
+            value_bets,
+            bankroll=self.bankroll,
+            min_edge=self.min_edge,
+            min_ev=self.min_ev,
+            max_kelly=self.max_kelly,
         )
-    elif row["edge"] > 0.05:
-        reasons.append(
-            "Model probability is moderately higher than market implied probability."
-        )
-    else:
-        reasons.append("Model shows a small advantage over the market.")
 
-    if row["ev_per_unit"] > 0.05:
-        reasons.append("Expected value per unit is strong.")
-    elif row["ev_per_unit"] > 0.02:
-        reasons.append("Expected value per unit is positive.")
-    else:
-        reasons.append("Expected value is marginal.")
+        if recs.empty:
+            logger.warning("No recommendations after filtering.")
+            return recs
 
-    if row["kelly_fraction"] > 0.05:
-        reasons.append("Kelly suggests an aggressive stake.")
-    elif row["kelly_fraction"] > 0.02:
-        reasons.append("Kelly suggests a moderate stake.")
-    else:
-        reasons.append("Kelly suggests a small stake.")
+        # Step 3 — Optional execution
+        if execute:
+            return execute_bets(recs, bankroll=self.bankroll, dry_run=dry_run)
 
-    return " ".join(reasons)
+        return recs
+
+    # --------------------------------------------------------
+    # Dashboard formatting
+    # --------------------------------------------------------
+    @staticmethod
+    def to_dashboard(df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Format recommendations for dashboard display.
+        """
+        if df.empty:
+            return df
+
+        out = df.copy()
+        out["edge_pct"] = (out["edge"] * 100).round(1)
+        out["win_prob_pct"] = (out["model_prob"] * 100).round(1)
+        out["stake"] = out["recommended_stake"].round(2)
+
+        return out[
+            [
+                "game_id",
+                "market_team",
+                "market_side",
+                "ml",
+                "stake",
+                "edge_pct",
+                "win_prob_pct",
+                "confidence",
+                "prediction_date",
+                "model_version",
+            ]
+        ]
+
+    # --------------------------------------------------------
+    # Alert formatting
+    # --------------------------------------------------------
+    @staticmethod
+    def to_alert(df: pd.DataFrame) -> list[str]:
+        """
+        Convert recommendations into human-readable alert messages.
+        """
+        messages: list[str] = []
+
+        for _, row in df.iterrows():
+            msg = (
+                f"🏀 Bet {row['market_team']} ({row['market_side']}) ML {row['ml']}\n"
+                f"• Win Prob: {row['model_prob']:.2f}\n"
+                f"• Edge: {row['edge']:.3f}\n"
+                f"• Stake: {row['recommended_stake']:.2f}\n"
+                f"• Confidence: {row['confidence']:.1f}"
+            )
+            messages.append(msg)
+
+        return messages

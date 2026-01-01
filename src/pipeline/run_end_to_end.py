@@ -1,111 +1,126 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
-# Module: End-to-End Pipeline
+# 🏀 NBA Analytics
+# Module: End-to-End Pipeline Runner
 # File: src/pipeline/run_end_to_end.py
 # Author: Sadiq
 #
 # Description:
-#     Full v4 pipeline:
-#       1. Ingestion (yesterday + today)
-#       2. Load canonical long snapshot
-#       3. Build v4 features
-#       4. Train moneyline model (classification)
-#       5. Train totals model (regression)
-#       6. Train spread models (regression + ATS classification)
-#       7. Log summary
+#     Modern end-to-end pipeline:
+#       • load canonical long snapshot
+#       • build features
+#       • run predictions
+#       • save predictions
+#       • auto-retrain (optional)
+#
+#     This is the single entrypoint for daily automation.
 # ============================================================
 
-from datetime import date, timedelta
+import argparse
+from datetime import date
 import pandas as pd
 from loguru import logger
 
-from src.ingestion.pipeline import run_today_ingestion
-from src.config.paths import LONG_SNAPSHOT
 from src.features.builder import FeatureBuilder
-
-# v4 training modules
-from src.model.training_core import train_and_register_model
-from src.model.train_totals import train_totals_model
-from src.model.train_spread import train_spread_models
-
-
-# ------------------------------------------------------------
-# Main Orchestrator
-# ------------------------------------------------------------
+from src.pipeline.run_predictions import run_predictions
+from src.pipeline.auto_retrain import auto_retrain
+from src.config.paths import (
+    LONG_SNAPSHOT,
+    PREDICTIONS_DIR,
+)
 
 
-def run_end_to_end(pred_date: date | None = None) -> None:
-    logger.info("🏀 Starting v4 End-to-End Pipeline")
-
-    pred_date = pred_date or date.today()
-    yesterday = pred_date - timedelta(days=1)
+def run_end_to_end(
+    day: date,
+    feature_version: str,
+    model_version: str,
+    run_retrain: bool = False,
+):
+    logger.info(f"🚀 Running end-to-end pipeline for {day}")
 
     # --------------------------------------------------------
-    # Step 1 — Ingestion
+    # 1. Load canonical long snapshot
     # --------------------------------------------------------
-    logger.info("📥 Step 1: Ingestion (yesterday + today)")
-    run_today_ingestion([yesterday, pred_date])
+    logger.info("📥 Loading canonical long snapshot...")
+    try:
+        df_long = pd.read_parquet(LONG_SNAPSHOT)
+    except Exception as e:
+        logger.error(f"Failed to load LONG_SNAPSHOT: {e}")
+        return pd.DataFrame()
 
-    # --------------------------------------------------------
-    # Step 2 — Load canonical long snapshot
-    # --------------------------------------------------------
-    logger.info("🧱 Step 2: Loading Canonical Long Snapshot")
+    if df_long.empty:
+        logger.error("LONG_SNAPSHOT is empty — aborting.")
+        return pd.DataFrame()
 
-    if not LONG_SNAPSHOT.exists():
-        raise FileNotFoundError(f"Long snapshot not found at {LONG_SNAPSHOT}")
-
-    df = pd.read_parquet(LONG_SNAPSHOT)
-    last_date = df["date"].max()
-
-    logger.info(f"✅ Loaded canonical data: rows={len(df):,}, last_date={last_date}")
+    logger.info(f"Loaded long snapshot: {len(df_long)} rows")
 
     # --------------------------------------------------------
-    # Step 3 — Feature Building
+    # 2. Build features
     # --------------------------------------------------------
-    logger.info("🧱 Step 3: Feature Building")
+    logger.info("🏗️ Building features...")
+    fb = FeatureBuilder(version=feature_version)
 
-    fb = FeatureBuilder(version="v4")
-    features_df = fb.build_from_long(df)
+    try:
+        features = fb.build(df_long)
+    except Exception as e:
+        logger.error(f"Feature building failed: {e}")
+        return pd.DataFrame()
 
-    logger.success(
-        f"✅ Features built: rows={len(features_df):,}, cols={features_df.shape[1]}"
-    )
+    if features.empty:
+        logger.error("Feature builder returned empty DataFrame — aborting.")
+        return pd.DataFrame()
+
+    logger.info(f"Built features: {features.shape}")
 
     # --------------------------------------------------------
-    # Step 4 — Training Models
+    # 3. Run predictions
     # --------------------------------------------------------
-    logger.info("🧠 Step 4: Training Models")
+    logger.info("🔮 Running predictions...")
+    preds = run_predictions(df_long, feature_version=feature_version)
 
-    # -----------------------------
-    # Moneyline (classification)
-    # -----------------------------
-    logger.info("Training model: moneyline")
-    train_and_register_model(
-        model_type="moneyline",
-        df=features_df,
-        feature_version="v4",
-    )
+    if preds.empty:
+        logger.error("Prediction runner returned empty DataFrame — aborting.")
+        return preds
 
-    # -----------------------------
-    # Totals (regression)
-    # -----------------------------
-    logger.info("Training model: totals")
-    train_totals_model()
+    # --------------------------------------------------------
+    # 4. Save predictions
+    # --------------------------------------------------------
+    out_path = PREDICTIONS_DIR / f"predictions_{day}.parquet"
+    preds.to_parquet(out_path, index=False)
+    logger.success(f"📤 Saved predictions → {out_path}")
 
-    # -----------------------------
-    # Spread (regression + ATS classification)
-    # -----------------------------
-    logger.info("Training model: spread")
-    train_spread_models()
+    # --------------------------------------------------------
+    # 5. Auto-retrain (optional)
+    # --------------------------------------------------------
+    if run_retrain:
+        logger.info("🔄 Running auto-retrain...")
+        auto_retrain(
+            feature_version=feature_version,
+            model_version=model_version,
+        )
 
-    logger.success("🏁 End-to-End Pipeline Complete")
+    logger.success("✨ End-to-end pipeline complete.")
+    return preds
 
 
-# ------------------------------------------------------------
-# CLI Entrypoint
-# ------------------------------------------------------------
+# ============================================================
+# CLI
+# ============================================================
 
 if __name__ == "__main__":
-    run_end_to_end()
+    parser = argparse.ArgumentParser(description="Run end-to-end pipeline")
+    parser.add_argument("--date", required=True, help="YYYY-MM-DD")
+    parser.add_argument("--feature_version", required=True)
+    parser.add_argument("--model_version", required=True)
+    parser.add_argument("--retrain", action="store_true")
+
+    args = parser.parse_args()
+    day = date.fromisoformat(args.date)
+
+    run_end_to_end(
+        day,
+        feature_version=args.feature_version,
+        model_version=args.model_version,
+        run_retrain=args.retrain,
+    )

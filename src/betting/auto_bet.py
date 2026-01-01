@@ -1,20 +1,22 @@
 from __future__ import annotations
-# ============================================================
-# Project: NBA Analytics & Betting Engine
-# Author: Sadiq
-# Description: Execute recommended bets safely, log them, and
-#              prepare for integration with simulators or books.
-# ============================================================
 
+# ============================================================
+# 🏀 NBA Analytics
+# Module: Auto-Bet Execution
+# File: src/betting/auto_bet.py
+# Author: Sadiq
+#
+# Description:
+#     Execute recommended bets safely, log them, and prepare
+#     for integration with sportsbooks or simulators.
+# ============================================================
 
 from datetime import datetime
-from typing import Optional
-
 import pandas as pd
 from loguru import logger
 
 from src.config.betting import BANKROLL
-from src.config.paths import LOGS_DIR
+from src.config.paths import BET_LOG_PATH, BET_LOG_DIR
 
 
 REQUIRED_RECOMMENDATION_COLUMNS = [
@@ -36,34 +38,33 @@ REQUIRED_RECOMMENDATION_COLUMNS = [
 ]
 
 
-def _validate_recommendations(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Ensure the recommendations DataFrame is valid and safe to execute.
-    """
+# ------------------------------------------------------------
+# Validation
+# ------------------------------------------------------------
+def _validate(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
-        logger.info("auto_bet(): received empty recommendations.")
+        logger.info("auto_bet(): empty recommendations.")
         return pd.DataFrame()
 
     missing = set(REQUIRED_RECOMMENDATION_COLUMNS) - set(df.columns)
     if missing:
         raise ValueError(f"auto_bet(): missing required columns: {missing}")
 
-    # Drop zero or negative stakes
-    before = len(df)
+    # Remove zero or negative stakes
     df = df[df["recommended_stake"] > 0].copy()
-    dropped = before - len(df)
-    if dropped:
-        logger.info(f"auto_bet(): dropped {dropped} rows with non-positive stakes.")
+
+    # Remove NaN stakes
+    df = df[df["recommended_stake"].notna()]
 
     return df
 
 
-def _load_bet_log() -> pd.DataFrame:
-    """
-    Load existing bet log or create a new one.
-    """
-    path = LOGS_DIR / "bets.parquet"
-    if not path.exists():
+# ------------------------------------------------------------
+# Log loading + saving
+# ------------------------------------------------------------
+def _load_log() -> pd.DataFrame:
+    if not BET_LOG_PATH.exists():
+        BET_LOG_DIR.mkdir(parents=True, exist_ok=True)
         return pd.DataFrame(
             columns=[
                 "timestamp",
@@ -83,67 +84,71 @@ def _load_bet_log() -> pd.DataFrame:
                 "feature_version",
             ]
         )
-    return pd.read_parquet(path)
+    return pd.read_csv(BET_LOG_PATH)
 
 
-def _save_bet_log(df: pd.DataFrame):
-    """
-    Save the updated bet log.
-    """
-    path = LOGS_DIR / "bets.parquet"
-    df.to_parquet(path, index=False)
-    logger.success(f"auto_bet(): updated bet log → {path}")
+def _save_log(df: pd.DataFrame):
+    BET_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    df.to_csv(BET_LOG_PATH, index=False)
+    logger.success(f"auto_bet(): updated bet log → {BET_LOG_PATH}")
 
 
+# ------------------------------------------------------------
+# Execution
+# ------------------------------------------------------------
 def execute_bets(
     recommendations: pd.DataFrame,
     bankroll: float = BANKROLL,
     dry_run: bool = True,
 ) -> pd.DataFrame:
     """
-    Execute recommended bets.
+    Execute recommended bets and append them to the bet log.
 
-    Parameters:
-        recommendations: output of recommend_bets()
-        bankroll: bankroll used for sizing (for logging only)
-        dry_run: if True, no real betting integration is attempted
+    Parameters
+    ----------
+    recommendations : pd.DataFrame
+        Must contain REQUIRED_RECOMMENDATION_COLUMNS.
+    bankroll : float
+        Current bankroll (not modified here, but logged for context).
+    dry_run : bool
+        If True, no real bets are placed.
 
-    Returns:
-        DataFrame of executed bets (logged)
+    Returns
+    -------
+    pd.DataFrame
+        Executed bets (one row per bet).
     """
+
     logger.info("=== Auto-Bet Execution Start ===")
 
-    df = _validate_recommendations(recommendations)
+    df = _validate(recommendations)
     if df.empty:
         logger.info("auto_bet(): no bets to execute.")
         return df
 
-    # Load existing log
-    log_df = _load_bet_log()
-
-    executed_rows = []
+    log_df = _load_log()
+    executed = []
 
     for _, row in df.iterrows():
-        game_id = row["game_id"]
         stake = float(row["recommended_stake"])
-        ml = row["ml"]
 
-        # Dry-run mode: no external integration
+        # Safety guard
+        if stake <= 0 or pd.isna(stake):
+            logger.warning(f"Skipping invalid stake: {stake}")
+            continue
+
         if dry_run:
             logger.info(
-                f"[DRY RUN] Would place bet: game_id={game_id}, "
-                f"{row['market_team']} ({row['market_side']}), "
-                f"ML={ml}, stake={stake:.2f}"
+                f"[DRY RUN] Would place bet: {row['market_team']} ({row['market_side']}), "
+                f"ML={row['ml']}, stake={stake:.2f}"
             )
         else:
-            # Placeholder for future sportsbook integration
             logger.info(
-                f"[LIVE] Placing bet: game_id={game_id}, "
-                f"{row['market_team']} ({row['market_side']}), "
-                f"ML={ml}, stake={stake:.2f}"
+                f"[LIVE] Placing bet: {row['market_team']} ({row['market_side']}), "
+                f"ML={row['ml']}, stake={stake:.2f}"
             )
 
-        executed_rows.append(
+        executed.append(
             {
                 "timestamp": datetime.utcnow().isoformat(),
                 "game_id": row["game_id"],
@@ -163,11 +168,10 @@ def execute_bets(
             }
         )
 
-    # Append to log
-    executed_df = pd.DataFrame(executed_rows)
+    executed_df = pd.DataFrame(executed)
     log_df = pd.concat([log_df, executed_df], ignore_index=True)
 
-    _save_bet_log(log_df)
+    _save_log(log_df)
 
     logger.success(
         f"auto_bet(): executed {len(executed_df)} bets "

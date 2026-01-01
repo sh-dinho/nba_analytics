@@ -1,20 +1,21 @@
+from __future__ import annotations
+
 # ============================================================
-# Project: NBA Analytics & Betting Engine
-# Author: Sadiq
-# Description: Bankroll, Kelly, and exposure rules for bet sizing.
+# 🏀 NBA Analytics
+# Betting Configuration
 # ============================================================
 
-BANKROLL = 100
+BANKROLL: float = 1000.0
 
-KELLY_CAP = 0.05
-KELLY_MIN = 0.0
+KELLY_CAP: float = 0.05
+KELLY_MIN: float = 0.001
 
-MAX_TOTAL_EXPOSURE = 0.20
-MAX_EXPOSURE_PER_GAME = 0.05
-MAX_BETS_PER_DAY = 5
+MAX_TOTAL_EXPOSURE: float = 0.20
+MAX_EXPOSURE_PER_GAME: float = 0.10
+MAX_BETS_PER_DAY: int = 5
 
 CONFIDENCE_WEIGHTS = {
-    "edge": 0.50,
-    "ev": 0.30,
-    "kelly": 0.20,
+    "edge": 0.5,
+    "ev": 0.3,
+    "kelly": 0.2,
 }

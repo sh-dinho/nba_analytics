@@ -1,0 +1,128 @@
+{
+  "Atlanta Hawks": "ATL",
+  "Atlanta": "ATL",
+  "ATL": "ATL",
+
+  "Boston Celtics": "BOS",
+  "Boston": "BOS",
+  "BOS": "BOS",
+
+  "Brooklyn Nets": "BKN",
+  "Brooklyn": "BKN",
+  "BKN": "BKN",
+
+  "Charlotte Hornets": "CHA",
+  "Charlotte": "CHA",
+  "CHA": "CHA",
+
+  "Chicago Bulls": "CHI",
+  "Chicago": "CHI",
+  "CHI": "CHI",
+
+  "Cleveland Cavaliers": "CLE",
+  "Cleveland": "CLE",
+  "CLE": "CLE",
+
+  "Dallas Mavericks": "DAL",
+  "Dallas": "DAL",
+  "DAL": "DAL",
+
+  "Denver Nuggets": "DEN",
+  "Denver": "DEN",
+  "DEN": "DEN",
+
+  "Detroit Pistons": "DET",
+  "Detroit": "DET",
+  "DET": "DET",
+
+  "Golden State Warriors": "GSW",
+  "Golden State": "GSW",
+  "GS Warriors": "GSW",
+  "GSW": "GSW",
+
+  "Houston Rockets": "HOU",
+  "Houston": "HOU",
+  "HOU": "HOU",
+
+  "Indiana Pacers": "IND",
+  "Indiana": "IND",
+  "IND": "IND",
+
+  "Los Angeles Clippers": "LAC",
+  "LA Clippers": "LAC",
+  "LAC": "LAC",
+
+  "Los Angeles Lakers": "LAL",
+  "LA Lakers": "LAL",
+  "LAL": "LAL",
+
+  "Memphis Grizzlies": "MEM",
+  "Memphis": "MEM",
+  "MEM": "MEM",
+
+  "Miami Heat": "MIA",
+  "Miami": "MIA",
+  "MIA": "MIA",
+
+  "Milwaukee Bucks": "MIL",
+  "Milwaukee": "MIL",
+  "MIL": "MIL",
+
+  "Minnesota Timberwolves": "MIN",
+  "Minnesota": "MIN",
+  "MIN": "MIN",
+
+  "New Orleans Pelicans": "NOP",
+  "New Orleans": "NOP",
+  "NO Pelicans": "NOP",
+  "NOP": "NOP",
+
+  "New York Knicks": "NYK",
+  "NY Knicks": "NYK",
+  "New York": "NYK",
+  "NYK": "NYK",
+
+  "Oklahoma City Thunder": "OKC",
+  "Oklahoma City": "OKC",
+  "OKC Thunder": "OKC",
+  "OKC": "OKC",
+
+  "Orlando Magic": "ORL",
+  "Orlando": "ORL",
+  "ORL": "ORL",
+
+  "Philadelphia 76ers": "PHI",
+  "Philadelphia": "PHI",
+  "PHI": "PHI",
+
+  "Phoenix Suns": "PHX",
+  "Phoenix": "PHX",
+  "PHX Suns": "PHX",
+  "PHX": "PHX",
+
+  "Portland Trail Blazers": "POR",
+  "Portland": "POR",
+  "POR": "POR",
+
+  "Sacramento Kings": "SAC",
+  "Sacramento": "SAC",
+  "SAC": "SAC",
+
+  "San Antonio Spurs": "SAS",
+  "San Antonio": "SAS",
+  "SA Spurs": "SAS",
+  "SAS": "SAS",
+
+  "Toronto Raptors": "TOR",
+  "Toronto": "TOR",
+  "TOR": "TOR",
+
+  "Utah Jazz": "UTA",
+  "Utah": "UTA",
+  "UTA": "UTA",
+
+  "Washington Wizards": "WAS",
+  "Washington": "WAS",
+  "WSH Wizards": "WAS",
+  "WAS": "WAS"
+}

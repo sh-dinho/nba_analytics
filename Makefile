@@ -1,36 +1,37 @@
-# Makefile for NBA Analytics v3
-PYTHON := python
+# ============================================================
+# NBA Analytics Engine — Makefile
+# ============================================================
 
-.PHONY: full fetch_data run_pipeline dashboard monitor clean
+PYTHON=python3
 
-# Default: Runs the whole data flow
-full: fetch_data run_pipeline
-	@echo "✅ Full NBA pipeline finished!"
+install:
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install -r requirements.txt
 
-# Step 0: Data Acquisition
-fetch_data:
-	@echo "⏳ Fetching latest NBA games..."
-	$(PYTHON) -m src.scripts.fetch_real_nba_data
+lint:
+	ruff check .
 
-# Step 1-5: The Core Pipeline
-run_pipeline:
-	@echo "⏳ Running full ML pipeline..."
-	$(PYTHON) -m src.pipeline.pipeline_runner
+format:
+	black .
+	isort .
 
-# Launch the Streamlit UI
-dashboard:
-	@echo "🚀 Launching Streamlit Dashboard..."
-	streamlit run streamlit_app.py
+typecheck:
+	mypy src/
 
-# Launch Prometheus and Grafana (requires Docker)
+test:
+	pytest -q
+
+ingest:
+	$(PYTHON) -m src.scripts.run_ingestion
+
+predict:
+	$(PYTHON) -m src.scripts.predict_today
+
 monitor:
-	@echo "📊 Spinning up Monitoring Stack..."
-	docker-compose up -d
-	@echo "Grafana: http://localhost:3000 | Prometheus: http://localhost:9090"
+	$(PYTHON) -m src.scripts.monitor_daily
 
-# Cleanup intermediate files
-clean:
-	@echo "🧹 Cleaning data directories..."
-	rm -rf data/ingestion/*.parquet
-	rm -rf data/predictions/*.parquet
-	rm -rf data/rankings/*.parquet
+dashboard:
+	$(PYTHON) -m src.scripts.generate_data_quality_dashboard
+
+backtest:
+	$(PYTHON) -m src.scripts.run_backtest_report --range 30

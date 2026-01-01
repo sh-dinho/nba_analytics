@@ -1,0 +1,16 @@
+{
+  "target": "won",
+  "features": [
+    "elo",
+    "opp_elo",
+    "score_diff",
+    "roll_margin_5",
+    "roll_margin_10",
+    "roll_win_rate_5",
+    "roll_win_rate_10",
+    "rest_days",
+    "is_home",
+    "form_last3",
+    "sos"
+  ]
+}

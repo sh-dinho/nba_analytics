@@ -1,33 +1,68 @@
 from __future__ import annotations
+
 # ============================================================
-# 🏀 NBA Analytics v3
+# 🏀 NBA Analytics
 # Module: Strategy Comparison
 # File: src/backtest/compare.py
 # Author: Sadiq
 #
 # Description:
-#     Runs multiple backtest configurations and compares:
-#       - ROI
-#       - final bankroll
-#       - hit rate
-#       - drawdown
-#       - bet volume
+#     Compare multiple backtest configurations using the
+#     canonical Backtester + BacktestResult.
+#
+#     Metrics:
+#       • ROI
+#       • final bankroll
+#       • hit rate
+#       • max drawdown
+#       • bet volume
+#       • average edge
+#       • CLV
 # ============================================================
 
-
 import pandas as pd
+from loguru import logger
 
 from src.backtest.engine import Backtester
+from src.backtest.config import BacktestConfig
 
 
-def compare_strategies(configs: dict, start_date: str, end_date: str) -> pd.DataFrame:
+def compare_strategies(
+    configs: dict[str, BacktestConfig],
+    merged_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Compare multiple backtest configurations on the same dataset.
+
+    Parameters
+    ----------
+    configs : dict[str, BacktestConfig]
+        Mapping: strategy name → BacktestConfig
+    merged_df : pd.DataFrame
+        Canonical merged dataset produced by load_backtest_data()
+
+    Returns
+    -------
+    pd.DataFrame
+        Summary of performance for each strategy.
+    """
+
+    logger.info("🏀 Running strategy comparison across configurations...")
+
+    if merged_df.empty:
+        logger.warning("compare_strategies(): merged_df is empty.")
+        return pd.DataFrame()
+
     rows = []
 
     for name, cfg in configs.items():
-        bt = Backtester(cfg)
-        res = bt.run(start_date=start_date, end_date=end_date)
+        logger.info(f"→ Running strategy '{name}'")
 
-        if not res:
+        bt = Backtester(cfg)
+        result = bt.run(merged_df)
+
+        if result is None or result.n_bets == 0:
+            logger.warning(f"Strategy '{name}' returned no bets.")
             rows.append(
                 {
                     "strategy": name,
@@ -36,6 +71,8 @@ def compare_strategies(configs: dict, start_date: str, end_date: str) -> pd.Data
                     "hit_rate": None,
                     "max_drawdown": None,
                     "num_bets": 0,
+                    "avg_edge": None,
+                    "clv": None,
                     "has_data": False,
                 }
             )
@@ -44,13 +81,16 @@ def compare_strategies(configs: dict, start_date: str, end_date: str) -> pd.Data
         rows.append(
             {
                 "strategy": name,
-                "roi": res["roi"],
-                "final_bankroll": res["final_bankroll"],
-                "hit_rate": res["hit_rate"],
-                "max_drawdown": res["max_drawdown"],
-                "num_bets": res["num_bets"],
+                "roi": result.roi,
+                "final_bankroll": result.final_bankroll,
+                "hit_rate": result.hit_rate,
+                "max_drawdown": result.max_drawdown,
+                "num_bets": result.n_bets,
+                "avg_edge": result.avg_edge,
+                "clv": result.clv,
                 "has_data": True,
             }
         )
 
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    return df.sort_values("roi", ascending=False).reset_index(drop=True)

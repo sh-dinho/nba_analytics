@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
-# Page: Pipeline Health Dashboard
+# 🏀 NBA Analytics v5.0
+# Name: Pipeline Health Dashboard
 # File: src/app/pages/15_Pipeline_Health.py
-#
-# Description:
-#     Shows ingestion + prediction freshness,
-#     model registry status, missing games,
-#     and includes a "Run Pipeline Now" button.
+# Purpose: Display ingestion and prediction freshness,
+#          model registry status, and trigger pipeline runs.
 # ============================================================
 
 from datetime import datetime, timedelta
@@ -24,89 +21,75 @@ from src.app.utils.pipeline_status import (
     get_ingestion_last_run,
 )
 from src.app.utils.pipeline_trigger import trigger_full_pipeline
-
-from src.config.paths import DATA_DIR, MODEL_REGISTRY_PATH
+from src.config.paths import DATA_DIR
 from src.model.registry import list_models
 
-
-from src.app.ui.header import render_header
-from src.app.ui.page_state import set_active_page
-from src.app.ui.navbar import render_navbar
+st.set_page_config(page_title="Pipeline Health", page_icon="🩺", layout="wide")
 
 render_header()
-set_active_page("PAGE NAME HERE")
+set_active_page("Pipeline Health")
 render_navbar()
 
+st.title("🩺 Pipeline Health Dashboard")
 
-# ------------------------------------------------------------
-# Helper: color-coded freshness
-# ------------------------------------------------------------
+
 def freshness_badge(timestamp: str) -> str:
     try:
-        dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S UTC")
+        dt = datetime.strptime(timestamp.replace(" UTC", ""), "%Y-%m-%d %H:%M:%S")
         age = datetime.utcnow() - dt
 
         if age < timedelta(hours=6):
-            color = "#2ecc71"  # green
+            color = "#2ecc71"
         elif age < timedelta(hours=24):
-            color = "#f1c40f"  # yellow
+            color = "#f1c40f"
         else:
-            color = "#e74c3c"  # red
+            color = "#e74c3c"
 
         return f"<span style='background:{color};padding:4px 8px;border-radius:6px;color:black;'>{timestamp}</span>"
-    except:
-        return f"<span style='background:#e74c3c;padding:4px 8px;border-radius:6px;color:black;'>Invalid</span>"
+    except Exception:
+        return "<span style='background:#e74c3c;padding:4px 8px;border-radius:6px;color:black;'>Invalid</span>"
 
 
-# ------------------------------------------------------------
-# Section 1: Pipeline timestamps
-# ------------------------------------------------------------
 st.markdown("## 🔄 Pipeline Status")
 
 pipeline_ts = get_pipeline_last_run()
 ingestion_ts = get_ingestion_last_run()
 
 col1, col2 = st.columns(2)
-
 with col1:
     st.markdown("**Last Pipeline Run:**")
     st.markdown(freshness_badge(pipeline_ts), unsafe_allow_html=True)
-
 with col2:
     st.markdown("**Last Ingestion Run:**")
     st.markdown(freshness_badge(ingestion_ts), unsafe_allow_html=True)
 
-
-# ------------------------------------------------------------
-# Section 2: Trigger pipeline
-# ------------------------------------------------------------
 st.markdown("---")
 st.markdown("## 🚀 Run Pipeline Now")
 
+backfill_days = st.number_input(
+    "Backfill days (0 = today only)", value=0, min_value=0, max_value=30
+)
+
 if st.button("Run Full Pipeline"):
     with st.spinner("Running pipeline..."):
-        result = trigger_full_pipeline()
+        result = trigger_full_pipeline(backfill_days=int(backfill_days))
     st.success(result)
 
-
-# ------------------------------------------------------------
-# Section 3: Model Registry Health
-# ------------------------------------------------------------
 st.markdown("---")
 st.markdown("## 🧠 Model Registry Health")
 
-models = list_models()
+model_types = ["moneyline", "totals", "spread_regression", "spread_classification"]
+rows = []
+for mt in model_types:
+    for m in list_models(mt):
+        rows.append({"model_type": mt, **m})
 
-if not models:
+if not rows:
     st.warning("No models found in registry.")
 else:
-    df = pd.DataFrame(models)
+    df = pd.DataFrame(rows)
     st.dataframe(df, use_container_width=True)
 
-
-# ------------------------------------------------------------
-# Section 4: Odds Health
-# ------------------------------------------------------------
 st.markdown("---")
 st.markdown("## 💵 Odds Health")
 
@@ -124,10 +107,6 @@ else:
     st.markdown(f"**Latest odds file:** `{latest.name}`")
     st.markdown(f"**Last updated:** {freshness_badge(ts)}", unsafe_allow_html=True)
 
-
-# ------------------------------------------------------------
-# Section 5: Missing Games Check
-# ------------------------------------------------------------
 st.markdown("---")
 st.markdown("## 🏀 Missing Games Check")
 

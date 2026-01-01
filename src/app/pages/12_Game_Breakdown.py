@@ -1,17 +1,19 @@
-from __future__ import annotations
+"""
+============================================================
+🏀 NBA Analytics v5.0
+Author: YOUR NAME HERE
+File: 12_Game_Breakdown.py
+Path: src/app/pages/12_Game_Breakdown.py
+Purpose:
+    Single-game deep dive:
+        - ML / Spread / Totals predictions
+        - Edges vs market
+        - Stability and confidence
+        - Direct actions: Log Bet, Add to Parlay
+============================================================
+"""
 
-# ============================================================
-# 🏀 NBA Analytics v4
-# Page: Game Breakdown
-# File: src/app/pages/12_Game_Breakdown.py
-#
-# Description:
-#     Single-game deep dive:
-#       - ML / Spread / Totals predictions
-#       - Edges vs market
-#       - Stability and confidence
-#       - Direct actions: Log Bet, Add to Parlay
-# ============================================================
+from __future__ import annotations
 
 from datetime import date
 
@@ -33,9 +35,15 @@ from src.app.ui.header import render_header
 from src.app.ui.page_state import set_active_page
 from src.app.ui.navbar import render_navbar
 
+# --- MUST be first Streamlit call ---
+st.set_page_config(page_title="Game Breakdown", page_icon="📊", layout="wide")
+
+# --- UI Header + Navigation ---
 render_header()
-set_active_page("PAGE NAME HERE")
+set_active_page("Game Breakdown")
 render_navbar()
+
+st.title("📊 Single-Game Breakdown")
 
 
 def load_odds_for_date(pred_date: date) -> pd.DataFrame:
@@ -51,6 +59,9 @@ def load_odds_for_date(pred_date: date) -> pd.DataFrame:
     return pd.DataFrame(columns=["game_id", "price"])
 
 
+# ------------------------------------------------------------
+# Date + predictions
+# ------------------------------------------------------------
 pred_date = st.date_input("Prediction date", value=date.today())
 
 ml = run_prediction_for_date(pred_date)
@@ -62,7 +73,6 @@ if ml.empty:
     st.info("No games for this date.")
     st.stop()
 
-# Build a game list from ML predictions
 ml["matchup"] = ml["team"] + " vs " + ml["opponent"]
 games = ml[["game_id", "matchup"]].drop_duplicates()
 
@@ -72,7 +82,9 @@ game_id = st.selectbox(
     format_func=lambda gid: games.loc[games["game_id"] == gid, "matchup"].iloc[0],
 )
 
+# ------------------------------------------------------------
 # Filter per-game
+# ------------------------------------------------------------
 ml_game = ml[ml["game_id"] == game_id].copy()
 tot_game = (
     totals[totals["game_id"] == game_id].copy()
@@ -86,10 +98,12 @@ sp_game = (
 )
 odds_game = odds[odds["game_id"] == game_id].copy()
 
-# Use recommendations engine for ML edge + stability
 cfg = RecommendationConfig(min_probability=0.0, min_edge=-1.0, min_stability=0.0)
 recs_full = generate_recommendations(ml_game, tot_game, sp_game, odds_game, cfg=cfg)
 
+# ------------------------------------------------------------
+# Matchup + core predictions
+# ------------------------------------------------------------
 st.markdown("### Matchup")
 
 matchup_label = games.loc[games["game_id"] == game_id, "matchup"].iloc[0]
@@ -97,7 +111,6 @@ st.subheader(matchup_label)
 
 col_left, col_right = st.columns(2)
 
-# ML section
 with col_left:
     st.markdown("#### Moneyline")
 
@@ -116,7 +129,6 @@ with col_left:
     else:
         st.info("No moneyline predictions for this game.")
 
-# Totals / Spread section
 with col_right:
     st.markdown("#### Totals / Spread")
 
@@ -160,6 +172,9 @@ with col_right:
     else:
         st.info("No spread data for this game.")
 
+# ------------------------------------------------------------
+# ML recommendations & stability
+# ------------------------------------------------------------
 st.markdown("---")
 st.markdown("### ML Recommendations & Stability")
 
@@ -183,6 +198,9 @@ else:
         use_container_width=True,
     )
 
+# ------------------------------------------------------------
+# Actions
+# ------------------------------------------------------------
 st.markdown("---")
 st.markdown("### Actions")
 
@@ -193,16 +211,18 @@ stake_default = st.number_input(
     "Default stake for logging bets", value=100.0, step=10.0
 )
 
-for _, row in recs_full.iterrows():
+for idx, row in recs_full.iterrows():
     team = row["team"]
     opponent = row["opponent"]
     price = row["price"]
-    win_prob = float(row["win_probability"])
+    win_prob = float(row["win_probability"])  # assume 0–1
     conf = row["confidence_index"]
 
-    with st.expander(f"{team} vs {opponent} — {team} ML ({conf} conf)"):
+    exp_label = f"{team} vs {opponent} — {team} ML ({conf} conf)"
+
+    with st.expander(exp_label):
         st.write(row["recommendation"])
-        st.write(f"Win probability: {win_prob:.2f}")
+        st.write(f"Win probability: {win_prob:.3f}")
         st.write(f"Edge: {row['ml_edge']:.3f}")
         st.write(f"Stability: {row['stability_score']:.2f}")
         st.write(f"Odds: {price if pd.notna(price) else 'n/a'}")
@@ -213,7 +233,7 @@ for _, row in recs_full.iterrows():
             can_add = pd.notna(price)
             if st.button(
                 f"➕ Add {team} ML to Parlay",
-                key=f"gb_add_parlay_{team}",
+                key=f"gb_add_parlay_{game_id}_{team}_{idx}",
                 disabled=not can_add,
             ):
                 leg = ParlayLeg(
@@ -227,27 +247,32 @@ for _, row in recs_full.iterrows():
         with col2:
             can_log = pd.notna(price)
             if st.button(
-                f"📝 Log {team} ML bet", key=f"gb_log_bet_{team}", disabled=not can_log
+                f"📝 Log {team} ML bet",
+                key=f"gb_log_bet_{game_id}_{team}_{idx}",
+                disabled=not can_log,
             ):
-                record = BetRecord(
-                    bet_id=new_bet_id(),
-                    date=str(date.today()),
-                    game_date=str(pred_date),
-                    market="moneyline",
-                    team=team,
-                    opponent=opponent,
-                    bet_description=f"{team} ML (game breakdown)",
-                    odds=float(price),
-                    stake=float(stake_default),
-                    result="pending",
-                    payout=0.0,
-                    edge=float(row["ml_edge"]),
-                    confidence=(
-                        "High" if conf >= 80 else "Medium" if conf >= 60 else "Low"
-                    ),
-                )
-                append_bet(record)
-                st.success(f"Bet logged. Bet ID: {record.bet_id}")
+                try:
+                    record = BetRecord(
+                        bet_id=new_bet_id(),
+                        date=str(date.today()),
+                        game_date=str(pred_date),
+                        market="moneyline",
+                        team=team,
+                        opponent=opponent,
+                        bet_description=f"{team} ML (game breakdown)",
+                        odds=float(price),
+                        stake=float(stake_default),
+                        result="pending",
+                        payout=0.0,
+                        edge=float(row["ml_edge"]),
+                        confidence=(
+                            "High" if conf >= 80 else "Medium" if conf >= 60 else "Low"
+                        ),
+                    )
+                    append_bet(record)
+                    st.success(f"Bet logged. Bet ID: {record.bet_id}")
+                except Exception as e:
+                    st.error(f"Failed to log bet: {e}")
 
 st.markdown("---")
 st.info(

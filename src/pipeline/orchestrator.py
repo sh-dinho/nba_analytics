@@ -1,127 +1,115 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics Orchestrator v3
+# 🏀 NBA Analytics
+# Module: Daily Orchestrator
 # File: src/pipeline/orchestrator.py
 # Author: Sadiq
 #
 # Description:
-#     Single entry point for the daily NBA engine:
-#       1. Ingest yesterday + today (ScoreboardV3)
-#       2. Build canonical, long-format, and feature snapshots
-#       3. Run prediction pipelines:
-#            - Moneyline (win probability)
-#            - Totals (over/under)
-#            - Spread (ATS)
-#       4. Log a clear summary and return structured results.
+#     Daily automation pipeline:
+#         1. Ingest raw data
+#         2. Persist canonical long snapshot
+#         3. Build features
+#         4. Run predictions
+#         5. Export dashboard files
+#         6. Auto-retrain (optional)
 # ============================================================
 
-from datetime import date
-from typing import Optional, Dict, Any
-
+import pandas as pd
 from loguru import logger
 
-from src.ingestion.pipeline import run_today_ingestion
-from src.model.predict import run_prediction_for_date as run_moneyline
-from src.model.predict_totals import run_prediction_for_date as run_totals
-from src.model.predict_spread import run_prediction_for_date as run_spread
+from src.ingestion.pipeline import ingest_single_date
+from src.features.builder import FeatureBuilder
+from src.pipeline.run_predictions import run_predictions
+from src.pipeline.auto_retrain import auto_retrain
+from src.config.paths import (
+    LONG_SNAPSHOT,
+    PREDICTIONS_DIR,
+    DASHBOARD_DIR,
+)
 
 
-def run_daily_ingestion(pred_date: date) -> None:
-    """
-    Run ingestion for yesterday + today, rebuilding:
-      - canonical schedule snapshot
-      - long-format snapshot
-      - feature snapshot (via FeatureBuilder)
-    """
-    logger.info(f"📥 Starting daily ingestion around prediction date {pred_date}")
-    _ = run_today_ingestion(today=pred_date, feature_version="v1")
-    logger.success("📥 Daily ingestion complete (canonical + long + features updated).")
-
-
-def run_prediction_stage(pred_date: date) -> Dict[str, Optional[Any]]:
-    """
-    Run all prediction pipelines for the given date.
-    Returns a dict with DataFrames (or None on failure) for:
-      - moneyline
-      - totals
-      - spread
-    """
-    logger.info(f"🤖 Starting prediction stage for {pred_date}")
-
-    results: Dict[str, Optional[Any]] = {
-        "moneyline": None,
-        "totals": None,
-        "spread": None,
-    }
+def orchestrate_daily(
+    pred_date: str,
+    feature_version: str,
+    model_version: str,
+    run_retrain: bool = False,
+    export_dashboard: bool = True,
+):
+    logger.info(f"🧠 Starting daily orchestrator for {pred_date}")
 
     # --------------------------------------------------------
-    # Moneyline
+    # 1. Ingest raw data
+    # --------------------------------------------------------
+    logger.info("📥 Ingesting raw data...")
+    new_rows = ingest_single_date(pred_date, feature_groups=None)
+
+    if new_rows.empty:
+        logger.warning("No new rows ingested — aborting.")
+        return pd.DataFrame()
+
+    # --------------------------------------------------------
+    # 2. Persist canonical long snapshot
     # --------------------------------------------------------
     try:
-        logger.info("🔹 Running Moneyline Predictions...")
-        df_moneyline = run_moneyline(pred_date)
-        results["moneyline"] = df_moneyline
-        logger.info(f"   ✔ Moneyline predictions complete ({len(df_moneyline)} rows)")
+        new_rows.to_parquet(LONG_SNAPSHOT, index=False)
+        logger.success(f"📦 Saved canonical snapshot → {LONG_SNAPSHOT}")
     except Exception as e:
-        logger.error(f"   ❌ Moneyline prediction failed: {e}")
+        logger.error(f"Failed to save canonical snapshot: {e}")
+        return pd.DataFrame()
 
     # --------------------------------------------------------
-    # Totals
+    # 3. Build features
     # --------------------------------------------------------
+    logger.info("🏗️ Building features...")
+    fb = FeatureBuilder(version=feature_version)
+
     try:
-        logger.info("🔹 Running Totals Predictions...")
-        df_totals = run_totals(pred_date)
-        results["totals"] = df_totals
-        logger.info(f"   ✔ Totals predictions complete ({len(df_totals)} rows)")
+        features = fb.build(new_rows)
     except Exception as e:
-        logger.error(f"   ❌ Totals prediction failed: {e}")
+        logger.error(f"Feature building failed: {e}")
+        return pd.DataFrame()
+
+    if features.empty:
+        logger.error("Feature builder returned empty DataFrame — aborting.")
+        return pd.DataFrame()
+
+    logger.info(f"Built features: {features.shape}")
 
     # --------------------------------------------------------
-    # Spread
+    # 4. Run predictions
     # --------------------------------------------------------
-    try:
-        logger.info("🔹 Running Spread Predictions...")
-        df_spread = run_spread(pred_date)
-        results["spread"] = df_spread
-        logger.info(f"   ✔ Spread predictions complete ({len(df_spread)} rows)")
-    except Exception as e:
-        logger.error(f"   ❌ Spread prediction failed: {e}")
+    logger.info("🔮 Running predictions...")
+    preds = run_predictions(new_rows, feature_version=feature_version)
+
+    if preds.empty:
+        logger.error("Prediction runner returned empty DataFrame — aborting.")
+        return preds
+
+    # Save predictions
+    pred_path = PREDICTIONS_DIR / f"predictions_{pred_date}.parquet"
+    preds.to_parquet(pred_path, index=False)
+    logger.success(f"📤 Saved predictions → {pred_path}")
 
     # --------------------------------------------------------
-    # Summary
+    # 5. Export dashboard files
     # --------------------------------------------------------
-    logger.info("--------------------------------------------------")
-    logger.info("🏁 Prediction Summary:")
-    logger.info(
-        f"   Moneyline: {'OK' if results['moneyline'] is not None else 'FAILED'}"
-    )
-    logger.info(f"   Totals:    {'OK' if results['totals'] is not None else 'FAILED'}")
-    logger.info(f"   Spread:    {'OK' if results['spread'] is not None else 'FAILED'}")
-    logger.info("--------------------------------------------------")
+    if export_dashboard:
+        DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
+        dash_path = DASHBOARD_DIR / f"dashboard_{pred_date}.csv"
+        preds.to_csv(dash_path, index=False)
+        logger.success(f"📊 Dashboard export ready → {dash_path}")
 
-    return results
+    # --------------------------------------------------------
+    # 6. Auto-retrain (optional)
+    # --------------------------------------------------------
+    if run_retrain:
+        logger.info("🔄 Running auto-retrain...")
+        auto_retrain(
+            feature_version=feature_version,
+            model_version=model_version,
+        )
 
-
-def run_full_pipeline(pred_date: Optional[date] = None) -> Dict[str, Optional[Any]]:
-    """
-    Full daily pipeline:
-      1. Ingest (yesterday + today)
-      2. Build features (via ingestion pipeline)
-      3. Run all prediction heads for pred_date
-    """
-    pred_date = pred_date or date.today()
-    logger.info(f"🏀 Starting FULL daily pipeline for {pred_date}")
-
-    # 1) Ingestion / features
-    run_daily_ingestion(pred_date)
-
-    # 2) Predictions
-    results = run_prediction_stage(pred_date)
-
-    logger.success(f"🏀 Full daily pipeline complete for {pred_date}")
-    return results
-
-
-if __name__ == "__main__":
-    run_full_pipeline()
+    logger.success("📣 Daily pipeline complete.")
+    return preds

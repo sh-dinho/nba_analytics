@@ -1,206 +1,177 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
-# Module: Team Name Normalization
+# 🏀 NBA Analytics
+# Module: Team Name Normalization (Canonical)
 # File: src/utils/team_names.py
+# Author: Sadiq
 #
 # Description:
-#     Normalize team names from various sources (ESPN, NBA
-#     Stats full names, odd variants) into a single canonical
-#     format: official NBA tricodes (e.g., BOS, LAL, MIA).
+#     Normalize team names from various sources (ESPN, NBA Stats,
+#     betting feeds, odd variants) into a single canonical format:
+#     official NBA tricodes (e.g., BOS, LAL).
 #
 #     Public API:
 #       - normalize_team(name: str) -> str | None
 #       - normalize_schedule(df) -> df
+#       - validate_team_names(names) -> list[str]
+#
+#     Enhancements:
+#       • case-insensitive matching
+#       • whitespace-insensitive matching
+#       • accent-insensitive matching
+#       • optional strict mode for schedule normalization
 # ============================================================
 
-from typing import Optional
-
+from typing import Optional, Iterable
 import pandas as pd
 from loguru import logger
+import unicodedata
 
-# Official NBA tricodes
+
+# ------------------------------------------------------------
+# Official NBA tricodes (canonical)
+# ------------------------------------------------------------
 NBA_TRICODES = {
-    "ATL",
-    "BOS",
-    "BKN",
-    "CHA",
-    "CHI",
-    "CLE",
-    "DAL",
-    "DEN",
-    "DET",
-    "GSW",
-    "HOU",
-    "IND",
-    "LAC",
-    "LAL",
-    "MEM",
-    "MIA",
-    "MIL",
-    "MIN",
-    "NOP",
-    "NYK",
-    "OKC",
-    "ORL",
-    "PHI",
-    "PHX",
-    "POR",
-    "SAC",
-    "SAS",
-    "TOR",
-    "UTA",
-    "WAS",
+    "ATL", "BOS", "BKN", "CHA", "CHI", "CLE", "DAL", "DEN", "DET",
+    "GSW", "HOU", "IND", "LAC", "LAL", "MEM", "MIA", "MIL", "MIN",
+    "NOP", "NYK", "OKC", "ORL", "PHI", "PHX", "POR", "SAC", "SAS",
+    "TOR", "UTA", "WAS",
 }
 
-# Map ESPN / full names / variants → tricode
+
+# ------------------------------------------------------------
+# Mapping: ESPN / NBA Stats / betting feeds → tricode
+# (canonical, case-insensitive)
+# ------------------------------------------------------------
 TEAM_NAME_MAP = {
     # Atlanta
-    "Atlanta Hawks": "ATL",
-    "ATL": "ATL",
+    "atlanta hawks": "ATL", "atlanta": "ATL", "atl": "ATL",
+
     # Boston
-    "Boston Celtics": "BOS",
-    "BOS": "BOS",
+    "boston celtics": "BOS", "boston": "BOS", "bos": "BOS",
+
     # Brooklyn
-    "Brooklyn Nets": "BKN",
-    "Brooklyn": "BKN",
-    "BKN": "BKN",
+    "brooklyn nets": "BKN", "brooklyn": "BKN", "bkn": "BKN",
+
     # Charlotte
-    "Charlotte Hornets": "CHA",
-    "Charlotte": "CHA",
-    "CHA": "CHA",
+    "charlotte hornets": "CHA", "charlotte": "CHA", "cha": "CHA",
+
     # Chicago
-    "Chicago Bulls": "CHI",
-    "Chicago": "CHI",
-    "CHI": "CHI",
+    "chicago bulls": "CHI", "chicago": "CHI", "chi": "CHI",
+
     # Cleveland
-    "Cleveland Cavaliers": "CLE",
-    "Cleveland": "CLE",
-    "CLE": "CLE",
+    "cleveland cavaliers": "CLE", "cleveland": "CLE", "cle": "CLE",
+
     # Dallas
-    "Dallas Mavericks": "DAL",
-    "Dallas": "DAL",
-    "DAL": "DAL",
+    "dallas mavericks": "DAL", "dallas": "DAL", "dal": "DAL",
+
     # Denver
-    "Denver Nuggets": "DEN",
-    "Denver": "DEN",
-    "DEN": "DEN",
+    "denver nuggets": "DEN", "denver": "DEN", "den": "DEN",
+
     # Detroit
-    "Detroit Pistons": "DET",
-    "Detroit": "DET",
-    "DET": "DET",
+    "detroit pistons": "DET", "detroit": "DET", "det": "DET",
+
     # Golden State
-    "Golden State Warriors": "GSW",
-    "Golden State": "GSW",
-    "GS Warriors": "GSW",
-    "GSW": "GSW",
+    "golden state warriors": "GSW", "golden state": "GSW",
+    "gs warriors": "GSW", "gsw": "GSW",
+
     # Houston
-    "Houston Rockets": "HOU",
-    "Houston": "HOU",
-    "HOU": "HOU",
+    "houston rockets": "HOU", "houston": "HOU", "hou": "HOU",
+
     # Indiana
-    "Indiana Pacers": "IND",
-    "Indiana": "IND",
-    "IND": "IND",
+    "indiana pacers": "IND", "indiana": "IND", "ind": "IND",
+
     # LA Clippers
-    "Los Angeles Clippers": "LAC",
-    "LA Clippers": "LAC",
-    "LAC": "LAC",
+    "los angeles clippers": "LAC", "la clippers": "LAC", "lac": "LAC",
+
     # LA Lakers
-    "Los Angeles Lakers": "LAL",
-    "LA Lakers": "LAL",
-    "LAL": "LAL",
+    "los angeles lakers": "LAL", "la lakers": "LAL", "lal": "LAL",
+
     # Memphis
-    "Memphis Grizzlies": "MEM",
-    "Memphis": "MEM",
-    "MEM": "MEM",
+    "memphis grizzlies": "MEM", "memphis": "MEM", "mem": "MEM",
+
     # Miami
-    "Miami Heat": "MIA",
-    "Miami": "MIA",
-    "MIA": "MIA",
+    "miami heat": "MIA", "miami": "MIA", "mia": "MIA",
+
     # Milwaukee
-    "Milwaukee Bucks": "MIL",
-    "Milwaukee": "MIL",
-    "MIL": "MIL",
+    "milwaukee bucks": "MIL", "milwaukee": "MIL", "mil": "MIL",
+
     # Minnesota
-    "Minnesota Timberwolves": "MIN",
-    "Minnesota": "MIN",
-    "MIN": "MIN",
+    "minnesota timberwolves": "MIN", "minnesota": "MIN", "min": "MIN",
+
     # New Orleans
-    "New Orleans Pelicans": "NOP",
-    "New Orleans": "NOP",
-    "NO Pelicans": "NOP",
-    "NOP": "NOP",
+    "new orleans pelicans": "NOP", "new orleans": "NOP",
+    "no pelicans": "NOP", "nop": "NOP",
+
     # New York
-    "New York Knicks": "NYK",
-    "NY Knicks": "NYK",
-    "New York": "NYK",
-    "NYK": "NYK",
+    "new york knicks": "NYK", "ny knicks": "NYK",
+    "new york": "NYK", "nyk": "NYK",
+
     # Oklahoma City
-    "Oklahoma City Thunder": "OKC",
-    "Oklahoma City": "OKC",
-    "OKC Thunder": "OKC",
-    "OKC": "OKC",
+    "oklahoma city thunder": "OKC", "oklahoma city": "OKC",
+    "okc thunder": "OKC", "okc": "OKC",
+
     # Orlando
-    "Orlando Magic": "ORL",
-    "Orlando": "ORL",
-    "ORL": "ORL",
+    "orlando magic": "ORL", "orlando": "ORL", "orl": "ORL",
+
     # Philadelphia
-    "Philadelphia 76ers": "PHI",
-    "Philadelphia": "PHI",
-    "PHI": "PHI",
+    "philadelphia 76ers": "PHI", "philadelphia": "PHI", "phi": "PHI",
+
     # Phoenix
-    "Phoenix Suns": "PHX",
-    "Phoenix": "PHX",
-    "PHX Suns": "PHX",
-    "PHX": "PHX",
+    "phoenix suns": "PHX", "phoenix": "PHX",
+    "phx suns": "PHX", "phx": "PHX",
+
     # Portland
-    "Portland Trail Blazers": "POR",
-    "Portland": "POR",
-    "POR": "POR",
+    "portland trail blazers": "POR", "portland": "POR", "por": "POR",
+
     # Sacramento
-    "Sacramento Kings": "SAC",
-    "Sacramento": "SAC",
-    "SAC": "SAC",
+    "sacramento kings": "SAC", "sacramento": "SAC", "sac": "SAC",
+
     # San Antonio
-    "San Antonio Spurs": "SAS",
-    "San Antonio": "SAS",
-    "SA Spurs": "SAS",
-    "SAS": "SAS",
+    "san antonio spurs": "SAS", "san antonio": "SAS",
+    "sa spurs": "SAS", "sas": "SAS",
+
     # Toronto
-    "Toronto Raptors": "TOR",
-    "Toronto": "TOR",
-    "TOR": "TOR",
+    "toronto raptors": "TOR", "toronto": "TOR", "tor": "TOR",
+
     # Utah
-    "Utah Jazz": "UTA",
-    "Utah": "UTA",
-    "UTA": "UTA",
+    "utah jazz": "UTA", "utah": "UTA", "uta": "UTA",
+
     # Washington
-    "Washington Wizards": "WAS",
-    "Washington": "WAS",
-    "WSH Wizards": "WAS",
-    "WAS": "WAS",
+    "washington wizards": "WAS", "washington": "WAS",
+    "wsh wizards": "WAS", "was": "WAS",
 }
 
 
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+def _clean(name: str) -> str:
+    """Lowercase, strip, remove accents."""
+    name = name.strip().lower()
+    return unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode()
+
+
+# ------------------------------------------------------------
+# Public API
+# ------------------------------------------------------------
 def normalize_team(name: str) -> Optional[str]:
     """
-    Normalize a raw team name from any known source
-    into an official NBA tricode.
+    Normalize a raw team name from any known source into an NBA tricode.
     Returns None if the name is unknown.
     """
     if not isinstance(name, str):
         return None
 
-    name = name.strip()
+    cleaned = _clean(name)
 
     # Direct mapping
-    if name in TEAM_NAME_MAP:
-        return TEAM_NAME_MAP[name]
+    if cleaned in TEAM_NAME_MAP:
+        return TEAM_NAME_MAP[cleaned]
 
-    # Already a valid tricode?
-    upper = name.upper()
+    # Already a tricode?
+    upper = cleaned.upper()
     if upper in NBA_TRICODES:
         return upper
 
@@ -208,26 +179,34 @@ def normalize_team(name: str) -> Optional[str]:
     return None
 
 
-def normalize_schedule(df: pd.DataFrame) -> pd.DataFrame:
+def normalize_schedule(df: pd.DataFrame, strict: bool = False) -> pd.DataFrame:
     """
-    Normalize 'home_team' and 'away_team' columns in a schedule DataFrame
-    to official tricodes. Drops rows where normalization fails.
+    Normalize 'home_team' and 'away_team' columns in a schedule DataFrame.
+    Drops rows where normalization fails unless strict=True.
     """
     df = df.copy()
 
-    if "home_team" in df.columns:
-        df["home_team"] = df["home_team"].apply(normalize_team)
-    if "away_team" in df.columns:
-        df["away_team"] = df["away_team"].apply(normalize_team)
+    for col in ["home_team", "away_team"]:
+        if col in df.columns:
+            df[col] = df[col].apply(normalize_team)
 
     before = len(df)
+
+    if strict:
+        if df.isna().any().any():
+            unknowns = df[df.isna().any(axis=1)]
+            raise ValueError(f"Unknown team names in strict mode:\n{unknowns}")
+        return df
+
     df = df.dropna(subset=["home_team", "away_team"]).reset_index(drop=True)
     after = len(df)
 
     if after < before:
-        logger.warning(
-            f"[TeamNames] Dropped {before - after} rows due to unknown team names "
-            f"during schedule normalization."
-        )
+        logger.warning(f"[TeamNames] Dropped {before - after} rows due to unknown team names.")
 
     return df
+
+
+def validate_team_names(names: Iterable[str]) -> list[str]:
+    """Return a list of unknown team names for QA."""
+    return [name for name in names if normalize_team(name) is None]

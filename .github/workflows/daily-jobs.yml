@@ -1,0 +1,39 @@
+name: Daily Jobs
+
+on:
+  schedule:
+    - cron: "0 11 * * *"   # 11:00 UTC → 6am ET
+  workflow_dispatch:
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run ingestion
+        run: python -m src.scripts.run_ingestion
+
+      - name: Predict today
+        run: python -m src.scripts.predict_today
+
+      - name: Daily monitor
+        run: python -m src.scripts.monitor_daily
+
+      - name: Generate dashboard
+        run: python -m src.scripts.generate_data_quality_dashboard
+
+      - name: Send alerts
+        run: python -m src.scripts.send_daily_alerts

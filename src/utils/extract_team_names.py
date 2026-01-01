@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
+# 🏀 NBA Analytics
 # Module: Extract Canonical Team Names
 # File: src/utils/extract_team_names.py
+# Author: Sadiq
 #
 # Description:
 #     Reads LONG_SNAPSHOT and prints all unique team names
-#     exactly as they appear in your ingestion pipeline.
+#     exactly as they appear in the canonical ingestion pipeline.
 #
-#     This ensures we build a perfect normalization map
-#     (ESPN → NBA Stats → Your Canonical Names).
+#     Useful for building normalization maps and QA checks.
 # ============================================================
 
 import pandas as pd
@@ -21,7 +21,8 @@ from src.config.paths import LONG_SNAPSHOT
 def extract_team_names() -> list[str]:
     if not LONG_SNAPSHOT.exists():
         raise FileNotFoundError(
-            f"LONG_SNAPSHOT not found at {LONG_SNAPSHOT}. " f"Run ingestion first."
+            f"LONG_SNAPSHOT not found at {LONG_SNAPSHOT}. "
+            f"Run canonical ingestion first."
         )
 
     df = pd.read_parquet(LONG_SNAPSHOT)

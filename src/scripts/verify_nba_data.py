@@ -1,65 +1,83 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
-# Module: Verify NBA Data
+# 🏀 NBA Analytics
+# Module: Verify Canonical Snapshot
 # File: src/scripts/verify_nba_data.py
 # Author: Sadiq
 #
 # Description:
-#     Validates the canonical NBA snapshot:
-#       1. Row/column integrity
-#       2. No duplicate Game IDs
-#       3. Seasonal completeness
-#       4. Last game freshness
-#       5. Shows latest 5 entries
+#     Validates the canonical LONG_SNAPSHOT:
+#       • row/column integrity
+#       • duplicate (game_id, team)
+#       • opponent symmetry
+#       • score symmetry
+#       • season completeness (if available)
+#       • freshness
+#       • preview latest rows
 # ============================================================
 
 import pandas as pd
 from loguru import logger
 
-from src.config.paths import SCHEDULE_SNAPSHOT
-from src.ingestion.pipeline import HEADER  # Correct import
+from src.config.paths import LONG_SNAPSHOT
+from src.ingestion.validator.checks import (
+    find_asymmetry,
+    find_score_mismatches,
+)
 
-# ------------------------------------------------------------
-# Verify NBA snapshot data
-# ------------------------------------------------------------
 
-
-def check_data():
-    if not SCHEDULE_SNAPSHOT.exists():
-        logger.error("No snapshot found.")
+def verify_snapshot():
+    if not LONG_SNAPSHOT.exists():
+        logger.error(f"No LONG_SNAPSHOT found at {LONG_SNAPSHOT}")
         return
 
-    df = pd.read_parquet(SCHEDULE_SNAPSHOT)
+    logger.info(f"Loading LONG_SNAPSHOT from {LONG_SNAPSHOT}...")
+    df = pd.read_parquet(LONG_SNAPSHOT, engine="pyarrow")
 
-    print("\n=== DATA REPORT ===")
-    print(f"Total Rows: {len(df)}")
-    print(f"Columns Found: {list(df.columns)}")
+    print("\n=== CANONICAL SNAPSHOT REPORT ===")
+    print(f"Total Rows: {len(df):,}")
 
-    # Ensure canonical header
-    df = df[HEADER]
+    # Season info (optional)
+    if "season" in df.columns:
+        seasons = df["season"].dropna().unique()
+        print(f"Seasons: {len(seasons)} ({min(seasons)} → {max(seasons)})")
+    else:
+        print("Seasons: [no season column present]")
 
-    # Check for scores
-    games_with_scores = df[df["score_home"].notna()].shape[0]
-    print(f"Games with Scores: {games_with_scores}")
+    # --------------------------------------------------------
+    # Integrity Checks
+    # --------------------------------------------------------
+    print("\n--- Integrity Checks ---")
 
-    # Safely show recent games
-    cols_to_show = [c for c in HEADER if c in df.columns]
+    # Duplicate (game_id, team)
+    dup_count = df.duplicated(subset=["game_id", "team"]).sum()
+    print(f"Duplicate (game_id, team): {dup_count} {'[FAIL]' if dup_count else '[OK]'}")
 
-    print("\n--- Latest 5 Entries by Date ---")
-    print(df.sort_values("date").tail(5)[cols_to_show])
+    # Opponent symmetry
+    asym_ids = find_asymmetry(df)
+    print(f"Opponent Symmetry Errors: {len(asym_ids)} {'[FAIL]' if asym_ids else '[OK]'}")
+    if len(asym_ids) > 0:
+        print(f"  Sample: {asym_ids[:5].tolist()}")
 
-    # Optional: check seasonal integrity
-    df["date"] = pd.to_datetime(df["date"])
-    seasonal_summary = df.groupby(df["date"].dt.year).agg(
-        total_games=("game_id", "count"),
-        first_game=("date", "min"),
-        last_game=("date", "max"),
-    )
-    print("\n📊 Seasonal Integrity Check:")
-    print(seasonal_summary)
+    # Score symmetry
+    score_mismatch_ids = find_score_mismatches(df)
+    print(f"Score Mismatches: {len(score_mismatch_ids)} {'[WARN]' if score_mismatch_ids else '[OK]'}")
+
+    # Freshness
+    last_date = pd.to_datetime(df["date"]).max()
+    print(f"\nLast Ingested Date: {last_date.date()}")
+
+    # Null season check
+    if "season" in df.columns and df["season"].isna().any():
+        print("CRITICAL: Null values found in 'season' column!")
+
+    # Preview
+    print("\n--- Latest 5 Rows ---")
+    print(df.sort_values("date").tail(5))
+
+    print("\n=== DONE ===")
 
 
 if __name__ == "__main__":
-    check_data()
+    verify_snapshot()

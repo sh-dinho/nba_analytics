@@ -1,17 +1,19 @@
-from __future__ import annotations
+"""
+============================================================
+🏀 NBA Analytics v5.0
+Author: YOUR NAME HERE
+File: 13_Smart_Parlay_Generator.py
+Path: src/app/pages/13_Smart_Parlay_Generator.py
+Purpose:
+    Suggests parlays built from high-edge ML recommendations:
+        - uses automated recommendations engine for legs
+        - builds candidate parlays (greedy + random)
+        - evaluates EV & Kelly
+        - allows pushing parlays into session for Parlay Builder
+============================================================
+"""
 
-# ============================================================
-# 🏀 NBA Analytics v4
-# Page: Smart Parlay Generator
-# File: src/app/pages/13_Smart_Parlay_Generator.py
-#
-# Description:
-#     Suggests parlays built from high-edge ML recommendations:
-#       - uses automated recommendations engine for legs
-#       - builds candidate parlays
-#       - evaluates EV & Kelly
-#       - allows pushing parlays into session for Parlay Builder
-# ============================================================
+from __future__ import annotations
 
 from datetime import date
 import itertools
@@ -21,23 +23,26 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-
 from src.config.paths import ODDS_DIR
 from src.model.predict import run_prediction_for_date
 from src.model.predict_totals import run_totals_prediction_for_date
 from src.model.predict_spread import run_spread_prediction_for_date
 from src.markets.recommend import generate_recommendations, RecommendationConfig
 from src.app.engines.parlay import ParlayLeg, parlay_expected_value
-from src.app.engines.bet_tracker import kelly_fraction
-
 
 from src.app.ui.header import render_header
 from src.app.ui.page_state import set_active_page
 from src.app.ui.navbar import render_navbar
 
+# --- MUST be first Streamlit call ---
+st.set_page_config(page_title="Smart Parlay Generator", page_icon="🎯", layout="wide")
+
+# --- UI Header + Navigation ---
 render_header()
-set_active_page("PAGE NAME HERE")
+set_active_page("Smart Parlay Generator")
 render_navbar()
+
+st.title("🎯 Smart Parlay Generator")
 
 
 def load_odds_for_date(pred_date: date) -> pd.DataFrame:
@@ -108,17 +113,18 @@ st.dataframe(
     use_container_width=True,
 )
 
-# Build candidate parlays
-st.markdown("---")
-st.markdown("### Suggested parlays")
-
+# Build ParlayLeg objects
 legs = []
 for _, row in recs.iterrows():
+    wp = float(row["win_probability"])
+    if wp > 1.0:  # if accidentally in percent
+        wp = wp / 100.0
+    wp = min(max(wp, 0.01), 0.99)
     legs.append(
         ParlayLeg(
             description=f"{row['team']} ML ({row['team']} vs {row['opponent']})",
             odds=float(row["price"]),
-            win_prob=float(row["win_probability"]),
+            win_prob=wp,
         )
     )
 
@@ -126,21 +132,20 @@ if len(legs) < num_legs:
     st.warning(f"Not enough legs ({len(legs)}) to build parlays of size {num_legs}.")
     st.stop()
 
-# Strategy: mix of top-combos and random combos
+st.markdown("---")
+st.markdown("### Suggested parlays")
+
 all_indices = list(range(len(legs)))
-greedy_indices = all_indices[: min(len(all_indices), 8)]  # top 8 legs
+greedy_indices = all_indices[: min(len(all_indices), 8)]
 greedy_combos = list(itertools.combinations(greedy_indices, num_legs))
-random_combos = []
 
-while (
-    len(random_combos) + len(greedy_combos) < max_parlays * 2
-    and len(random_combos) < max_parlays * 3
-):
+random_combos = set()
+while len(random_combos) < max_parlays * 2 and len(all_indices) >= num_legs:
     combo = tuple(sorted(random.sample(all_indices, num_legs)))
-    if combo not in greedy_combos and combo not in random_combos:
-        random_combos.append(combo)
+    if combo not in greedy_combos:
+        random_combos.add(combo)
 
-all_combos = greedy_combos + random_combos
+all_combos = greedy_combos + list(random_combos)
 all_combos = all_combos[: max_parlays * 3]
 
 parlays = []
@@ -148,11 +153,11 @@ parlays = []
 for combo in all_combos:
     combo_legs = [legs[i] for i in combo]
     result = parlay_expected_value(combo_legs, stake)
+
     win_prob = result["win_prob"]
     dec_odds = result["decimal_odds"]
     ev = result["ev"]
 
-    # Approximate Kelly for parlay
     b = dec_odds - 1.0
     q = 1 - win_prob
     kelly_f = (b * win_prob - q) / b if b > 0 else 0.0
@@ -172,6 +177,7 @@ for combo in all_combos:
 parlays_df = pd.DataFrame(
     [
         {
+            "legs_obj": p["legs"],
             "description": " | ".join([leg.description for leg in p["legs"]]),
             "win_prob_pct": p["win_prob"] * 100,
             "decimal_odds": p["decimal_odds"],
@@ -184,6 +190,28 @@ parlays_df = pd.DataFrame(
 )
 
 parlays_df = parlays_df.sort_values("ev", ascending=False).head(max_parlays)
+
+best = parlays_df.iloc[0]
+
+st.markdown("## 🔥 Best Parlay of the Day")
+st.markdown(
+    f"""
+    <div style="
+        background: rgba(46, 204, 113, 0.15);
+        border-left: 6px solid #2ecc71;
+        padding: 14px 18px;
+        border-radius: 6px;
+        margin-bottom: 20px;
+    ">
+        <b>EV:</b> {best.ev:.2f}  
+        &nbsp;&nbsp; <b>Win Prob:</b> {best.win_prob_pct:.1f}%  
+        &nbsp;&nbsp; <b>Decimal Odds:</b> {best.decimal_odds:.3f}  
+        <br><br>
+        {best.description}
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.dataframe(
     parlays_df[
@@ -201,18 +229,15 @@ st.dataframe(
 
 st.markdown("### Actions")
 
-for i, p in enumerate(parlays_df.itertuples()):
-    with st.expander(f"Parlay {i+1}: EV={p.ev:.2f}, Kelly={p.kelly_fraction:.3f}"):
-        st.write(p.description)
-        st.write(f"Win probability: {p.win_prob_pct:.1f}%")
-        st.write(f"Decimal odds: {p.decimal_odds:.3f}")
-        st.write(f"Kelly stake: {p.kelly_stake:.2f} from bankroll {bankroll:.2f}")
+for i, row in parlays_df.iterrows():
+    with st.expander(f"Parlay {i+1}: EV={row.ev:.2f}, Kelly={row.kelly_fraction:.3f}"):
+        st.write(row.description)
+        st.write(f"Win probability: {row.win_prob_pct:.1f}%")
+        st.write(f"Decimal odds: {row.decimal_odds:.3f}")
+        st.write(f"Kelly stake: {row.kelly_stake:.2f} from bankroll {bankroll:.2f}")
 
         if st.button("➕ Use this parlay in Parlay Builder", key=f"spg_use_{i}"):
-            # Replace session parlay_legs with these legs
-            idx = parlays_df.index[i]
-            combo_legs = parlays[i]["legs"]
-            st.session_state["parlay_legs"] = combo_legs
+            st.session_state["parlay_legs"] = row.legs_obj
             st.success(
                 "Parlay legs loaded into session. Open Parlay Builder to inspect and log."
             )

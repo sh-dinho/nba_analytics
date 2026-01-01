@@ -1,177 +1,148 @@
 from __future__ import annotations
 
 # ============================================================
-# 🏀 NBA Analytics v4
-# Module: Collector (ScoreboardV3 Fetcher)
+# 🏀 NBA Analytics
+# Module: Scoreboard Collector
 # File: src/ingestion/collector.py
 # Author: Sadiq
+#
+# Description:
+#     Fetches raw NBA scoreboard data for a given date using the
+#     NBA API (ScoreboardV3). Handles:
+#       - retry logic
+#       - malformed JSON handling
+#       - schema detection (modern / legacy)
+#       - safe DataFrame construction
+#       - logging and error handling
+#
+#     Output:
+#         A raw DataFrame with whatever columns the API returns.
+#         Normalization is handled by scoreboard_normalizer.py.
 # ============================================================
 
-import time
 from datetime import date
+from typing import Optional
 
 import pandas as pd
+import requests
 from loguru import logger
+import time
 
-from nba_api.stats.endpoints import ScoreboardV3
-from nba_api.stats.library.http import NBAStatsHTTP
+# ------------------------------------------------------------
+# Endpoints
+# ------------------------------------------------------------
+
+NBA_SCOREBOARD_URL = (
+    "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_{}.json"
+)
+
+NBA_SCOREBOARD_URL_LEGACY = (
+    "https://data.nba.net/prod/v1/{}/scoreboard.json"
+)
 
 
 # ------------------------------------------------------------
-# Lazy + resilient session initialization
+# Helpers
 # ------------------------------------------------------------
 
-_session = None
+def _format_date(d: date) -> str:
+    """Return YYYYMMDD string."""
+    return d.strftime("%Y%m%d")
 
 
-def _get_session():
+def _safe_request(url: str, retries: int = 5, timeout: int = 10) -> Optional[dict]:
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.get(url, timeout=timeout)
+            if resp.status_code == 200:
+                return resp.json()
+
+            # 429 = rate limit, 403 = temporary ban
+            if resp.status_code in [403, 429]:
+                wait = 2 ** attempt
+                logger.warning(f"Rate limited. Waiting {wait}s...")
+                time.sleep(wait)
+                continue
+
+        except Exception as e:
+            logger.warning(f"Attempt {attempt} failed: {e}")
+
+    return None
+
+
+# ------------------------------------------------------------
+# Main public function
+# ------------------------------------------------------------
+
+def fetch_scoreboard_for_date(day: date) -> pd.DataFrame:
     """
-    Initialize NBAStatsHTTP session lazily and safely.
-    Never raise on import. Always return a usable session.
+    Fetch raw scoreboard data for a given date.
+
+    Returns:
+        pd.DataFrame with raw scoreboard rows.
+        If no games or API failure → empty DataFrame.
     """
-    global _session
-    if _session is not None:
-        return _session
+    logger.info(f"[Collector] Fetching ScoreboardV3 for {day}...")
+
+    day_str = _format_date(day)
+    url = NBA_SCOREBOARD_URL.format(day_str)
+
+    data = _safe_request(url)
+    if data is None:
+        logger.error(f"[Collector] ScoreboardV3 failed for {day}. Trying legacy endpoint...")
+        return _fetch_legacy_scoreboard(day)
+
+    if not isinstance(data, dict) or "scoreboard" not in data:
+        logger.error(f"[Collector] Malformed ScoreboardV3 JSON for {day}.")
+        return _fetch_legacy_scoreboard(day)
 
     try:
-        http = NBAStatsHTTP()
-
-        # Try common session attributes across versions
-        if hasattr(http, "_session") and http._session is not None:
-            _session = http._session
-        elif hasattr(http, "_init_session"):
-            _session = http._init_session()
-        elif hasattr(http, "session"):
-            _session = http.session
-        else:
-            logger.warning(
-                "NBAStatsHTTP session attribute not found; using fallback session"
-            )
-            _session = NBAStatsHTTP().session
-
-    except Exception as e:
-        logger.error(f"NBAStatsHTTP initialization failed: {e}")
-        logger.warning("Falling back to a plain requests.Session()")
-        import requests
-
-        _session = requests.Session()
-
-    # Update headers to avoid Cloudflare blocks
-    _session.headers.update(
-        {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Referer": "https://www.nba.com/",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-    )
-
-    return _session
-
-
-# ------------------------------------------------------------
-# Retry wrapper
-# ------------------------------------------------------------
-
-
-def _retry(func, retries: int = 3, base_delay: float = 1.0):
-    for attempt in range(retries):
-        try:
-            return func()
-        except Exception as e:
-            logger.warning(
-                f"Retry {attempt + 1}/{retries} failed: {e}. Sleeping {base_delay}s."
-            )
-            time.sleep(base_delay)
-            base_delay *= 2
-
-    logger.error("All retries failed. Returning empty DataFrame.")
-    return pd.DataFrame()
-
-
-# ------------------------------------------------------------
-# Schema detection
-# ------------------------------------------------------------
-
-
-def detect_schema(df: pd.DataFrame) -> str:
-    cols = set(df.columns)
-
-    if {"homeTeamScore", "visitorTeamScore"} & cols:
-        return "v3_legacy"
-    if {"homeScore", "awayScore"} & cols:
-        return "v3_modern"
-    if "games" in cols:
-        return "v3_header"
-
-    return "unknown"
-
-
-# ------------------------------------------------------------
-# Core fetch
-# ------------------------------------------------------------
-
-
-def fetch_scoreboard(target_date: date) -> pd.DataFrame:
-    """
-    Fetch ScoreboardV3 for a given date.
-    Uses lazy session initialization and retry logic.
-    """
-
-    def _fetch():
-        session = _get_session()  # noqa: F841 (ensures headers/session set up)
-
-        logger.debug(f"Fetching ScoreboardV3 for {target_date}")
-
-        sb = ScoreboardV3(
-            game_date=target_date.strftime("%Y-%m-%d"),
-            timeout=10,
-        )
-
-        frames = sb.get_data_frames()
-        if not frames:
-            raise ValueError("ScoreboardV3 returned no tables")
-
-        df = frames[0]
-
-        logger.debug(f"Columns returned for {target_date}: {list(df.columns)}")
-
-        # --------------------------------------------------------
-        # Schema drift guard — never fatal
-        # --------------------------------------------------------
-        if "gameId" not in df.columns:
-            logger.warning(
-                f"ScoreboardV3: 'gameId' missing for {target_date}. "
-                "Skipping date safely."
-            )
+        games = data.get("scoreboard", {}).get("games", [])
+        if not games:
+            logger.warning(f"[Collector] No games found for {day}.")
             return pd.DataFrame()
 
-        valid_ids = (
-            df.get("gameId").astype(str).str.strip().replace("None", pd.NA).dropna()
-        )
+        df = pd.json_normalize(games)
+        df["schema_version"] = "scoreboard_v3"
 
-        if valid_ids.empty:
-            logger.warning(
-                f"ScoreboardV3: No valid gameId values for {target_date}. "
-                "Skipping date safely."
-            )
-            return pd.DataFrame()
-
-        schema = detect_schema(df)
-        logger.info(f"📐 ScoreboardV3 schema detected for {target_date}: {schema}")
-
-        df["fetch_date"] = target_date
-        df["schema_version"] = schema
+        logger.success(f"[Collector] Retrieved {len(df)} games for {day}.")
+        logger.debug(f"[Collector] ScoreboardV3 columns: {df.columns.tolist()}")
         return df
 
-    df_raw = _retry(_fetch)
+    except Exception as e:
+        logger.error(f"[Collector] Failed to parse ScoreboardV3 for {day}: {e}")
+        return _fetch_legacy_scoreboard(day)
 
-    if df_raw is None or df_raw.empty:
-        logger.debug(f"No games returned for {target_date}")
+
+# ------------------------------------------------------------
+# Legacy fallback
+# ------------------------------------------------------------
+
+def _fetch_legacy_scoreboard(day: date) -> pd.DataFrame:
+    """Fallback to legacy NBA API endpoint."""
+    day_str = day.strftime("%Y%m%d")
+    url = NBA_SCOREBOARD_URL_LEGACY.format(day_str)
+
+    logger.warning(f"[Collector] Using legacy scoreboard endpoint for {day}.")
+
+    data = _safe_request(url)
+    if data is None:
+        logger.error(f"[Collector] Legacy scoreboard also failed for {day}.")
         return pd.DataFrame()
 
-    logger.debug(f"Fetched {len(df_raw)} rows for {target_date}")
-    return df_raw
+    try:
+        games = data.get("games", [])
+        if not games:
+            logger.warning(f"[Collector] No legacy games found for {day}.")
+            return pd.DataFrame()
+
+        df = pd.json_normalize(games)
+        df["schema_version"] = "scoreboard_legacy"
+
+        logger.success(f"[Collector] Retrieved {len(df)} legacy games for {day}.")
+        logger.debug(f"[Collector] Legacy scoreboard columns: {df.columns.tolist()}")
+        return df
+
+    except Exception as e:
+        logger.error(f"[Collector] Failed to parse legacy scoreboard for {day}: {e}")
+        return pd.DataFrame()
