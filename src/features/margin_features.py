@@ -8,9 +8,9 @@ from __future__ import annotations
 #
 # Description:
 #     Adds scoring margin features for team-game rows:
-#     - score_diff
-#     - margin_last5
-#     - margin_last10
+#     - margin
+#     - margin_rolling_5
+#     - margin_rolling_10
 # ============================================================
 
 import pandas as pd
@@ -23,29 +23,38 @@ def add_margin_features(df: pd.DataFrame) -> pd.DataFrame:
     Required columns:
         - team
         - date
-        - game_id
         - score
-        - opponent_score
+        - opp_score
     """
     out = df.copy()
+
+    # Validate required columns
+    required = {"team", "date", "score", "opp_score"}
+    missing = required - set(out.columns)
+    if missing:
+        raise ValueError(f"add_margin_features missing columns: {missing}")
+
+    # Ensure datetime
     out["date"] = pd.to_datetime(out["date"])
-    out = out.sort_values(["team", "date", "game_id"])
 
-    # Base margin
-    out["score_diff"] = (out["score"] - out["opponent_score"]).astype("float32")
+    # Sort for rolling operations
+    out = out.sort_values(["team", "date"]).reset_index(drop=True)
 
-    # Rolling margin (last 5 and 10 games)
-    out["margin_last5"] = (
-        out.groupby("team")["score_diff"]
-        .shift()
+    # Base margin (schema expects 'margin', not 'score_diff')
+    out["margin"] = (out["score"] - out["opp_score"]).astype("float32")
+
+    # Rolling margin (last 5 and 10 games, leakage-safe)
+    out["margin_rolling_5"] = (
+        out.groupby("team")["margin"]
+        .shift(1)
         .rolling(5, min_periods=1)
         .mean()
         .astype("float32")
     )
 
-    out["margin_last10"] = (
-        out.groupby("team")["score_diff"]
-        .shift()
+    out["margin_rolling_10"] = (
+        out.groupby("team")["margin"]
+        .shift(1)
         .rolling(10, min_periods=1)
         .mean()
         .astype("float32")

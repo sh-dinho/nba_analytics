@@ -37,7 +37,7 @@ class BacktestConfig:
     kelly_fraction: float = 0.25
     max_stake_fraction: float = 0.05
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if not (0 <= self.kelly_fraction <= 1):
             raise ValueError("kelly_fraction must be between 0 and 1")
 

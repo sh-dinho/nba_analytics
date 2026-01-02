@@ -1,67 +1,17 @@
-from .paths import (
-    ROOT_DIR,
-    DATA_DIR,
-    CANONICAL_DIR,
-    SCHEDULE_SNAPSHOT,
-    LONG_SNAPSHOT,
-    SEASON_SCHEDULE_PATH,
-    INGESTION_CACHE_DIR,
-    SCOREBOARD_CACHE_DIR,
-    FEATURES_DIR,
-    MODEL_DIR,
-    MODEL_REGISTRY_DIR,
-    MODEL_REGISTRY_PATH,
-    PREDICTIONS_DIR,
-    MONEYLINE_PRED_DIR,
-    TOTALS_PRED_DIR,
-    SPREAD_PRED_DIR,
-    COMBINED_PRED_DIR,
-    ODDS_DIR,
-    RESULTS_SNAPSHOT_DIR,
-    RESULTS_SNAPSHOT_PATH,
-    BACKTEST_DIR,
-    REPORTS_DIR,
-    LOGS_DIR,
-    DASHBOARD_DIR,
-    DASHBOARD_RECOMMENDATIONS_PATH,
-    DASHBOARD_BANKROLL_PATH,
-    ORCHESTRATOR_LOG_DIR,
-    BET_LOG_DIR,
-    BET_LOG_PATH,
-    RECOMMENDATIONS_DIR,
-    STREAMLIT_APP_DIR,
-)
+from __future__ import annotations
 
-__all__ = [
-    "ROOT_DIR",
-    "DATA_DIR",
-    "CANONICAL_DIR",
-    "SCHEDULE_SNAPSHOT",
-    "LONG_SNAPSHOT",
-    "SEASON_SCHEDULE_PATH",
-    "INGESTION_CACHE_DIR",
-    "SCOREBOARD_CACHE_DIR",
-    "FEATURES_DIR",
-    "MODEL_DIR",
-    "MODEL_REGISTRY_DIR",
-    "MODEL_REGISTRY_PATH",
-    "PREDICTIONS_DIR",
-    "MONEYLINE_PRED_DIR",
-    "TOTALS_PRED_DIR",
-    "SPREAD_PRED_DIR",
-    "COMBINED_PRED_DIR",
-    "ODDS_DIR",
-    "RESULTS_SNAPSHOT_DIR",
-    "RESULTS_SNAPSHOT_PATH",
-    "BACKTEST_DIR",
-    "REPORTS_DIR",
-    "LOGS_DIR",
-    "DASHBOARD_DIR",
-    "DASHBOARD_RECOMMENDATIONS_PATH",
-    "DASHBOARD_BANKROLL_PATH",
-    "ORCHESTRATOR_LOG_DIR",
-    "BET_LOG_DIR",
-    "BET_LOG_PATH",
-    "RECOMMENDATIONS_DIR",
-    "STREAMLIT_APP_DIR",
-]
+# ============================================================
+# 🏀 NBA Analytics
+# Module: Config Exports
+# File: src/config/__init__.py
+# Author: Sadiq
+#
+# Description:
+#     Public export surface for all path constants.
+#     Automatically exports all UPPERCASE names from paths.py.
+# ============================================================
+
+from .paths import *  # noqa: F401,F403
+
+# Export all uppercase constants (ROOT_DIR, DATA_DIR, etc.)
+__all__ = [name for name in globals().keys() if name.isupper()]

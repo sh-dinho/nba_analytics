@@ -22,20 +22,29 @@ def add_form_features(df: pd.DataFrame) -> pd.DataFrame:
         - team
         - date
         - score
-        - opponent_score
+        - opp_score
     """
     out = df.copy()
-    out["date"] = pd.to_datetime(out["date"])
-    out = out.sort_values(["team", "date", "game_id"])
 
-    # Ensure score_diff exists
-    if "score_diff" not in out.columns:
-        out["score_diff"] = out["score"] - out["opponent_score"]
+    # Validate required columns
+    required = {"team", "date", "score", "opp_score"}
+    missing = required - set(out.columns)
+    if missing:
+        raise ValueError(f"add_form_features missing columns: {missing}")
+
+    # Ensure datetime
+    out["date"] = pd.to_datetime(out["date"])
+
+    # Sort for rolling operations
+    out = out.sort_values(["team", "date"]).reset_index(drop=True)
+
+    # Compute score differential
+    out["score_diff"] = out["score"] - out["opp_score"]
 
     # Rolling average margin over last 3 games (excluding current game)
     out["form_last3"] = (
         out.groupby("team")["score_diff"]
-        .transform(lambda s: s.shift().rolling(3, min_periods=1).mean())
+        .transform(lambda s: s.shift(1).rolling(3, min_periods=1).mean())
     )
 
     return out

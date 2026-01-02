@@ -5,22 +5,12 @@ from __future__ import annotations
 # Module: Auto Retrain
 # File: src/pipeline/auto_retrain.py
 # Author: Sadiq
-#
-# Description:
-#     Automatically retrains models when new data arrives.
-#     Steps:
-#         1. Load latest feature snapshot
-#         2. Build features
-#         3. Train new models
-#         4. Evaluate against production models
-#         5. Promote if better
-#
-#     Safe for cron, Airflow, GitHub Actions, or systemd timers.
 # ============================================================
 
 import pandas as pd
 from loguru import logger
 
+from src.config.paths import LONG_SNAPSHOT
 from src.features.builder import FeatureBuilder
 from src.model.training.dataset_builder import build_dataset
 from src.model.training.common import train_model_common
@@ -37,23 +27,6 @@ def auto_retrain(
     model_version: str,
     model_types: list[str] = None,
 ) -> dict:
-    """
-    Run the full auto‑retrain pipeline and return a structured result.
-
-    Parameters
-    ----------
-    feature_version : str
-        Version tag for feature builder.
-    model_version : str
-        Version tag for saved models.
-    model_types : list[str]
-        Which model types to retrain (default: moneyline, totals, spread).
-
-    Returns
-    -------
-    dict
-        Structured result with per‑model metrics and promotion decisions.
-    """
 
     logger.info("🔄 Starting auto‑retrain pipeline...")
 
@@ -63,18 +36,17 @@ def auto_retrain(
     results: dict[str, dict] = {}
 
     # --------------------------------------------------------
-    # 1. Load long-format snapshot
+    # 1. Load canonical long snapshot (same as run_end_to_end)
     # --------------------------------------------------------
     try:
-        fb = FeatureBuilder(version=feature_version)
-        df_long = fb.load_raw_snapshot()
+        df_long = pd.read_parquet(LONG_SNAPSHOT)
     except Exception as e:
-        msg = f"Failed to load long snapshot: {e}"
+        msg = f"Failed to load LONG_SNAPSHOT: {e}"
         logger.error(msg)
         return {"ok": False, "error": msg}
 
     if df_long.empty:
-        msg = "Long snapshot is empty — cannot retrain."
+        msg = "LONG_SNAPSHOT is empty — cannot retrain."
         logger.error(msg)
         return {"ok": False, "error": msg}
 
@@ -83,6 +55,8 @@ def auto_retrain(
     # --------------------------------------------------------
     # 2. Build features
     # --------------------------------------------------------
+    fb = FeatureBuilder(version=feature_version)
+
     try:
         features = fb.build(df_long)
     except Exception as e:
@@ -105,19 +79,20 @@ def auto_retrain(
 
         # Build dataset
         try:
-            X_train, X_test, y_train, y_test, feature_list = build_dataset(model_type)
+            X_train, X_test, y_train, y_test, feature_list, meta = build_dataset(model_type)
         except Exception as e:
             logger.error(f"Dataset build failed for {model_type}: {e}")
             results[model_type] = {"ok": False, "error": str(e)}
             continue
 
-        # Train new model
+        # Train new model (correct signature)
         try:
             new_model, y_pred_or_prob = train_model_common(
                 model_type=model_type,
                 X_train=X_train,
                 y_train=y_train,
                 X_test=X_test,
+                y_test=y_test,
                 model_family="xgboost",
             )
         except Exception as e:
@@ -161,14 +136,14 @@ def auto_retrain(
         # Save new model
         # ----------------------------------------------------
         try:
-            meta = save_model(
+            saved_meta = save_model(
                 model=new_model,
                 model_type=model_type,
                 version=model_version,
                 feature_version=feature_version,
                 metrics=new_metrics,
-                train_start_date=str(X_train.index.min()),
-                train_end_date=str(X_train.index.max()),
+                train_start_date=str(meta["train_start_date"]),
+                train_end_date=str(meta["train_end_date"]),
             )
         except Exception as e:
             logger.error(f"Failed to save {model_type} model: {e}")
@@ -180,7 +155,7 @@ def auto_retrain(
         # ----------------------------------------------------
         if should_promote:
             promote_model(model_type, model_version)
-            logger.success(f"🎉 Promoted new {model_type} model → {meta.model_name}")
+            logger.success(f"🎉 Promoted new {model_type} model → {saved_meta.model_name}")
         else:
             logger.info(f"⚖️ New {model_type} model NOT promoted")
 
@@ -189,7 +164,7 @@ def auto_retrain(
             "new_metrics": new_metrics,
             "prod_metrics": prod_metrics,
             "promoted": should_promote,
-            "model_name": meta.model_name,
+            "model_name": saved_meta.model_name,
         }
 
     logger.success("✨ Auto‑retrain pipeline complete.")

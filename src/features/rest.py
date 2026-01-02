@@ -8,38 +8,41 @@ from __future__ import annotations
 #
 # Description:
 #     Rest-related features for team-game data:
-#     previous game date, rest_days, and back-to-back flag.
+#     - rest_days
+#     - is_b2b (0 or 1)
 # ============================================================
 
 import pandas as pd
 
 
 def add_rest_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Adds rest-related features:
-        - rest_days (days since previous game)
-        - is_b2b (back-to-back indicator)
-
-    Required columns:
-        - team
-        - date
-    """
     out = df.copy()
+
+    # Validate required columns
+    required = {"team", "date"}
+    missing = required - set(out.columns)
+    if missing:
+        raise ValueError(f"add_rest_features missing columns: {missing}")
+
+    # Ensure datetime
     out["date"] = pd.to_datetime(out["date"])
-    out = out.sort_values(["team", "date"])
 
-    # Previous game date per team
-    out["prev_date"] = out.groupby("team")["date"].shift()
+    # Sort for rolling operations
+    out = out.sort_values(["team", "date"]).reset_index(drop=True)
 
-    # Days of rest (default 10 for first game)
+    # Previous game date
+    out["prev_date"] = out.groupby("team")["date"].shift(1)
+
+    # Days since previous game
+    # First game of season gets rest_days = 10 (safe default)
     out["rest_days"] = (
-        (out["date"] - out["prev_date"])
-        .dt.days
+        (out["date"] - out["prev_date"]).dt.days
         .fillna(10)
-        .astype("int16")
+        .astype(int)
     )
 
     # Back-to-back indicator
-    out["is_b2b"] = (out["rest_days"] == 1).astype("int8")
+    # True B2B = rest_days == 1
+    out["is_b2b"] = (out["rest_days"] == 1).astype(int)
 
     return out.drop(columns=["prev_date"])

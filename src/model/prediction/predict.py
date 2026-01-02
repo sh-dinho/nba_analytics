@@ -10,42 +10,96 @@ from __future__ import annotations
 #     Production‑grade prediction wrappers that take canonical
 #     feature DataFrames and trained models, and return
 #     prediction DataFrames for each prediction head.
+#     Enhanced with:
+#       • model-family–aware prediction logic
+#       • validation of game_id/team columns
 # ============================================================
 
 import numpy as np
 import pandas as pd
 from loguru import logger
 
-from src.model.config.model_config import FEATURES
+from src.model.config.model_config import FEATURE_MAP
 
 
 # ------------------------------------------------------------
 # Internal helper
 # ------------------------------------------------------------
 
-def _extract_feature_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]:
+def _extract_feature_matrix(
+    df: pd.DataFrame,
+    model_type: str,
+) -> tuple[pd.DataFrame, np.ndarray]:
     """
     Extract the feature matrix X from a canonical feature DataFrame.
 
-    - Validates that all required model features exist
+    - Validates required features for the given model_type
     - Ensures stable column ordering
-    - Drops identity columns automatically
+    - Validates presence of game_id and team columns
     """
     if df.empty:
         raise ValueError("Feature DataFrame is empty.")
 
-    identity_cols = {"game_id", "team", "opponent"}
+    # Validate identity columns
+    required_identity = ["game_id", "team"]
+    missing_identity = [c for c in required_identity if c not in df.columns]
+    if missing_identity:
+        raise ValueError(f"Missing required identity columns: {missing_identity}")
 
-    # Validate required features
-    missing = [f for f in FEATURES if f not in df.columns]
-    if missing:
-        raise ValueError(f"Missing required feature columns: {missing}")
+    # Validate model-specific features
+    required_features = FEATURE_MAP[model_type]
+    missing_features = [f for f in required_features if f not in df.columns]
+    if missing_features:
+        raise ValueError(f"Missing required feature columns: {missing_features}")
 
-    # Stable ordering
-    feature_cols = FEATURES
-
-    X = df[feature_cols].to_numpy(dtype=float)
+    X = df[required_features].to_numpy(dtype=float)
     return df, X
+
+
+# ------------------------------------------------------------
+# Model-family–aware prediction helpers
+# ------------------------------------------------------------
+
+def _predict_proba_safe(model, X: np.ndarray) -> np.ndarray:
+    """
+    Predict probabilities in a model-family–aware way.
+    Supports:
+        - XGBoost
+        - LightGBM
+        - sklearn LogisticRegression
+        - CalibratedClassifierCV
+    """
+    # Standard sklearn API
+    if hasattr(model, "predict_proba"):
+        proba = model.predict_proba(X)
+        if proba.ndim == 2 and proba.shape[1] == 2:
+            return proba[:, 1]
+        # Some models return only positive class probability
+        if proba.ndim == 1:
+            return proba
+
+    # LightGBM booster
+    if hasattr(model, "predict") and not hasattr(model, "predict_proba"):
+        preds = model.predict(X)
+        # LightGBM returns raw scores unless configured otherwise
+        # Clip to [0,1] as a fallback
+        return np.clip(preds, 0.0, 1.0)
+
+    raise AttributeError("Model does not support probability prediction.")
+
+
+def _predict_regression_safe(model, X: np.ndarray) -> np.ndarray:
+    """
+    Predict regression outputs in a model-family–aware way.
+    Supports:
+        - XGBoost
+        - LightGBM
+        - sklearn regressors
+    """
+    if hasattr(model, "predict"):
+        return model.predict(X)
+
+    raise AttributeError("Model does not support regression prediction.")
 
 
 # ------------------------------------------------------------
@@ -53,24 +107,16 @@ def _extract_feature_matrix(df: pd.DataFrame) -> tuple[pd.DataFrame, np.ndarray]
 # ------------------------------------------------------------
 
 def predict_moneyline(features: pd.DataFrame, model) -> pd.DataFrame:
-    """
-    Predict win probability using a classification model
-    that implements predict_proba().
-    """
-    df, X = _extract_feature_matrix(features)
+    df, X = _extract_feature_matrix(features, model_type="moneyline")
 
-    if not hasattr(model, "predict_proba"):
-        raise AttributeError("Model does not implement predict_proba().")
-
-    proba = model.predict_proba(X)[:, 1].astype(float)
-
-    # Safety: clip probabilities
-    proba = np.clip(proba, 0.0, 1.0)
+    proba = _predict_proba_safe(model, X)
+    proba = np.clip(proba.astype(float), 0.0, 1.0)
 
     out = pd.DataFrame(
         {
             "game_id": df["game_id"].astype(str),
             "team": df["team"].astype(str),
+            "model_type": "moneyline",
             "win_probability": proba,
         }
     )
@@ -84,20 +130,15 @@ def predict_moneyline(features: pd.DataFrame, model) -> pd.DataFrame:
 # ------------------------------------------------------------
 
 def predict_totals(features: pd.DataFrame, model) -> pd.DataFrame:
-    """
-    Predict total points using a regression model.
-    """
-    df, X = _extract_feature_matrix(features)
+    df, X = _extract_feature_matrix(features, model_type="totals")
 
-    if not hasattr(model, "predict"):
-        raise AttributeError("Model does not implement predict().")
-
-    preds = model.predict(X).astype(float)
+    preds = _predict_regression_safe(model, X).astype(float)
 
     out = pd.DataFrame(
         {
             "game_id": df["game_id"].astype(str),
             "team": df["team"].astype(str),
+            "model_type": "totals",
             "predicted_total_points": preds,
         }
     )
@@ -111,20 +152,15 @@ def predict_totals(features: pd.DataFrame, model) -> pd.DataFrame:
 # ------------------------------------------------------------
 
 def predict_spread(features: pd.DataFrame, model) -> pd.DataFrame:
-    """
-    Predict scoring margin using a regression model.
-    """
-    df, X = _extract_feature_matrix(features)
+    df, X = _extract_feature_matrix(features, model_type="spread")
 
-    if not hasattr(model, "predict"):
-        raise AttributeError("Model does not implement predict().")
-
-    preds = model.predict(X).astype(float)
+    preds = _predict_regression_safe(model, X).astype(float)
 
     out = pd.DataFrame(
         {
             "game_id": df["game_id"].astype(str),
             "team": df["team"].astype(str),
+            "model_type": "spread",
             "predicted_margin": preds,
         }
     )
@@ -138,12 +174,9 @@ def predict_spread(features: pd.DataFrame, model) -> pd.DataFrame:
 # ------------------------------------------------------------
 
 def apply_threshold(df: pd.DataFrame, threshold: float = 0.5) -> pd.DataFrame:
-    """
-    Apply a win/loss threshold to win_probability.
-    """
     if "win_probability" not in df.columns:
         raise ValueError("win_probability column missing.")
 
-    df = df.copy()
-    df["predicted_win"] = (df["win_probability"] >= threshold).astype(int)
-    return df
+    out = df.copy()
+    out["predicted_win"] = (out["win_probability"] >= threshold).astype(int)
+    return out

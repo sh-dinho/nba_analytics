@@ -1,38 +1,42 @@
-# ============================================================
-# 🏀 NBA Analytics v4
-# Module: UI Top Navigation
-# Author: Sadiq
-# Version: 4.0.0
-# Purpose: Handles horizontal tab-based navigation across pages.
-# ============================================================
 from __future__ import annotations
+
+# ============================================================
+# 🏀 NBA Analytics v5.0
+# Module: UI Top Navigation (Canonical)
+# Purpose:
+#     Provide tab-like navigation using buttons instead of
+#     Streamlit tabs, avoiding rerun loops and instability.
+# ============================================================
+
 import streamlit as st
+from src.app.ui.page_state import set_active_page, get_active_page
 
 
-def _get_pages_safe():
-    if hasattr(st, "runtime") and hasattr(st.runtime, "get_pages"):
-        return st.runtime.get_pages()
-    return {}
+def render_top_tabs(page_names: list[str]) -> None:
+    """
+    Render a horizontal tab-like navigation bar using buttons.
+    This avoids Streamlit rerun issues and works across versions.
+    """
 
+    active = get_active_page()
 
-def render_top_tabs():
-    pages = _get_pages_safe()
-    current = st.session_state.get("current_page", "")
-    page_list = sorted(list(pages.values()), key=lambda p: p["page_script_path"])
+    cols = st.columns(len(page_names))
 
-    tab_labels = [p["page_name"] for p in page_list]
+    for i, name in enumerate(page_names):
+        is_active = (name == active)
 
-    try:
-        active_index = tab_labels.index(current)
-    except ValueError:
-        active_index = 0
+        button_style = (
+            "background-color: #2ecc71; color: black; font-weight: bold;"
+            if is_active
+            else "background-color: #333; color: #ccc;"
+        )
 
-    tabs = st.tabs(tab_labels)
-
-    # FIXED: Replaced HTML meta-refresh with st.switch_page
-    for i, tab in enumerate(tabs):
-        with tab:
-            if i != active_index:
-                target_page = page_list[i]["page_script_path"]
-                st.session_state["current_page"] = tab_labels[i]
-                st.switch_page(target_page)
+        with cols[i]:
+            if st.button(
+                name,
+                key=f"tab_{name}",
+                help=f"Go to {name}",
+                use_container_width=True,
+            ):
+                set_active_page(name)
+                st.switch_page(f"{name}.py")  # canonical routing

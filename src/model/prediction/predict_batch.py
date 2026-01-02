@@ -5,21 +5,13 @@ from __future__ import annotations
 # Module: Batch Prediction
 # File: src/model/prediction/predict_batch.py
 # Author: Sadiq
-#
-# Description:
-#     Run predictions on an arbitrary parquet file containing
-#     long-format team-game rows. This bypasses the daily
-#     ingestion pipeline and is useful for:
-#       - backfills
-#       - historical prediction generation
-#       - ad-hoc experiments
 # ============================================================
 
 import pandas as pd
 from loguru import logger
 
 from src.features.builder import FeatureBuilder
-from src.model.registry.registry import load_production_model
+from src.model.registry import load_production_model
 from src.model.prediction import (
     predict_moneyline,
     predict_totals,
@@ -38,10 +30,12 @@ def predict_batch(input_path: str, output_path: str) -> None:
     if df.empty:
         raise ValueError(f"Input file {input_path} is empty.")
 
+    logger.info(f"Loaded {len(df)} raw rows")
+
     # --------------------------------------------------------
     # Build features (version-agnostic)
     # --------------------------------------------------------
-    fb = FeatureBuilder()  # no more version="v5"
+    fb = FeatureBuilder()
     features = fb.build(df)
 
     if features.empty:
@@ -52,9 +46,14 @@ def predict_batch(input_path: str, output_path: str) -> None:
     # --------------------------------------------------------
     # Load production models
     # --------------------------------------------------------
-    ml_model, _ = load_production_model("moneyline")
-    totals_model, _ = load_production_model("totals")
-    spread_model, _ = load_production_model("spread")
+    ml_model, ml_meta = load_production_model("moneyline")
+    totals_model, totals_meta = load_production_model("totals")
+    spread_model, spread_meta = load_production_model("spread")
+
+    logger.info(
+        f"Loaded production models → "
+        f"ML v{ml_meta.version}, Totals v{totals_meta.version}, Spread v{spread_meta.version}"
+    )
 
     # --------------------------------------------------------
     # Run prediction heads
@@ -62,6 +61,10 @@ def predict_batch(input_path: str, output_path: str) -> None:
     preds_ml = predict_moneyline(features, ml_model)
     preds_totals = predict_totals(features, totals_model)
     preds_spread = predict_spread(features, spread_model)
+
+    # Drop model_type columns before merging
+    preds_totals = preds_totals.drop(columns=["model_type"], errors="ignore")
+    preds_spread = preds_spread.drop(columns=["model_type"], errors="ignore")
 
     # --------------------------------------------------------
     # Merge predictions

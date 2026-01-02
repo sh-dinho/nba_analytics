@@ -5,11 +5,6 @@ from __future__ import annotations
 # Module: Predict Live Games
 # File: src/scripts/predict_live.py
 # Author: Sadiq
-#
-# Description:
-#     Predicts win probabilities for *in-progress* games using
-#     the latest scoreboard feed and the modern canonical
-#     ingestion + feature + prediction pipeline.
 # ============================================================
 
 from datetime import datetime
@@ -27,7 +22,7 @@ from src.pipeline.run_predictions import run_predictions
 from src.config.paths import PREDICTIONS_DIR
 
 
-def run_live_predictions(feature_version: str = "v1") -> dict:
+def run_live_predictions() -> dict:
     logger.info("=== 🔴 Predicting Live Games (Canonical Pipeline) ===")
 
     today = datetime.utcnow().date()
@@ -62,7 +57,7 @@ def run_live_predictions(feature_version: str = "v1") -> dict:
     # 3. Build features (in-memory only)
     # --------------------------------------------------------
     try:
-        fb = FeatureBuilder(version=feature_version)
+        fb = FeatureBuilder()  # version-agnostic
         features = fb.build(long)
     except Exception as e:
         msg = f"Feature building failed for live games: {e}"
@@ -75,20 +70,10 @@ def run_live_predictions(feature_version: str = "v1") -> dict:
         return {"ok": False, "error": msg}
 
     # --------------------------------------------------------
-    # 4. Load latest model
+    # 4. Predict win probabilities
     # --------------------------------------------------------
     try:
-        model = load_latest_model()
-    except Exception as e:
-        msg = f"Failed to load latest model: {e}"
-        logger.error(msg)
-        return {"ok": False, "error": msg}
-
-    # --------------------------------------------------------
-    # 5. Predict win probabilities
-    # --------------------------------------------------------
-    try:
-        preds = run_predictions(long, feature_version=feature_version)
+        preds = run_predictions(features)
     except Exception as e:
         msg = f"Prediction failed: {e}"
         logger.error(msg)
@@ -97,7 +82,7 @@ def run_live_predictions(feature_version: str = "v1") -> dict:
     preds["timestamp_utc"] = datetime.utcnow().isoformat()
 
     # --------------------------------------------------------
-    # 6. Save predictions
+    # 5. Save predictions
     # --------------------------------------------------------
     PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = PREDICTIONS_DIR / f"live_predictions_{today}.parquet"

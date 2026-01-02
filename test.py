@@ -1,26 +1,39 @@
 import pandas as pd
-from datetime import date
-from src.config.paths import COMBINED_PRED_DIR
+from src.config.paths import LONG_SNAPSHOT
 
-pred_date = date(2025, 12, 26)
-df = pd.read_parquet(COMBINED_PRED_DIR / f"combined_{pred_date}.parquet")
+# ------------------------------------------------------------
+# 1. Load predictions file for the day
+# ------------------------------------------------------------
+pred_path = r"C:\Users\Mohamadou\PycharmProjects\nba_analytics\data\predictions\predictions_2026-01-02.parquet"
+df_pred = pd.read_parquet(pred_path)
 
-winners = df.assign(
-    predicted_winner=df.apply(
-        lambda r: (
-            r["home_team"] if r["win_probability_home"] >= 0.5 else r["away_team"]
-        ),
-        axis=1,
-    )
-)[
-    [
-        "game_id",
-        "home_team",
-        "away_team",
-        "win_probability_home",
-        "win_probability_away",
-        "predicted_winner",
-    ]
-]
+# ------------------------------------------------------------
+# 2. Load the long snapshot (contains game_date)
+# ------------------------------------------------------------
+df_long = pd.read_parquet(LONG_SNAPSHOT)
 
-print(winners)
+# ------------------------------------------------------------
+# 3. Keep only the columns needed for merging
+# ------------------------------------------------------------
+# Your long snapshot definitely has game_id, team, and a date column.
+# Let's detect the date column automatically.
+date_cols = [c for c in df_long.columns if "date" in c.lower()]
+
+if not date_cols:
+    raise ValueError("No date column found in LONG_SNAPSHOT")
+
+date_col = date_cols[0]   # e.g., 'game_date' or 'date'
+
+df_long_small = df_long[["game_id", "team", date_col]]
+
+# ------------------------------------------------------------
+# 4. Merge predictions with dates
+# ------------------------------------------------------------
+merged = df_pred.merge(df_long_small, on=["game_id", "team"], how="left")
+
+# ------------------------------------------------------------
+# 5. Filter for 2026‑01‑02
+# ------------------------------------------------------------
+today_preds = merged[merged[date_col] == "2025-12-30"]
+
+print(today_preds)

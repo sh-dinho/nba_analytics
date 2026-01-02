@@ -7,58 +7,64 @@ from __future__ import annotations
 # Author: Sadiq
 #
 # Description:
-#     Thin wrapper around the shared training logic for
-#     training the moneyline (win probability) model.
+#     Thin wrapper around shared training logic for the
+#     moneyline (win probability) model.
+#     Now includes:
+#       • full metrics report
+#       • model metadata
+#       • safer logging
 # ============================================================
 
 from loguru import logger
-from typing import Tuple, Any
 
 from src.model.training.common import train_model_common
+from src.model.training.full_metrics import full_metrics_report
 
 
 def train_moneyline(
     X_train,
     y_train,
     X_test,
+    y_test,
     model_family: str = "xgboost",
-    calibrate: bool = True,
 ):
     """
     Train the moneyline (win probability) model.
 
-    Parameters
-    ----------
-    X_train : array-like
-        Training feature matrix.
-    y_train : array-like
-        Training labels (0/1).
-    X_test : array-like
-        Test feature matrix.
-    model_family : str
-        "xgboost" | "lightgbm" | "logistic_regression"
-    calibrate : bool
-        Whether to apply probability calibration.
-
-    Returns
-    -------
-    model : trained model object
-    y_output : predictions or probabilities on X_test
-    metrics : dict
-        Training metrics computed on the training set.
+    Returns:
+        model        → trained + calibrated model
+        y_pred       → predicted probabilities
+        report       → full metrics report (classification + calibration + thresholds)
     """
-    logger.info(
-        f"Training moneyline model using {model_family} "
-        f"(calibrate={calibrate})"
+    logger.info(f"🏀 Training moneyline model using family='{model_family}'")
+    logger.debug(
+        f"Shapes: X_train={getattr(X_train, 'shape', None)}, "
+        f"X_test={getattr(X_test, 'shape', None)}"
     )
-    logger.debug(f"X_train={getattr(X_train, 'shape', None)}, "
-                 f"X_test={getattr(X_test, 'shape', None)}")
 
-    return train_model_common(
+    # --------------------------------------------------------
+    # Train model (shared logic handles calibration)
+    # --------------------------------------------------------
+    model, y_pred = train_model_common(
         model_type="moneyline",
-        X_train=X_train,
+        x_train=X_train,
         y_train=y_train,
-        X_test=X_test,
+        x_test=X_test,
         model_family=model_family,
-        calibrate=calibrate,
     )
+
+    # --------------------------------------------------------
+    # Full metrics report (classification + calibration + thresholds)
+    # --------------------------------------------------------
+    report = full_metrics_report(
+        model_type="moneyline",
+        y_true=y_test,
+        y_output=y_pred,
+    )
+
+    logger.success("Moneyline model training complete.")
+    logger.info(f"Metrics summary: accuracy={report['classification']['accuracy']:.4f}, "
+                f"brier={report['classification']['brier']:.4f}, "
+                f"auc={report['classification']['auc']:.4f}")
+
+    return model, y_pred, report

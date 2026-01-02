@@ -1,32 +1,11 @@
 from __future__ import annotations
 from pathlib import Path
+import json
 
 # ============================================================
-# 🏀 NBA Analytics
-# Module: Path Configuration
-# File: src/config/paths.py
-# Author: Sadiq
-#
-# Description:
-#     Centralized directory and file path configuration for:
-#       • canonical snapshots
-#       • ingestion cache
-#       • features
-#       • models + registry
-#       • predictions (moneyline, spread, totals, combined)
-#       • odds
-#       • results
-#       • backtesting
-#       • reports
-#       • monitoring logs + dashboards
-#       • bet tracker
-#       • recommendations
-#       • Streamlit app
+# 🏀 NBA Analytics — Path Configuration
 # ============================================================
 
-# ------------------------------------------------------------
-# Root
-# ------------------------------------------------------------
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 # ------------------------------------------------------------
@@ -36,16 +15,23 @@ DATA_DIR = ROOT_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ------------------------------------------------------------
-# Canonical snapshots (version-agnostic)
+# Canonical snapshots
 # ------------------------------------------------------------
 CANONICAL_DIR = DATA_DIR / "canonical"
 CANONICAL_DIR.mkdir(parents=True, exist_ok=True)
 
-SCHEDULE_SNAPSHOT = CANONICAL_DIR / "schedule_snapshot.parquet"
+DAILY_SCHEDULE_SNAPSHOT = CANONICAL_DIR / "schedule_daily.parquet"
 LONG_SNAPSHOT = CANONICAL_DIR / "long_snapshot.parquet"
 FEATURES_SNAPSHOT = CANONICAL_DIR / "features_snapshot.parquet"
+SEASON_SCHEDULE_PATH = CANONICAL_DIR / "schedule_season.parquet"
 
-SEASON_SCHEDULE_PATH = CANONICAL_DIR / "season_schedule.parquet"
+# ------------------------------------------------------------
+# Raw snapshots
+# ------------------------------------------------------------
+SNAPSHOTS_DIR = DATA_DIR / "snapshots"
+SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+RAW_FEATURE_SNAPSHOT_PATH = SNAPSHOTS_DIR / "features_snapshot.parquet"
 
 # ------------------------------------------------------------
 # Ingestion cache
@@ -63,7 +49,7 @@ FEATURES_DIR = DATA_DIR / "features"
 FEATURES_DIR.mkdir(parents=True, exist_ok=True)
 
 # ------------------------------------------------------------
-# Model artifacts + registry
+# Models + registry
 # ------------------------------------------------------------
 MODEL_DIR = DATA_DIR / "models"
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -72,8 +58,17 @@ MODEL_REGISTRY_DIR = DATA_DIR / "model_registry"
 MODEL_REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
 
 MODEL_REGISTRY_PATH = MODEL_REGISTRY_DIR / "index.json"
+
+# Ensure registry is valid JSON
 if not MODEL_REGISTRY_PATH.exists():
     MODEL_REGISTRY_PATH.write_text('{"models": []}', encoding="utf-8")
+else:
+    try:
+        data = json.loads(MODEL_REGISTRY_PATH.read_text())
+        if "models" not in data:
+            raise ValueError
+    except Exception:
+        MODEL_REGISTRY_PATH.write_text('{"models": []}', encoding="utf-8")
 
 # ------------------------------------------------------------
 # Predictions
@@ -156,5 +151,3 @@ RECOMMENDATIONS_DIR.mkdir(parents=True, exist_ok=True)
 # ------------------------------------------------------------
 STREAMLIT_APP_DIR = ROOT_DIR / "src" / "app"
 STREAMLIT_APP_DIR.mkdir(parents=True, exist_ok=True)
-
-RAW_FEATURE_SNAPSHOT_PATH = DATA_DIR / "snapshots" / "features_snapshot.parquet"

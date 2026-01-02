@@ -2,7 +2,10 @@
 # NBA Analytics Engine — Makefile
 # ============================================================
 
-PYTHON=python3
+# Cross-platform Python resolver:
+# - Uses python3 if available
+# - Falls back to python on Windows
+PYTHON := $(shell command -v python3 >/dev/null 2>&1 && echo python3 || echo python)
 
 install:
 	$(PYTHON) -m pip install --upgrade pip

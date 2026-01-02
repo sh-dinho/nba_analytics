@@ -7,52 +7,66 @@ from __future__ import annotations
 # Author: Sadiq
 #
 # Description:
-#     Thin wrapper around the shared training logic for
-#     training the spread (scoring margin) regression model.
+#     Thin wrapper around shared training logic for the
+#     spread (scoring margin) regression model.
+#     Now includes:
+#       • full metrics report
+#       • residual diagnostics
+#       • model metadata
 # ============================================================
 
 from loguru import logger
-from typing import Any
 
 from src.model.training.common import train_model_common
+from src.model.training.full_metrics import full_metrics_report
 
 
 def train_spread(
     X_train,
     y_train,
     X_test,
+    y_test,
     model_family: str = "xgboost",
 ):
     """
     Train the spread (scoring margin) regression model.
 
-    Parameters
-    ----------
-    X_train : array-like
-        Training feature matrix.
-    y_train : array-like
-        Training regression targets (scoring margin).
-    X_test : array-like
-        Test feature matrix.
-    model_family : str
-        "xgboost" | "lightgbm"
-
-    Returns
-    -------
-    model : trained model object
-    y_output : predictions on X_test
-    metrics : dict
-        Training metrics computed on the training set.
+    Returns:
+        model   → trained model
+        y_pred  → predicted margins
+        report  → full regression metrics + residual diagnostics
     """
-    logger.info(f"Training spread model using {model_family}")
-    logger.debug(f"X_train={getattr(X_train, 'shape', None)}, "
-                 f"X_test={getattr(X_test, 'shape', None)}")
-
-    return train_model_common(
-        model_type="spread",
-        X_train=X_train,
-        y_train=y_train,
-        X_test=X_test,
-        model_family=model_family,
-        calibrate=False,  # regression models do not use calibration
+    logger.info(f"🏀 Training spread model using family='{model_family}'")
+    logger.debug(
+        f"Shapes: X_train={getattr(X_train, 'shape', None)}, "
+        f"X_test={getattr(X_test, 'shape', None)}"
     )
+
+    # --------------------------------------------------------
+    # Train model (shared logic)
+    # --------------------------------------------------------
+    model, y_pred = train_model_common(
+        model_type="spread",
+        x_train=X_train,
+        y_train=y_train,
+        x_test=X_test,
+        model_family=model_family,
+    )
+
+    # --------------------------------------------------------
+    # Full regression metrics + residual diagnostics
+    # --------------------------------------------------------
+    report = full_metrics_report(
+        model_type="spread",
+        y_true=y_test,
+        y_output=y_pred,
+    )
+
+    logger.success("Spread model training complete.")
+    logger.info(
+        f"Metrics summary: rmse={report['regression']['rmse']:.4f}, "
+        f"mae={report['regression']['mae']:.4f}, "
+        f"r2={report['regression']['r2']:.4f}"
+    )
+
+    return model, y_pred, report

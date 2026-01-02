@@ -16,13 +16,22 @@ from __future__ import annotations
 # ============================================================
 
 import argparse
+import sys
 from datetime import date, timedelta
-from loguru import logger
-import pandas as pd
 
-from src.backtest.canonical_engine import CanonicalBacktestConfig, run_canonical_backtest
+import pandas as pd
+from loguru import logger
+
+from src.backtest.canonical_engine import (
+    CanonicalBacktestConfig,
+    run_canonical_backtest,
+)
 from src.config.paths import PREDICTIONS_DIR, LOGS_DIR
 
+
+# ------------------------------------------------------------
+# Date Parsing
+# ------------------------------------------------------------
 
 def parse_date_or_range(start: str | None, end: str | None, days_range: int | None):
     """Supports:
@@ -46,13 +55,17 @@ def parse_date_or_range(start: str | None, end: str | None, days_range: int | No
     return start_date.isoformat(), today.isoformat()
 
 
+# ------------------------------------------------------------
+# Prediction Loading
+# ------------------------------------------------------------
+
 def load_predictions(start: str, end: str) -> pd.DataFrame:
     """Load canonical predictions between start and end dates."""
     start_d = date.fromisoformat(start)
     end_d = date.fromisoformat(end)
 
     files = sorted(PREDICTIONS_DIR.glob("predictions_*.parquet"))
-    dfs = []
+    dfs: list[pd.DataFrame] = []
 
     for f in files:
         try:
@@ -66,8 +79,19 @@ def load_predictions(start: str, end: str) -> pd.DataFrame:
     if not dfs:
         return pd.DataFrame()
 
-    return pd.concat(dfs, ignore_index=True)
+    df = pd.concat(dfs, ignore_index=True)
 
+    # Dedupe for safety
+    if {"game_id", "team"}.issubset(df.columns):
+        df = df.drop_duplicates(subset=["game_id", "team"])
+
+    logger.info(f"Loaded {len(df)} prediction rows from {len(dfs)} files.")
+    return df
+
+
+# ------------------------------------------------------------
+# Backtest Runner
+# ------------------------------------------------------------
 
 def run_backtest_report(
     start: str,
@@ -99,7 +123,7 @@ def run_backtest_report(
         logger.error(msg)
         return {"ok": False, "error": msg}
 
-    # Save report
+    # Save report (scalar metrics)
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = LOGS_DIR / f"backtest_{start}_to_{end}.json"
     out_path.write_text(report.to_json(indent=2))
@@ -110,6 +134,9 @@ def run_backtest_report(
     print(f"ROI: {report.roi:.2%}")
     print(f"Accuracy: {report.accuracy:.3f}")
     print(f"Final Bankroll: {report.final_bankroll:.2f}")
+    print(f"Total Profit: {report.total_profit:.2f}")
+    print(f"Max Drawdown: {report.max_drawdown:.2%}")
+    print(f"Bets: {report.n_bets}")
     print("=========================\n")
 
     return {
@@ -124,7 +151,11 @@ def run_backtest_report(
     }
 
 
-def main():
+# ------------------------------------------------------------
+# CLI Entrypoint
+# ------------------------------------------------------------
+
+def main() -> None:
     parser = argparse.ArgumentParser(description="Generate canonical backtest report")
 
     parser.add_argument("--start", type=str, default=None)
@@ -142,9 +173,9 @@ def main():
         start, end = parse_date_or_range(args.start, args.end, args.range)
     except Exception as e:
         logger.error(f"Invalid date arguments: {e}")
-        return
+        sys.exit(1)
 
-    run_backtest_report(
+    result = run_backtest_report(
         start=start,
         end=end,
         bankroll=args.bankroll,
@@ -152,6 +183,12 @@ def main():
         kelly=args.kelly,
         max_stake=args.max_stake,
     )
+
+    if not result.get("ok"):
+        sys.exit(1)
+
+    logger.info("🎉 Backtest completed successfully.")
+    sys.exit(0)
 
 
 if __name__ == "__main__":

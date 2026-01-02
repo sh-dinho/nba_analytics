@@ -5,19 +5,10 @@ from __future__ import annotations
 # Module: Verify Canonical Snapshot
 # File: src/scripts/verify_nba_data.py
 # Author: Sadiq
-#
-# Description:
-#     Validates the canonical LONG_SNAPSHOT:
-#       • row/column integrity
-#       • duplicate (game_id, team)
-#       • opponent symmetry
-#       • score symmetry
-#       • season completeness (if available)
-#       • freshness
-#       • preview latest rows
 # ============================================================
 
 import pandas as pd
+from datetime import datetime, timedelta
 from loguru import logger
 
 from src.config.paths import LONG_SNAPSHOT
@@ -27,21 +18,55 @@ from src.ingestion.validator.checks import (
 )
 
 
+REQUIRED_COLUMNS = {
+    "game_id",
+    "team",
+    "opponent",
+    "date",
+    "points",
+    "opponent_points",
+}
+
+
 def verify_snapshot():
+    print("\n=== VERIFYING CANONICAL LONG SNAPSHOT ===")
+
+    # --------------------------------------------------------
+    # Load snapshot
+    # --------------------------------------------------------
     if not LONG_SNAPSHOT.exists():
         logger.error(f"No LONG_SNAPSHOT found at {LONG_SNAPSHOT}")
         return
 
     logger.info(f"Loading LONG_SNAPSHOT from {LONG_SNAPSHOT}...")
-    df = pd.read_parquet(LONG_SNAPSHOT, engine="pyarrow")
+    try:
+        df = pd.read_parquet(LONG_SNAPSHOT, engine="pyarrow")
+    except Exception as e:
+        logger.error(f"Failed to read LONG_SNAPSHOT: {e}")
+        return
 
-    print("\n=== CANONICAL SNAPSHOT REPORT ===")
     print(f"Total Rows: {len(df):,}")
+    print(f"Columns: {len(df.columns)}")
 
+    # --------------------------------------------------------
+    # Schema validation
+    # --------------------------------------------------------
+    missing = REQUIRED_COLUMNS - set(df.columns)
+    if missing:
+        logger.error(f"❌ Missing required columns: {missing}")
+        return
+    else:
+        logger.success("✅ All required columns present.")
+
+    # --------------------------------------------------------
     # Season info (optional)
+    # --------------------------------------------------------
     if "season" in df.columns:
         seasons = df["season"].dropna().unique()
-        print(f"Seasons: {len(seasons)} ({min(seasons)} → {max(seasons)})")
+        if len(seasons) > 0:
+            print(f"Seasons: {len(seasons)} ({min(seasons)} → {max(seasons)})")
+        else:
+            print("Seasons: [present but empty]")
     else:
         print("Seasons: [no season column present]")
 
@@ -64,19 +89,55 @@ def verify_snapshot():
     score_mismatch_ids = find_score_mismatches(df)
     print(f"Score Mismatches: {len(score_mismatch_ids)} {'[WARN]' if score_mismatch_ids else '[OK]'}")
 
-    # Freshness
-    last_date = pd.to_datetime(df["date"]).max()
-    print(f"\nLast Ingested Date: {last_date.date()}")
+    # --------------------------------------------------------
+    # Freshness Check
+    # --------------------------------------------------------
+    try:
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        last_date = df["date"].max()
+        print(f"\nLast Ingested Date: {last_date.date()}")
 
+        if datetime.utcnow().date() - last_date.date() > timedelta(days=2):
+            logger.warning("⚠️ Snapshot appears stale (older than 2 days).")
+    except Exception:
+        logger.error("❌ Failed to parse 'date' column for freshness check.")
+
+    # --------------------------------------------------------
     # Null season check
+    # --------------------------------------------------------
     if "season" in df.columns and df["season"].isna().any():
-        print("CRITICAL: Null values found in 'season' column!")
+        logger.error("CRITICAL: Null values found in 'season' column!")
 
-    # Preview
+    # --------------------------------------------------------
+    # Numeric sanity checks
+    # --------------------------------------------------------
+    print("\n--- Numeric Sanity Checks ---")
+    numeric_cols = ["points", "opponent_points"]
+
+    for col in numeric_cols:
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            logger.error(f"❌ Column {col} is not numeric dtype.")
+            continue
+
+        if (df[col] < 0).any():
+            logger.error(f"❌ Negative values found in {col}.")
+
+        if df[col].max() > 200:
+            logger.warning(f"⚠️ Suspiciously high values in {col}: max={df[col].max()}")
+
+    # --------------------------------------------------------
+    # Preview latest rows
+    # --------------------------------------------------------
     print("\n--- Latest 5 Rows ---")
-    print(df.sort_values("date").tail(5))
+    try:
+        print(df.sort_values("date").tail(5))
+    except Exception:
+        print(df.tail(5))
 
-    print("\n=== DONE ===")
+    # --------------------------------------------------------
+    # Summary
+    # --------------------------------------------------------
+    print("\n=== SNAPSHOT VERIFICATION COMPLETE ===\n")
 
 
 if __name__ == "__main__":

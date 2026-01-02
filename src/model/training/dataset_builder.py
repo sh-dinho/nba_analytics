@@ -9,98 +9,91 @@ from __future__ import annotations
 # Description:
 #     Build train/test datasets for a given model_type using
 #     the canonical feature pipeline and model configuration.
+#     Includes:
+#       • season-aware splitting
+#       • feature validation
+#       • NaN-safe filtering
+#       • metadata for model registry
 # ============================================================
 
-from pathlib import Path
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from loguru import logger
 
-from src.features.builder import FeatureBuilder
-from src.model.config.model_config import (
-    TRAINING_CONFIG,
-    FEATURES,
-    TARGET,
-)
-from src.config.paths import RAW_FEATURE_SNAPSHOT_PATH  # replace v5 snapshot
+from src.config.paths import FEATURES_SNAPSHOT
+from src.model.config.model_config import FEATURE_MAP, TARGET_MAP
 
-
-# ------------------------------------------------------------
-# Dataset builder
-# ------------------------------------------------------------
 
 def build_dataset(model_type: str):
     """
-    Build train/test sets for a given model_type.
-
-    Args:
-        model_type: "moneyline" | "totals" | "spread"
+    Build train/test splits for a given model type.
 
     Returns:
-        X_train, X_test, y_train, y_test, feature_list
+        X_train, X_test, y_train, y_test, feature_list, metadata
     """
+    logger.info(f"📦 Building dataset for model_type='{model_type}'")
 
-    # --------------------------------------------------------
-    # Load raw long-format snapshot
-    # --------------------------------------------------------
-    df = pd.read_parquet(RAW_FEATURE_SNAPSHOT_PATH)
+    # Load snapshot
+    df = pd.read_parquet(FEATURES_SNAPSHOT)
     if df.empty:
-        raise ValueError(f"Snapshot at {RAW_FEATURE_SNAPSHOT_PATH} is empty.")
+        raise RuntimeError("Feature snapshot is empty — cannot build dataset.")
 
-    logger.info(f"Loaded snapshot: {df.shape}")
+    logger.info(f"Loaded {len(df):,} rows with {len(df.columns)} columns.")
 
-    # --------------------------------------------------------
-    # Build canonical features
-    # --------------------------------------------------------
-    fb = FeatureBuilder()
-    features = fb.build(df)
+    # Validate target
+    target_col = TARGET_MAP[model_type]
+    df = df.dropna(subset=[target_col])
 
-    if features.empty:
-        raise ValueError("FeatureBuilder returned an empty feature set.")
+    # Feature list
+    feature_list = FEATURE_MAP[model_type]
+    df = df.dropna(subset=feature_list)
 
-    logger.info(f"Built features: {features.shape}")
+    X = df[feature_list].copy()
+    y = df[target_col].copy()
 
-    # --------------------------------------------------------
-    # Select model-specific target
-    # --------------------------------------------------------
-    if model_type == "moneyline":
-        target_col = TARGET  # "won"
-    elif model_type == "totals":
-        target_col = "total_points"
-    elif model_type == "spread":
-        target_col = "margin"
-    else:
-        raise ValueError(f"Unsupported model_type: {model_type}")
+    # Season-aware split
+    if "season" in df.columns:
+        latest_season = df["season"].max()
+        logger.info(f"Using season-aware split. Test season = {latest_season}")
 
-    if target_col not in df.columns:
-        raise ValueError(f"Target column '{target_col}' missing from snapshot.")
+        train_df = df[df["season"] < latest_season]
+        test_df = df[df["season"] == latest_season]
 
-    y = df[target_col]
+        if not train_df.empty and not test_df.empty:
+            X_train = train_df[feature_list]
+            y_train = train_df[target_col]
+            X_test = test_df[feature_list]
+            y_test = test_df[target_col]
 
-    # --------------------------------------------------------
-    # Select feature matrix
-    # --------------------------------------------------------
-    missing = [f for f in FEATURES if f not in features.columns]
-    if missing:
-        raise ValueError(f"Missing required features: {missing}")
+            metadata = {
+                "train_start_date": train_df["date"].min(),
+                "train_end_date": train_df["date"].max(),
+                "test_start_date": test_df["date"].min(),
+                "test_end_date": test_df["date"].max(),
+            }
 
-    X = features[FEATURES]
+            logger.info(
+                f"Dataset built (season split): "
+                f"{len(X_train)} train rows, {len(X_test)} test rows"
+            )
+            return X_train, X_test, y_train, y_test, feature_list, metadata
 
-    # --------------------------------------------------------
-    # Train/test split
-    # --------------------------------------------------------
+    # Fallback random split
+    stratify = y if model_type == "moneyline" else None
     X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=TRAINING_CONFIG["test_size"],
-        random_state=TRAINING_CONFIG["random_state"],
-        shuffle=True,
+        X, y, test_size=0.20, random_state=42, stratify=stratify
     )
 
-    logger.success(
-        f"Dataset built → "
-        f"X_train={X_train.shape}, X_test={X_test.shape}, "
-        f"y_train={y_train.shape}, y_test={y_test.shape}"
+    metadata = {
+        "train_start_date": df["date"].min(),
+        "train_end_date": df["date"].max(),
+        "test_start_date": None,
+        "test_end_date": None,
+    }
+
+    logger.info(
+        f"Dataset built (random split): {len(X_train)} train rows, "
+        f"{len(X_test)} test rows"
     )
 
-    return X_train, X_test, y_train, y_test, FEATURES
+    return X_train, X_test, y_train, y_test, feature_list, metadata

@@ -8,10 +8,13 @@ from __future__ import annotations
 #
 # Description:
 #     Canonical schema for model-ready feature rows.
+#     Updated to allow early-season NaNs and match pipeline output.
 # ============================================================
 
 from typing import Optional
-from pydantic import BaseModel, validator
+from datetime import datetime
+from pydantic import BaseModel, field_validator
+import pandas as pd
 
 
 class FeatureRow(BaseModel):
@@ -22,13 +25,17 @@ class FeatureRow(BaseModel):
     team: str
     opponent: str
     season: str
+    date: datetime
+    is_home: int
 
     # --------------------------------------------------------
-    # Core features
+    # Core stats
     # --------------------------------------------------------
-    is_home_feature: int
-    team_win_pct_last10: Optional[float]
-    opp_win_pct_last10: Optional[float]
+    score: int
+    opp_score: int
+    win: int
+    margin: int
+    total_points: int
 
     # --------------------------------------------------------
     # ELO features
@@ -39,66 +46,87 @@ class FeatureRow(BaseModel):
     elo_roll10: Optional[float]
 
     # --------------------------------------------------------
-    # Rolling margin + win rate
+    # Rolling stats
     # --------------------------------------------------------
-    margin_last5: Optional[float]
-    margin_last10: Optional[float]
-    roll_win_rate_5: Optional[float]
-    roll_win_rate_10: Optional[float]
+    points_for_rolling_5: Optional[float]
+    points_against_rolling_5: Optional[float]
+    margin_rolling_5: Optional[float]
+    win_rolling_5: Optional[float]
+
+    points_for_rolling_10: Optional[float]
+    points_against_rolling_10: Optional[float]
+    margin_rolling_10: Optional[float]
+
+    points_for_rolling_20: Optional[float]
+    points_against_rolling_20: Optional[float]
+    margin_rolling_20: Optional[float]
+    win_rolling_20: Optional[float]
 
     # --------------------------------------------------------
-    # Form
-    # --------------------------------------------------------
-    form_last3: Optional[float]
-    win_streak: Optional[int]
-
-    # --------------------------------------------------------
-    # Rest
+    # Contextual features
     # --------------------------------------------------------
     rest_days: Optional[int]
     is_b2b: Optional[int]
+    form_last3: Optional[float]
+    sos: Optional[float]
+    win_streak: Optional[int]
 
     # --------------------------------------------------------
-    # Strength of schedule
+    # Opponent-adjusted features
     # --------------------------------------------------------
-    sos: Optional[float]
+    opp_margin_rolling_5: Optional[float]
+    opp_margin_rolling_10: Optional[float]
+    team_win_pct_last10: Optional[float]
+    opp_win_pct_last10: Optional[float]
 
     # --------------------------------------------------------
     # Validators
     # --------------------------------------------------------
-    @validator("game_id", "team", "opponent")
+    @field_validator("game_id", "team", "opponent", "season")
     def validate_non_empty(cls, v):
-        if v is None or str(v).strip() == "":
+        if not v or str(v).strip() == "":
             raise ValueError("Identifier fields must be non-empty")
         return v
 
-    @validator("season")
-    def validate_season_format(cls, v):
-        if not isinstance(v, str) or v.count("-") != 1:
-            raise ValueError(f"Invalid season format: {v}")
-        return v
-
-    @validator("is_home_feature", "is_b2b")
+    @field_validator("is_home", "is_b2b", "win")
     def validate_binary(cls, v):
-        if v is not None and v not in (0, 1):
+        if v not in (0, 1):
             raise ValueError(f"Expected binary 0/1, got {v}")
         return v
 
-    @validator("team_win_pct_last10", "opp_win_pct_last10",
-               "roll_win_rate_5", "roll_win_rate_10")
-    def validate_pct(cls, v):
-        if v is not None and not (0.0 <= v <= 1.0):
-            raise ValueError(f"Percentage must be in [0,1], got {v}")
+    @field_validator(
+        "win_rolling_5",
+        "win_rolling_20",
+        "team_win_pct_last10",
+        "opp_win_pct_last10",
+    )
+    def validate_win_rate(cls, v):
+        if v is None or pd.isna(v):
+            return v
+        if not (0.0 <= v <= 1.0):
+            raise ValueError(f"Win rate must be in [0,1], got {v}")
         return v
 
-    @validator("elo", "opp_elo", "elo_roll5", "elo_roll10")
+    @field_validator("elo", "opp_elo", "elo_roll5", "elo_roll10")
     def validate_elo(cls, v):
-        if v is not None and not (500 <= v <= 3000):
+        if v is None or pd.isna(v):
+            return v
+        if not (500 <= v <= 3000):
             raise ValueError(f"ELO value out of expected range: {v}")
         return v
 
-    @validator("rest_days")
+    @field_validator("rest_days")
     def validate_rest_days(cls, v):
-        if v is not None and v < 0:
+        if v is None or pd.isna(v):
+            return v
+        if v < 0:
             raise ValueError(f"rest_days cannot be negative, got {v}")
+        return v
+
+    @field_validator("sos")
+    def validate_sos(cls, v):
+        if v is None or pd.isna(v):
+            return v
+        if not (-200 <= v <= 200):
+            raise ValueError(f"SOS value out of expected range: {v}")
         return v

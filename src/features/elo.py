@@ -7,63 +7,68 @@ from __future__ import annotations
 # Author: Sadiq
 #
 # Description:
-#     ELO-style team rating for team-game rows, computed in a
-#     leakage-safe manner. Also derives opponent ELO by merging
-#     within each game_id.
+#     Leakage-safe ELO rating for team-game rows.
+#     Uses canonical long-format columns:
+#         - score
+#         - opp_score
+#     Produces:
+#         - elo (pre-game)
+#         - opp_elo (opponent pre-game)
 # ============================================================
 
 import pandas as pd
 
 
-def _apply_elo_optimized(df: pd.DataFrame, k: float = 20.0) -> pd.Series:
+def _apply_elo(df: pd.DataFrame, k: float = 20.0) -> pd.Series:
     """
-    Tight loop for ELO calculation to minimize overhead.
-    Computes pre-game ELO for each team in chronological order.
+    Compute pre-game ELO for each team in chronological order.
+    Uses canonical columns: score, opp_score.
     """
-    elo_map = {}  # Team -> Current ELO
+    elo_map = {}  # team -> current ELO
     results = []
 
-    # Iterate over sorted records to prevent data leakage
-    for row in df.itertuples():
-        t, o = row.team, row.opponent
-        e_t = elo_map.get(t, 1500.0)
-        e_o = elo_map.get(o, 1500.0)
+    # Sort chronologically to avoid leakage
+    df_sorted = df.sort_values("date")
 
-        # Record pre-game ELO
-        results.append(e_t)
+    for row in df_sorted.itertuples():
+        team = row.team
+        opp = row.opponent
 
-        # Update ELO only if scores are available
-        if pd.notna(row.score) and pd.notna(row.opponent_score):
-            actual = (
-                1.0 if row.score > row.opponent_score
-                else 0.5 if row.score == row.opponent_score
-                else 0.0
-            )
-            expected = 1.0 / (1.0 + 10.0 ** ((e_o - e_t) / 400.0))
-            elo_map[t] = e_t + k * (actual - expected)
+        # Current ratings (default 1500)
+        elo_team = elo_map.get(team, 1500.0)
+        elo_opp = elo_map.get(opp, 1500.0)
 
-    return pd.Series(results, index=df.index, dtype="float32")
+        # Pre-game ELO is the feature
+        results.append(elo_team)
+
+        # Update only if scores exist
+        if pd.notna(row.score) and pd.notna(row.opp_score):
+            actual = 1.0 if row.score > row.opp_score else (0.5 if row.score == row.opp_score else 0.0)
+            expected = 1.0 / (1.0 + 10 ** ((elo_opp - elo_team) / 400))
+
+            # Update team ELO
+            elo_map[team] = elo_team + k * (actual - expected)
+
+    return pd.Series(results, index=df_sorted.index)
 
 
 def add_elo_features(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Adds ELO and opponent ELO to the long-format team-game dataframe.
-
-    Required columns:
-        - team
-        - opponent
-        - date
-        - game_id
-        - score
-        - opponent_score
+    Adds:
+        - elo: pre-game ELO for each team
+        - opp_elo: opponent's pre-game ELO
     """
-    out = df.sort_values(["date", "game_id", "team"]).copy()
-    out["elo"] = _apply_elo_optimized(out)
+    out = df.copy()
 
-    # Vectorized opponent ELO alignment
+    # Compute pre-game ELO
+    out["elo"] = _apply_elo(out)
+
+    # Merge opponent ELO
     opp_elo = (
         out[["game_id", "team", "elo"]]
         .rename(columns={"team": "opponent", "elo": "opp_elo"})
     )
 
-    return out.merge(opp_elo, on=["game_id", "opponent"], how="left")
+    out = out.merge(opp_elo, on=["game_id", "opponent"], how="left")
+
+    return out

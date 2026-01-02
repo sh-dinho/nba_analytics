@@ -5,37 +5,19 @@ from __future__ import annotations
 # Module: Predict All Upcoming Games
 # File: src/scripts/predict_all_upcoming.py
 # Author: Sadiq
-#
-# Description:
-#     Predicts win probabilities for all *future* scheduled games
-#     using the modern canonical ingestion + feature + prediction
-#     pipeline.
-#
-#     Steps:
-#       • Load canonical season schedule
-#       • Filter for games >= today
-#       • Ingest each date (canonical ingestion)
-#       • Build features (FeatureBuilder)
-#       • Load latest model
-#       • Predict win probabilities
-#       • Save combined predictions
 # ============================================================
 
 from datetime import date
 import pandas as pd
 from loguru import logger
 
-from src.config.paths import (
-    CANONICAL_SCHEDULE,
-    PREDICTIONS_DIR,
-)
+from src.config.paths import CANONICAL_SCHEDULE, PREDICTIONS_DIR
 from src.ingestion.pipeline import ingest_single_date
 from src.features.builder import FeatureBuilder
 from src.pipeline.run_predictions import run_predictions
-from src.model.registry.load_model import load_latest_model
 
 
-def run_predict_all_upcoming(feature_version: str = "v1") -> dict:
+def run_predict_all_upcoming() -> dict:
     logger.info("=== Predicting All Upcoming Games ===")
 
     today = date.today()
@@ -64,25 +46,16 @@ def run_predict_all_upcoming(feature_version: str = "v1") -> dict:
 
     logger.info(f"Found {len(upcoming_dates)} upcoming dates.")
 
-    # --------------------------------------------------------
-    # 2. Load latest model
-    # --------------------------------------------------------
-    try:
-        model = load_latest_model()
-    except Exception as e:
-        msg = f"Failed to load latest model: {e}"
-        logger.error(msg)
-        return {"ok": False, "error": msg}
-
-    fb = FeatureBuilder(version=feature_version)
+    fb = FeatureBuilder()  # version-agnostic
     all_predictions = []
 
     # --------------------------------------------------------
-    # 3. Ingest + predict each date
+    # 2. Ingest + predict each date
     # --------------------------------------------------------
     for d in upcoming_dates:
         logger.info(f"Processing {d}")
 
+        # Ingest
         try:
             long_df = ingest_single_date(d)
         except Exception as e:
@@ -93,6 +66,7 @@ def run_predict_all_upcoming(feature_version: str = "v1") -> dict:
             logger.warning(f"No games ingested for {d}")
             continue
 
+        # Features
         try:
             features_df = fb.build(long_df)
         except Exception as e:
@@ -103,8 +77,9 @@ def run_predict_all_upcoming(feature_version: str = "v1") -> dict:
             logger.warning(f"No features generated for {d}")
             continue
 
+        # Predictions
         try:
-            pred_df = run_predictions(long_df, feature_version=feature_version)
+            pred_df = run_predictions(features_df)
         except Exception as e:
             logger.error(f"Prediction failed for {d}: {e}")
             continue
@@ -119,7 +94,7 @@ def run_predict_all_upcoming(feature_version: str = "v1") -> dict:
     final_df = pd.concat(all_predictions, ignore_index=True)
 
     # --------------------------------------------------------
-    # 4. Save predictions
+    # 3. Save predictions
     # --------------------------------------------------------
     PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
     out_path = PREDICTIONS_DIR / f"predictions_upcoming_{today}.parquet"

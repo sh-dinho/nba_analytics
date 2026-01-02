@@ -11,7 +11,7 @@ This module exposes the registry interface:
     - get_production_model_meta
 """
 
-from .model_registry import (
+from .registry import (
     ModelMeta,
     load_registry,
     save_registry,

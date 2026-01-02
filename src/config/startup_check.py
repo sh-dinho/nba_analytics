@@ -14,7 +14,7 @@ from loguru import logger
 from src.config.config_validator import validate_config, print_config_report
 from src.config.paths import (
     MODEL_REGISTRY_PATH,
-    SCHEDULE_SNAPSHOT,
+    DAILY_SCHEDULE_SNAPSHOT,
     LONG_SNAPSHOT,
     FEATURES_SNAPSHOT,
 )
@@ -22,44 +22,82 @@ from src.config.env import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHAT_ID,
     NBA_API_HEADERS,
+    FEATURE_FLAG_ENABLE_ALERTS,
 )
 
+
+# ------------------------------------------------------------
+# Model Registry Check
+# ------------------------------------------------------------
 def check_model_registry() -> dict:
     try:
-        data = json.loads(MODEL_REGISTRY_PATH.read_text())
-        ok = isinstance(data, dict) and "models" in data
+        raw = MODEL_REGISTRY_PATH.read_text()
+        data = json.loads(raw)
+
+        ok = (
+            isinstance(data, dict)
+            and "models" in data
+            and isinstance(data["models"], list)
+        )
+
         return {
             "ok": ok,
             "count": len(data.get("models", [])) if ok else 0,
             "path": str(MODEL_REGISTRY_PATH),
         }
+
     except Exception as e:
         return {"ok": False, "error": str(e), "path": str(MODEL_REGISTRY_PATH)}
 
+
+# ------------------------------------------------------------
+# Snapshot Check
+# ------------------------------------------------------------
 def check_snapshots() -> dict:
     snapshots = {
-        "schedule_snapshot": SCHEDULE_SNAPSHOT.exists(),
+        "daily_schedule_snapshot": DAILY_SCHEDULE_SNAPSHOT.exists(),
         "long_snapshot": LONG_SNAPSHOT.exists(),
         "features_snapshot": FEATURES_SNAPSHOT.exists(),
     }
     return {"ok": all(snapshots.values()), "snapshots": snapshots}
 
+
+# ------------------------------------------------------------
+# NBA API Connectivity Check
+# ------------------------------------------------------------
 def check_nba_api() -> dict:
     url = "https://stats.nba.com/stats/scoreboardv3?GameDate=2024-01-01"
     try:
-        resp = requests.get(url, headers=NBA_API_HEADERS, timeout=5)
+        resp = requests.head(url, headers=NBA_API_HEADERS, timeout=5)
         return {"ok": resp.status_code == 200, "status": resp.status_code}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
+
+# ------------------------------------------------------------
+# Telegram Check (feature-flag aware)
+# ------------------------------------------------------------
 def check_telegram() -> dict:
+    if not FEATURE_FLAG_ENABLE_ALERTS:
+        return {
+            "ok": True,
+            "token_present": bool(TELEGRAM_BOT_TOKEN),
+            "chat_id_present": bool(TELEGRAM_CHAT_ID),
+            "skipped": True,
+        }
+
     ok = bool(TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID)
     return {
         "ok": ok,
         "token_present": bool(TELEGRAM_BOT_TOKEN),
         "chat_id_present": bool(TELEGRAM_CHAT_ID),
+        "skipped": False,
     }
 
+
+# ------------------------------------------------------------
+# Full Startup Check
+# ------------------------------------------------------------
 def run_startup_check() -> dict:
     logger.info("Running full startup system check...")
 
@@ -81,6 +119,10 @@ def run_startup_check() -> dict:
 
     return report
 
+
+# ------------------------------------------------------------
+# Pretty Printer
+# ------------------------------------------------------------
 def print_startup_report(report: dict):
     print("\n========== STARTUP SYSTEM CHECK ==========\n")
 
@@ -107,9 +149,13 @@ def print_startup_report(report: dict):
 
     print("Telegram:")
     tel = report["telegram"]
-    print(f"  OK: {tel['ok']}")
-    print(f"  Token Present: {tel['token_present']}")
-    print(f"  Chat ID Present: {tel['chat_id_present']}\n")
+    if tel.get("skipped"):
+        print("  Skipped (alerts disabled)")
+    else:
+        print(f"  OK: {tel['ok']}")
+        print(f"  Token Present: {tel['token_present']}")
+        print(f"  Chat ID Present: {tel['chat_id_present']}")
+    print()
 
     print("Overall System Status:", "OK" if report["ok"] else "ISSUES DETECTED")
     print("\n==========================================\n")

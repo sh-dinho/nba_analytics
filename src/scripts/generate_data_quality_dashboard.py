@@ -27,9 +27,12 @@ from loguru import logger
 
 from src.config.paths import (
     LONG_SNAPSHOT,
-    FEATURES_SNAPSHOT,   # optional — may or may not exist
+    FEATURES_SNAPSHOT,
     LOGS_DIR,
 )
+from src.config.monitoring import MONITORING
+from src.config.env import MODEL_VERSION, MODEL_ENVIRONMENT
+
 from src.features.builder import FeatureBuilder
 from src.ingestion.validator.checks import (
     find_asymmetry,
@@ -81,7 +84,7 @@ def validate_long_snapshot() -> Dict[str, Any]:
     incomplete = find_incomplete_games(df)
 
     return {
-        "ok": len(missing) == 0 and len(df) > 0 and duplicate_rows == 0,
+        "ok": len(missing) == 0 and duplicate_rows == 0 and len(df) > 0,
         "rows": len(df),
         "missing_columns": missing,
         "duplicate_team_game_rows": duplicate_rows,
@@ -95,7 +98,7 @@ def validate_long_snapshot() -> Dict[str, Any]:
 # Feature Validation (Snapshot or Dynamic)
 # ------------------------------------------------------------
 
-def validate_features(feature_version: str, max_rows: int = 500) -> Dict[str, Any]:
+def validate_features(max_rows: int = 500) -> Dict[str, Any]:
     """
     Try to load a feature snapshot.
     If missing → build features dynamically from LONG_SNAPSHOT.
@@ -120,7 +123,7 @@ def validate_features(feature_version: str, max_rows: int = 500) -> Dict[str, An
 
     try:
         df_long = pd.read_parquet(LONG_SNAPSHOT)
-        fb = FeatureBuilder(version=feature_version)
+        fb = FeatureBuilder()  # version-agnostic
         features = fb.build(df_long)
         sample = features.head(max_rows)
         return {
@@ -137,15 +140,14 @@ def validate_features(feature_version: str, max_rows: int = 500) -> Dict[str, An
 # Drift Detection
 # ------------------------------------------------------------
 
-def compute_feature_drift(feature_version: str) -> Dict[str, Any]:
+def compute_feature_drift() -> Dict[str, Any]:
     """
     Drift detection using:
       - snapshot if available
       - dynamic features otherwise
     """
 
-    # Load features (snapshot or dynamic)
-    feat_report = validate_features(feature_version)
+    feat_report = validate_features()
     if not feat_report.get("ok"):
         return {"ok": False, "error": "Cannot compute drift: feature load failed"}
 
@@ -158,7 +160,7 @@ def compute_feature_drift(feature_version: str) -> Dict[str, Any]:
             df = pd.read_parquet(FEATURES_SNAPSHOT)
     else:
         df_long = pd.read_parquet(LONG_SNAPSHOT)
-        fb = FeatureBuilder(version=feature_version)
+        fb = FeatureBuilder()
         df = fb.build(df_long)
 
     if "date" not in df.columns:
@@ -174,7 +176,7 @@ def compute_feature_drift(feature_version: str) -> Dict[str, Any]:
     recent = df[df["date"] >= max_date - timedelta(days=7)]
     baseline = df[df["date"] < max_date - timedelta(days=30)]
 
-    if len(recent) < 50 or len(baseline) < 200:
+    if len(recent) < MONITORING.min_samples or len(baseline) < MONITORING.min_samples:
         return {
             "ok": False,
             "error": "Insufficient data for drift detection",
@@ -183,8 +185,9 @@ def compute_feature_drift(feature_version: str) -> Dict[str, Any]:
         }
 
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-    ks = ks_drift_report(baseline, recent, numeric_cols)
-    psi = psi_report(baseline, recent, numeric_cols)
+
+    ks = ks_drift_report(baseline, recent, numeric_cols, alpha=MONITORING.drift_alpha)
+    psi = psi_report(baseline, recent, numeric_cols, threshold=MONITORING.psi_threshold)
 
     drifted = [
         c for c, v in ks.items()
@@ -210,25 +213,37 @@ def compute_model_monitoring() -> Dict[str, Any]:
     try:
         monitor = ModelMonitor()
         report = monitor.run()
-        return {"ok": True, "report": report.to_dict()}
+        return {
+            "ok": True,
+            "report": report.to_dict(),
+            "model_version": MODEL_VERSION,
+            "model_environment": MODEL_ENVIRONMENT,
+        }
     except Exception as e:
-        return {"ok": False, "error": f"Model monitoring failed: {e}"}
+        logger.exception("Model monitoring failed")
+        return {"ok": False, "error": str(e)}
 
 
 # ------------------------------------------------------------
 # Dashboard Generator
 # ------------------------------------------------------------
 
-def generate_dashboard(feature_version: str) -> None:
+def generate_dashboard() -> None:
     logger.info("=== Generating Data Quality Dashboard ===")
 
     long_report = validate_long_snapshot()
-    feature_report = validate_features(feature_version)
-    drift_report_ = compute_feature_drift(feature_version)
+    feature_report = validate_features()
+    drift_report_ = compute_feature_drift()
     model_report = compute_model_monitoring()
 
     dashboard = {
         "timestamp_utc": datetime.utcnow().isoformat(),
+        "metadata": {
+            "model_version": MODEL_VERSION,
+            "model_environment": MODEL_ENVIRONMENT,
+            "long_snapshot_mtime": LONG_SNAPSHOT.stat().st_mtime if LONG_SNAPSHOT.exists() else None,
+            "features_snapshot_mtime": FEATURES_SNAPSHOT.stat().st_mtime if FEATURES_SNAPSHOT.exists() else None,
+        },
         "long_snapshot": long_report,
         "feature_snapshot": feature_report,
         "feature_drift": drift_report_,
@@ -250,4 +265,4 @@ def generate_dashboard(feature_version: str) -> None:
 
 
 if __name__ == "__main__":
-    generate_dashboard(feature_version="v1")
+    generate_dashboard()

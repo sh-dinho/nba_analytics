@@ -10,19 +10,24 @@ from __future__ import annotations
 #     Centralized metrics for all model types.
 #     - Classification (moneyline)
 #     - Regression (totals, spread)
+#     - Safe, dashboard‑ready, monitoring‑ready
 # ============================================================
 
 import numpy as np
+from loguru import logger
 from sklearn.metrics import (
     accuracy_score,
     brier_score_loss,
     log_loss,
     roc_auc_score,
+    precision_score,
+    recall_score,
+    f1_score,
     mean_squared_error,
     mean_absolute_error,
     r2_score,
+    explained_variance_score,
 )
-from loguru import logger
 
 
 # ------------------------------------------------------------
@@ -47,6 +52,15 @@ def compute_classification_metrics(
     # Accuracy
     metrics["accuracy"] = float(accuracy_score(y_true, y_pred))
 
+    # Precision / Recall / F1 (safe)
+    try:
+        metrics["precision"] = float(precision_score(y_true, y_pred))
+        metrics["recall"] = float(recall_score(y_true, y_pred))
+        metrics["f1"] = float(f1_score(y_true, y_pred))
+    except Exception:
+        logger.warning("Precision/Recall/F1 undefined; setting to NaN")
+        metrics["precision"] = metrics["recall"] = metrics["f1"] = float("nan")
+
     # Brier score
     metrics["brier"] = float(brier_score_loss(y_true, y_prob))
 
@@ -54,7 +68,6 @@ def compute_classification_metrics(
     try:
         metrics["log_loss"] = float(log_loss(y_true, y_prob))
     except ValueError:
-        # Happens when y_true contains only one class
         logger.warning("log_loss undefined for constant y_true; setting to NaN")
         metrics["log_loss"] = float("nan")
 
@@ -79,11 +92,22 @@ def compute_regression_metrics(
     """
     Compute regression metrics for totals/spread models.
     """
-    return {
+    metrics = {
         "rmse": float(mean_squared_error(y_true, y_pred, squared=False)),
         "mae": float(mean_absolute_error(y_true, y_pred)),
         "r2": float(r2_score(y_true, y_pred)),
+        "explained_variance": float(explained_variance_score(y_true, y_pred)),
     }
+
+    # MAPE (safe)
+    try:
+        mape = np.mean(np.abs((y_true - y_pred) / y_true))
+        metrics["mape"] = float(mape)
+    except Exception:
+        logger.warning("MAPE undefined (division by zero); setting to NaN")
+        metrics["mape"] = float("nan")
+
+    return metrics
 
 
 # ------------------------------------------------------------

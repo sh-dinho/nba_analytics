@@ -9,31 +9,75 @@ jobs:
   daily:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: write
+
     steps:
+      # ------------------------------------------------------
+      # 1. Checkout repo
+      # ------------------------------------------------------
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # ------------------------------------------------------
+      # 2. Set up Python
+      # ------------------------------------------------------
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
+      # ------------------------------------------------------
+      # 3. Install dependencies
+      # ------------------------------------------------------
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run ingestion
+      # ------------------------------------------------------
+      # 4. Run ingestion for TODAY
+      # ------------------------------------------------------
+      - name: Ingest today's games
         run: python -m src.scripts.run_ingestion
+        env:
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
 
+      # ------------------------------------------------------
+      # 5. Run predictions for TODAY
+      # ------------------------------------------------------
       - name: Predict today
         run: python -m src.scripts.predict_today
 
+      # ------------------------------------------------------
+      # 6. Daily monitoring (optional)
+      # ------------------------------------------------------
       - name: Daily monitor
         run: python -m src.scripts.monitor_daily
 
-      - name: Generate dashboard
+      # ------------------------------------------------------
+      # 7. Generate dashboard
+      # ------------------------------------------------------
+      - name: Generate data quality dashboard
         run: python -m src.scripts.generate_data_quality_dashboard
 
+      # ------------------------------------------------------
+      # 8. Send alerts
+      # ------------------------------------------------------
       - name: Send alerts
         run: python -m src.scripts.send_daily_alerts
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+      # ------------------------------------------------------
+      # 9. Commit & push updated data
+      # ------------------------------------------------------
+      - name: Commit and Push Changes
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/
+          git commit -m "🤖 Auto-update data snapshots [$(date +'%Y-%m-%d')]" || echo "No changes to commit"
+          git push

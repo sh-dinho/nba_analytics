@@ -2,54 +2,118 @@ from __future__ import annotations
 
 # ============================================================
 # 🏀 NBA Analytics
-# Module: Hyperparameters
+# Module: Hyperparameters (Tuned)
 # File: src/model/training/hyperparams.py
 # Author: Sadiq
 #
 # Description:
-#     Centralized hyperparameters for all model families.
-#     Used by the model factory in training/common.py.
+#     Tuned hyperparameters for NBA modeling.
+#     Split into classification vs regression to avoid
+#     accidental objective contamination.
 # ============================================================
 
 from typing import Dict, Any
 
+HyperParams = Dict[str, Any]
+
 # ------------------------------------------------------------
-# XGBoost
+# XGBoost — Classification (Moneyline)
 # ------------------------------------------------------------
-XGBOOST_PARAMS: Dict[str, Any] = {
-    # Balanced depth + learning rate for stable calibration
-    "n_estimators": 500,
-    "learning_rate": 0.03,
-    "max_depth": 5,
-    "subsample": 0.9,
-    "colsample_bytree": 0.9,
-    "eval_metric": "logloss",  # works for both binary and regression
+XGBOOST_CLASSIFICATION_PARAMS: HyperParams = {
+    "n_estimators": 600,
+    "learning_rate": 0.025,
+    "max_depth": 4,
+    "min_child_weight": 3,
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+    "gamma": 0.1,
+    "reg_lambda": 1.2,
+    "reg_alpha": 0.1,
+    "objective": "binary:logistic",
+    "eval_metric": "logloss",
+    "n_jobs": -1,
+    "verbosity": 0,
 }
 
 # ------------------------------------------------------------
-# LightGBM
+# XGBoost — Regression (Totals, Spread)
 # ------------------------------------------------------------
-LIGHTGBM_PARAMS: Dict[str, Any] = {
-    # max_depth = -1 → unlimited depth (LightGBM default)
-    "n_estimators": 500,
-    "learning_rate": 0.03,
+XGBOOST_REGRESSION_PARAMS: HyperParams = {
+    "n_estimators": 600,
+    "learning_rate": 0.025,
+    "max_depth": 4,
+    "min_child_weight": 3,
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+    "gamma": 0.1,
+    "reg_lambda": 1.2,
+    "reg_alpha": 0.1,
+    "objective": "reg:squarederror",
+    "eval_metric": "rmse",
+    "n_jobs": -1,
+    "verbosity": 0,
+}
+
+# ------------------------------------------------------------
+# LightGBM — Classification
+# ------------------------------------------------------------
+LIGHTGBM_CLASSIFICATION_PARAMS: HyperParams = {
+    "n_estimators": 700,
+    "learning_rate": 0.02,
+    "num_leaves": 48,
     "max_depth": -1,
-    "num_leaves": 64,
-    "subsample": 0.9,
-    "colsample_bytree": 0.9,
+    "min_child_samples": 25,
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+    "reg_lambda": 1.0,
+    "reg_alpha": 0.1,
+    "n_jobs": -1,
+    "verbose": -1,
 }
 
 # ------------------------------------------------------------
-# Logistic Regression
+# LightGBM — Regression
 # ------------------------------------------------------------
-LOGISTIC_REGRESSION_PARAMS: Dict[str, Any] = {
-    "max_iter": 200,
+LIGHTGBM_REGRESSION_PARAMS: HyperParams = {
+    "n_estimators": 700,
+    "learning_rate": 0.02,
+    "num_leaves": 48,
+    "max_depth": -1,
+    "min_child_samples": 25,
+    "subsample": 0.85,
+    "colsample_bytree": 0.85,
+    "reg_lambda": 1.0,
+    "reg_alpha": 0.1,
+    "n_jobs": -1,
+    "verbose": -1,
+}
+
+# ------------------------------------------------------------
+# Logistic Regression (Moneyline only)
+# ------------------------------------------------------------
+LOGISTIC_REGRESSION_PARAMS: HyperParams = {
+    "max_iter": 500,
     "solver": "lbfgs",
-    "C": 1.0,
+    "C": 0.7,
+    "n_jobs": -1,
+}
+
+# ------------------------------------------------------------
+# Unified map (optional)
+# ------------------------------------------------------------
+MODEL_FAMILY_DEFAULTS = {
+    "xgboost_classification": XGBOOST_CLASSIFICATION_PARAMS,
+    "xgboost_regression": XGBOOST_REGRESSION_PARAMS,
+    "lightgbm_classification": LIGHTGBM_CLASSIFICATION_PARAMS,
+    "lightgbm_regression": LIGHTGBM_REGRESSION_PARAMS,
+    "logistic_regression": LOGISTIC_REGRESSION_PARAMS,
 }
 
 __all__ = [
-    "XGBOOST_PARAMS",
-    "LIGHTGBM_PARAMS",
+    "XGBOOST_CLASSIFICATION_PARAMS",
+    "XGBOOST_REGRESSION_PARAMS",
+    "LIGHTGBM_CLASSIFICATION_PARAMS",
+    "LIGHTGBM_REGRESSION_PARAMS",
     "LOGISTIC_REGRESSION_PARAMS",
+    "MODEL_FAMILY_DEFAULTS",
 ]

@@ -2,32 +2,34 @@ from __future__ import annotations
 
 # ============================================================
 # 🏀 NBA Analytics v5.0
-# Name: Floating Action Bar
-# File: src/app/ui/floating_action_bar.py
-# Purpose: Global floating bar with quick actions:
-#          log bet, add parlay leg, refresh predictions.
+# Floating Action Bar
 # ============================================================
 
 from datetime import date
-
 import streamlit as st
 
 from src.app.engines.bet_tracker import BetRecord, append_bet, new_bet_id
 from src.app.engines.parlay import ParlayLeg
 
 
+# ------------------------------------------------------------
+# Floating Action Bar Renderer
+# ------------------------------------------------------------
 def render_floating_action_bar() -> None:
     """
-    Global floating action bar with:
+    Render the global floating action bar with:
       - Log Bet
-      - Add to Parlay
+      - Add Parlay Leg
       - Refresh Predictions
     """
 
+    # --------------------------------------------------------
+    # CSS Styles (scoped)
+    # --------------------------------------------------------
     st.markdown(
         """
         <style>
-            .floating-bar {
+            .nba-floating-bar {
                 position: fixed;
                 bottom: 25px;
                 right: 25px;
@@ -39,7 +41,7 @@ def render_floating_action_bar() -> None:
                 display: flex;
                 gap: 14px;
             }
-            .fab-btn {
+            .nba-fab-btn {
                 background-color: #2ecc71;
                 color: black;
                 padding: 8px 14px;
@@ -47,8 +49,10 @@ def render_floating_action_bar() -> None:
                 text-decoration: none;
                 font-weight: bold;
                 font-size: 14px;
+                cursor: pointer;
+                border: none;
             }
-            .fab-btn:hover {
+            .nba-fab-btn:hover {
                 background-color: #27ae60;
                 color: white;
             }
@@ -57,24 +61,42 @@ def render_floating_action_bar() -> None:
         unsafe_allow_html=True,
     )
 
-    # Container
-    st.markdown('<div class="floating-bar">', unsafe_allow_html=True)
+    # --------------------------------------------------------
+    # HTML Floating Bar
+    # --------------------------------------------------------
+    st.markdown(
+        """
+        <div class="nba-floating-bar">
+            <button class="nba-fab-btn" onclick="document.getElementById('fab_log_bet').click()">📝 Log Bet</button>
+            <button class="nba-fab-btn" onclick="document.getElementById('fab_add_parlay').click()">➕ Add to Parlay</button>
+            <button class="nba-fab-btn" onclick="document.getElementById('fab_refresh').click()">🔄 Refresh</button>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    if st.button("📝 Log Bet", key="fab_log_bet"):
+    # Hidden Streamlit buttons (triggered by HTML)
+    log_bet_clicked = st.button("📝 Log Bet", key="fab_log_bet", help="Hidden trigger")
+    add_parlay_clicked = st.button("➕ Add to Parlay", key="fab_add_parlay", help="Hidden trigger")
+    refresh_clicked = st.button("🔄 Refresh", key="fab_refresh", help="Hidden trigger")
+
+    # --------------------------------------------------------
+    # Button Actions
+    # --------------------------------------------------------
+    if log_bet_clicked:
         st.session_state["show_log_bet_modal"] = True
 
-    if st.button("➕ Add to Parlay", key="fab_add_parlay"):
+    if add_parlay_clicked:
         st.session_state["show_add_parlay_modal"] = True
 
-    if st.button("🔄 Refresh", key="fab_refresh"):
+    if refresh_clicked:
         st.session_state["refresh_predictions"] = True
+        st.session_state["fab_refresh"] = False
         st.experimental_rerun()
 
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # -----------------------------
+    # --------------------------------------------------------
     # Log Bet Modal
-    # -----------------------------
+    # --------------------------------------------------------
     if st.session_state.get("show_log_bet_modal", False):
         with st.modal("Log a Bet"):
             team = st.text_input("Team")
@@ -84,8 +106,9 @@ def render_floating_action_bar() -> None:
             desc = st.text_input("Bet Description", value="Manual Bet")
 
             col1, col2 = st.columns(2)
+
             with col1:
-                if st.button("Submit Bet"):
+                if st.button("Submit Bet", key="submit_bet_btn"):
                     if not team or not opponent:
                         st.error("Team and opponent are required.")
                     else:
@@ -103,18 +126,17 @@ def render_floating_action_bar() -> None:
                             payout=0.0,
                             source="manual",
                         )
-                            # confidence fields left None for manual entries
                         append_bet(record)
                         st.success(f"Bet logged. Bet ID: {record.bet_id}")
                         st.session_state["show_log_bet_modal"] = False
 
             with col2:
-                if st.button("Close"):
+                if st.button("Close", key="close_bet_modal"):
                     st.session_state["show_log_bet_modal"] = False
 
-    # -----------------------------
+    # --------------------------------------------------------
     # Add Parlay Leg Modal
-    # -----------------------------
+    # --------------------------------------------------------
     if st.session_state.get("show_add_parlay_modal", False):
         with st.modal("Add Parlay Leg"):
             desc = st.text_input("Leg Description")
@@ -127,21 +149,24 @@ def render_floating_action_bar() -> None:
             )
 
             col1, col2 = st.columns(2)
+
             with col1:
-                if st.button("Add Leg"):
-                    if "parlay_legs" not in st.session_state:
-                        st.session_state["parlay_legs"] = []
-                    st.session_state["parlay_legs"].append(
-                        ParlayLeg(
-                            description=desc,
-                            odds=float(odds),
-                            win_prob=float(win_prob),
-                            source="manual",
+                if st.button("Add Leg", key="add_leg_btn"):
+                    if not desc:
+                        st.error("Description is required.")
+                    else:
+                        st.session_state.setdefault("parlay_legs", [])
+                        st.session_state["parlay_legs"].append(
+                            ParlayLeg(
+                                description=desc,
+                                odds=float(odds),
+                                win_prob=float(win_prob),
+                                source="manual",
+                            )
                         )
-                    )
-                    st.success("Leg added to parlay.")
-                    st.session_state["show_add_parlay_modal"] = False
+                        st.success("Leg added to parlay.")
+                        st.session_state["show_add_parlay_modal"] = False
 
             with col2:
-                if st.button("Close"):
+                if st.button("Close", key="close_parlay_modal"):
                     st.session_state["show_add_parlay_modal"] = False

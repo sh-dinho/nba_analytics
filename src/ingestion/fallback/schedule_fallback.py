@@ -16,7 +16,7 @@ from datetime import date
 import pandas as pd
 from loguru import logger
 
-from src.config.paths import SCHEDULE_SNAPSHOT
+from src.config.paths import DAILY_SCHEDULE_SNAPSHOT as SCHEDULE_SNAPSHOT
 from src.ingestion.fallback.base import FallbackSource
 from src.ingestion.normalizer.team_names import to_tricode
 from src.ingestion.normalizer.season import infer_season_label

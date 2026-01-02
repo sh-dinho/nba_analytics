@@ -4,45 +4,97 @@ from __future__ import annotations
 # 🏀 NBA Analytics v5.0
 # Name: Global Navigation Bar
 # File: src/app/ui/navbar.py
-# Purpose: Render horizontal navigation across Streamlit pages.
+# Purpose:
+#     Render a stable, version‑agnostic horizontal navigation bar
+#     with custom ordering, active highlighting, and responsive layout.
 # ============================================================
 
 import streamlit as st
 
 
-def _get_pages_safe():
+# ------------------------------------------------------------
+# Page Retrieval (Streamlit‑safe)
+# ------------------------------------------------------------
+def _get_pages_safe() -> dict:
     """
-    Safely retrieve Streamlit pages across versions.
+    Retrieve Streamlit pages across versions.
+    Streamlit has changed this API multiple times, so we check all known paths.
     """
-    if hasattr(st, "runtime") and hasattr(st.runtime, "get_pages"):
-        return st.runtime.get_pages()
-    if hasattr(st, "_runtime") and hasattr(st._runtime, "get_pages"):
-        return st._runtime.get_pages()
+    candidates = [
+        getattr(st, "runtime", None),
+        getattr(st, "_runtime", None),
+    ]
+
+    for c in candidates:
+        if c and hasattr(c, "get_pages"):
+            try:
+                return c.get_pages()
+            except Exception:
+                pass
+
     return {}
 
 
-def _detect_active_page(pages):
+# ------------------------------------------------------------
+# Active Page Detection
+# ------------------------------------------------------------
+def _detect_active_page(pages: dict) -> str:
     """
-    Prefer Streamlit's internal context; fallback to session state.
+    Detect the active page using Streamlit's internal context.
+    Fallback to session state if unavailable.
     """
     try:
         ctx = st.context
         script = ctx.page.page_script_path
+
         for p in pages.values():
-            if p["page_script_path"] == script:
+            if p.get("page_script_path") == script:
                 return p["page_name"]
+
     except Exception:
         pass
 
+    # Fallback
     return st.session_state.get("current_page", "")
 
 
+# ------------------------------------------------------------
+# Canonical Ordering
+# ------------------------------------------------------------
+CANONICAL_ORDER = [
+    "Home",
+    "Predictions",
+    "Data Quality",
+    "Backtest",
+    "Monitoring",
+    "Parlay Builder",
+]
+
+
+def _sort_pages(pages: dict) -> list:
+    """
+    Sort pages using canonical order first, then alphabetical fallback.
+    """
+    def sort_key(p):
+        name = p["page_name"]
+        if name in CANONICAL_ORDER:
+            return (0, CANONICAL_ORDER.index(name))
+        return (1, name.lower())
+
+    return sorted(list(pages.values()), key=sort_key)
+
+
+# ------------------------------------------------------------
+# Render Navbar
+# ------------------------------------------------------------
 def render_navbar() -> None:
     pages = _get_pages_safe()
     active = _detect_active_page(pages)
+    page_list = _sort_pages(pages)
 
-    page_list = sorted(list(pages.values()), key=lambda p: p["page_name"].lower())
-
+    # --------------------------------------------------------
+    # Styles
+    # --------------------------------------------------------
     st.markdown(
         """
         <style>
@@ -54,6 +106,14 @@ def render_navbar() -> None:
                 border-bottom: 1px solid #444;
                 font-size: 16px;
             }
+
+            @media (max-width: 600px) {
+                .nav-container {
+                    font-size: 14px;
+                    gap: 10px;
+                }
+            }
+
             .nav-item {
                 text-decoration: none;
                 color: #ccc;
@@ -75,6 +135,9 @@ def render_navbar() -> None:
         unsafe_allow_html=True,
     )
 
+    # --------------------------------------------------------
+    # HTML Build
+    # --------------------------------------------------------
     nav_html = '<div class="nav-container">'
 
     for p in page_list:

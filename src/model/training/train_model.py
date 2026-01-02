@@ -17,6 +17,7 @@ from __future__ import annotations
 #         - training/<model_type>.py
 #         - registry.save_model()
 # ============================================================
+from __future__ import annotations
 
 import argparse
 from loguru import logger
@@ -28,10 +29,6 @@ from src.model.training.spread import train_spread
 from src.model.registry.save_model import save_model
 
 
-# ------------------------------------------------------------
-# Dispatcher
-# ------------------------------------------------------------
-
 TRAINERS = {
     "moneyline": train_moneyline,
     "totals": train_totals,
@@ -39,101 +36,69 @@ TRAINERS = {
 }
 
 
-def train_single_model(
-    model_type: str,
-    version: str,
-    feature_version: str | None = None,
-    model_family: str = "xgboost",
-):
-    logger.info(f"🚀 Training {model_type} model (version={version})")
+def train_single_model(model_type: str, version: str, model_family: str = "xgboost") -> dict:
+    if model_type not in TRAINERS:
+        raise ValueError(f"Unknown model_type '{model_type}'")
 
-    # --------------------------------------------------------
-    # Load dataset
-    # --------------------------------------------------------
-    X_train, X_test, y_train, y_test, feature_list = build_dataset(model_type)
-    logger.debug(
-        f"Dataset loaded: "
-        f"X_train={X_train.shape}, X_test={X_test.shape}, "
-        f"y_train={y_train.shape}, y_test={y_test.shape}"
+    logger.info(f"🚀 Training {model_type} model (version={version}) using {model_family}")
+
+    # Load dataset + metadata
+    X_train, X_test, y_train, y_test, features, meta = build_dataset(model_type)
+
+    logger.info(
+        f"📦 Dataset ready: {len(X_train)} train rows, {len(X_test)} test rows, "
+        f"{len(features)} features"
     )
 
-    # --------------------------------------------------------
-    # Select trainer
-    # --------------------------------------------------------
-    if model_type not in TRAINERS:
-        raise ValueError(f"Unsupported model_type: {model_type}")
-
+    # Train
     trainer = TRAINERS[model_type]
-
-    # --------------------------------------------------------
-    # Train model
-    # --------------------------------------------------------
-    model, y_pred_or_prob, metrics = trainer(
+    model, y_pred, report = trainer(
         X_train=X_train,
         y_train=y_train,
         X_test=X_test,
+        y_test=y_test,
         model_family=model_family,
     )
 
-    logger.info(f"📊 Training metrics for {model_type}: {metrics}")
-
-    # --------------------------------------------------------
-    # Save + register model
-    # --------------------------------------------------------
-    meta = save_model(
+    # Save model
+    meta_obj = save_model(
         model=model,
         model_type=model_type,
         version=version,
-        feature_version=feature_version,
-        metrics=metrics,
-        train_start_date=str(X_train.index.min()),
-        train_end_date=str(X_train.index.max()),
+        metrics=report,
+        feature_list=features,
+        model_family=model_family,
+        train_start_date=meta["train_start_date"],
+        train_end_date=meta["train_end_date"],
     )
 
-    logger.success(f"🎉 Training complete → {meta.model_name}")
+    logger.success(f"🎉 Training complete: {meta_obj.model_name}")
 
+    return {
+        "ok": True,
+        "model_type": model_type,
+        "version": version,
+        "model_name": meta_obj.model_name,
+        "metrics": report,
+        "n_train": len(X_train),
+        "n_test": len(X_test),
+    }
 
-# ------------------------------------------------------------
-# CLI
-# ------------------------------------------------------------
 
 def main():
-    parser = argparse.ArgumentParser(description="Train a model")
-    parser.add_argument(
-        "--model_type",
-        type=str,
-        required=True,
-        choices=["moneyline", "totals", "spread"],
-        help="Which model to train",
-    )
-    parser.add_argument(
-        "--version",
-        type=str,
-        required=True,
-        help="Model version identifier (semantic, date-based, etc.)",
-    )
-    parser.add_argument(
-        "--feature_version",
-        type=str,
-        default=None,
-        help="Optional feature schema version",
-    )
-    parser.add_argument(
-        "--model_family",
-        type=str,
-        default="xgboost",
-        choices=["xgboost", "lightgbm", "logistic_regression"],
-        help="Underlying model family",
-    )
-
+    parser = argparse.ArgumentParser(description="Train a single NBA model")
+    parser.add_argument("--model_type", required=True)
+    parser.add_argument("--version", required=True)
+    parser.add_argument("--family", default="xgboost")
     args = parser.parse_args()
 
-    train_single_model(
+    result = train_single_model(
         model_type=args.model_type,
         version=args.version,
-        feature_version=args.feature_version,
-        model_family=args.model_family,
+        model_family=args.family,
     )
+
+    logger.info(f"📊 Final metrics summary: {result['metrics']}")
 
 
 if __name__ == "__main__":

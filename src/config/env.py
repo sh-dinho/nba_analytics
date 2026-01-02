@@ -5,30 +5,47 @@ from __future__ import annotations
 # Module: Environment Configuration
 # File: src/config/env.py
 # Author: Sadiq
-#
-# Description:
-#     Centralized environment variable loader for:
-#       • Telegram alerts
-#       • NBA API headers
-#       • Odds API keys
-#       • Model registry metadata
-#       • Feature flags
 # ============================================================
 
 import os
 from loguru import logger
 
-# ------------------------------------------------------------
-# Telegram
-# ------------------------------------------------------------
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-
-if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    logger.warning("Telegram credentials missing — alerts may be disabled.")
 
 # ------------------------------------------------------------
-# NBA API Headers
+# Helpers
+# ------------------------------------------------------------
+def _get_env(name: str, default: str = "") -> str:
+    """Load and normalize environment variables."""
+    return os.getenv(name, default).strip()
+
+
+def _get_flag(name: str, default: bool = True) -> bool:
+    """Parse boolean feature flags safely."""
+    raw = os.getenv(name, "").strip().lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+# ------------------------------------------------------------
+# Telegram Alerts
+# ------------------------------------------------------------
+TELEGRAM_BOT_TOKEN = _get_env("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = _get_env("TELEGRAM_CHAT_ID")
+
+FEATURE_FLAG_ENABLE_ALERTS = _get_flag("ENABLE_ALERTS", True)
+
+if FEATURE_FLAG_ENABLE_ALERTS:
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        logger.warning("Alerts enabled but Telegram credentials are missing.")
+else:
+    logger.info("Alerts disabled via feature flag.")
+
+
+# ------------------------------------------------------------
+# NBA API Headers (immutable)
 # ------------------------------------------------------------
 NBA_API_HEADERS = {
     "Host": "stats.nba.com",
@@ -44,22 +61,25 @@ NBA_API_HEADERS = {
     "Connection": "keep-alive",
 }
 
-# ------------------------------------------------------------
-# Odds API Keys
-# ------------------------------------------------------------
-ODDS_API_KEY = os.getenv("ODDS_API_KEY", "")
-if not ODDS_API_KEY:
-    logger.warning("ODDS_API_KEY not set — odds ingestion may fail.")
 
 # ------------------------------------------------------------
-# Feature Flags
+# Odds API
 # ------------------------------------------------------------
-FEATURE_FLAG_ENABLE_ALERTS = os.getenv("ENABLE_ALERTS", "1") == "1"
-FEATURE_FLAG_ENABLE_MONITORING = os.getenv("ENABLE_MONITORING", "1") == "1"
-FEATURE_FLAG_ENABLE_BACKTESTING = os.getenv("ENABLE_BACKTESTING", "1") == "1"
+ODDS_API_KEY = _get_env("ODDS_API_KEY")
+FEATURE_FLAG_ENABLE_MONITORING = _get_flag("ENABLE_MONITORING", True)
+
+if FEATURE_FLAG_ENABLE_MONITORING and not ODDS_API_KEY:
+    logger.warning("Monitoring enabled but ODDS_API_KEY is missing.")
+
+
+# ------------------------------------------------------------
+# Backtesting Feature Flag
+# ------------------------------------------------------------
+FEATURE_FLAG_ENABLE_BACKTESTING = _get_flag("ENABLE_BACKTESTING", True)
+
 
 # ------------------------------------------------------------
 # Model Metadata
 # ------------------------------------------------------------
-MODEL_VERSION = os.getenv("MODEL_VERSION", "default")
-MODEL_ENVIRONMENT = os.getenv("MODEL_ENVIRONMENT", "production")
+MODEL_VERSION = _get_env("MODEL_VERSION", "default")
+MODEL_ENVIRONMENT = _get_env("MODEL_ENVIRONMENT", "production")
